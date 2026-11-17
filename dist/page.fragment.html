@@ -76,7 +76,7 @@ details summary { cursor: pointer; font-weight: 500 } details[open] summary { ma
 <div class="wrap">
   <header>
     <h1>BattleBotBench</h1><span class="tag" id="version">prototype</span>
-    <div class="versus"><span><i class="dot a"></i><span id="nameA"></span></span><span style="color:var(--muted)">against</span><span><i class="dot b"></i><span id="nameB"></span></span></div>
+    <div class="versus"><span><i class="dot a"></i><select id="botA" aria-label="First bot"></select></span><span style="color:var(--muted)">against</span><span><i class="dot b"></i><select id="botB" aria-label="Second bot"></select></span></div>
   </header>
   <main>
     <section>
@@ -86,7 +86,7 @@ details summary { cursor: pointer; font-weight: 500 } details[open] summary { ma
         <div class="track"><div class="ticks" id="ticks"></div><input id="scrub" type="range" min="0" max="1" step="0.001" value="0" aria-label="Fight time"></div>
         <span class="clock" id="clock">0.0 / 0.0 s</span>
         <select id="speed" aria-label="Playback speed"><option value="0.25">0.25x</option><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select>
-        <label class="row">Seed <input id="seed" type="number" min="1" step="1" value="18"></label>
+        <label class="row">Seed <input id="seed" type="number" min="1" step="1" value="1"></label>
         <button id="next">Next fight</button>
       </div>
     </section>
@@ -108,10 +108,11 @@ details summary { cursor: pointer; font-weight: 500 } details[open] summary { ma
       </div>
       <div class="pane" id="tab-bots" hidden></div>
       <div class="pane" id="tab-settings" hidden>
-        <p class="note">Change a value and rerun the same seed to see what it does. These three are the ones we expect to tune most; the full list is below.</p>
+        <p class="note">Change a value and rerun the same seed to see what it does. These four are the ones we expect to tune most; the full list is below.</p>
         <div class="knob"><label for="k-break">Joint strength</label><input id="k-break" type="range" min="0.3" max="3" step="0.1" value="1"><output id="o-break">1.0x</output><small>Lower means parts come off more easily.</small></div>
         <div class="knob"><label for="k-grav">Gravity</label><input id="k-grav" type="range" min="2" max="20" step="0.5" value="9.81"><output id="o-grav">9.8</output><small>Metres per second squared. Earth is 9.8.</small></div>
         <div class="knob"><label for="k-grip">Floor grip</label><input id="k-grip" type="range" min="0.1" max="1.6" step="0.05" value="1"><output id="o-grip">1.00</output><small>How well wheels hold the floor. Low values feel like ice.</small></div>
+        <div class="knob"><label for="k-power">Weapon power</label><input id="k-power" type="range" min="0.5" max="3" step="0.1" value="1"><output id="o-power">1.0x</output><small>Speed and torque of motor joints (not wheels). Above 1.3x the fight takes longer to simulate.</small></div>
         <div class="row"><button id="rerun" class="primary">Rerun this seed</button><button id="reset">Reset</button></div>
         <h2>All settings</h2>
         <pre id="config"></pre>
@@ -135,7 +136,7 @@ const CONFIG = {
   physics: { hz: 240, controlHz: 30, gravity: 9.81, solverIterations: 12 },
   arena: { size: 14, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2 },
   match: { maxSeconds: 60, countOutSeconds: 8, countOutRadius: 0.35, graceSeconds: 3 },
-  budget: { mass: 150, cost: 100, box: [2.6, 1.4, 2.6], maxParts: 24 },
+  budget: { mass: 150, cost: 100, box: [3, 2, 3], maxParts: 24 },
   // A joint's load = impulse x share of the bot it has to drag along x leverage x sharpness.
   // Sharpness: a hit at speedRef m/s counts 1.5x, faster hits count for more.
   breakage: { scale: 1, leverLength: 1.0, speedRef: 8, logImpulse: 45 },
@@ -147,11 +148,13 @@ const CONFIG = {
   joints: {
     fixed: { strength: 500, cost: 0 },
     hinge: { strength: 500, cost: 2 },
-    motor: { strength: 1500, cost: 8, maxSpeed: 40, torque: 120 },
+    // A motor joint may set "gear": n. Speed is divided by n and torque multiplied by n (0.5 to 8).
+    // Hinge and motor joints may set "pivot": [x, y, z] in the bot frame; without it they turn about the part's centre.
+    motor: { strength: 1500, cost: 8, maxSpeed: 40, torque: 120, minGear: 0.5, maxGear: 8 },
   },
   parts: {
     core: { size: [0.4, 0.4, 0.4], mass: 20, cost: 0 },
-    beam: { maxSize: [0.3, 0.3, 2.0] },
+    beam: { maxSize: [0.3, 0.3, 2.4] },
     plate: { maxSize: [2.0, 0.15, 2.0] },
     block: { maxSize: [0.6, 0.6, 0.6] },
     wedge: { maxSize: [2.0, 0.6, 1.0] },
@@ -262,6 +265,10 @@ function validateBuild(build, cfg = CONFIG) {
       if (p.type !== 'drive' && (jt === 'hinge' || jt === 'motor')) {
         const ax = p.joint.axis;
         if (!Array.isArray(ax) || ax.length !== 3 || Math.hypot(...ax) < 1e-6) errors.push(`${where}: a ${jt} joint needs an "axis" such as [0, 1, 0].`);
+        const pv = p.joint.pivot;
+        if (pv !== undefined && (!Array.isArray(pv) || pv.length !== 3 || pv.some((x) => typeof x !== 'number'))) errors.push(`${where}: "pivot" must be three numbers [x, y, z] measured from the core.`);
+        const g = p.joint.gear;
+        if (g !== undefined && !(g >= cfg.joints.motor.minGear && g <= cfg.joints.motor.maxGear)) errors.push(`${where}: "gear" must be between ${cfg.joints.motor.minGear} and ${cfg.joints.motor.maxGear}.`);
       }
       const b = cfg.budget.box;
       if (Math.abs(p.pos[0]) > b[0] / 2 || Math.abs(p.pos[1]) > b[1] / 2 || Math.abs(p.pos[2]) > b[2] / 2) errors.push(`${where}: its centre is outside the build box of ${JSON.stringify(b)} around the core.`);
@@ -351,13 +358,16 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       const jt = def.type === 'core' ? null : def.type === 'drive' ? 'motor' : (def.joint && def.joint.type) || 'fixed';
       const axis = def.type === 'drive' ? [1, 0, 0] : (def.joint && def.joint.axis) || [0, 1, 0];
       const shape = makeShape(spec);
+      const gear = def.type === 'drive' ? 1 : clamp(Number(def.joint && def.joint.gear) || 1, cfg.joints.motor.minGear, cfg.joints.motor.maxGear);
+      const pivotLocal = def.joint && def.joint.pivot && jt !== 'fixed' ? lq.inverse().vmult(V(def.joint.pivot).vsub(lp)) : new CANNON.Vec3();
       const p = {
+        pivotLocal, angle: 0, lastRaw: 0,
         id: def.id, def, spec, bot, index: m.parts.length, shape, mass: spec.mass,
         jointType: jt, axisLocal: V(axis).unit(), intact: def.type !== 'core', live: true, lostAt: null,
         wpos: origin.vadd(q0.vmult(lp)), wquat: q0.mult(lq), wvel: new CANNON.Vec3(), wang: new CANNON.Vec3(),
         parent: null, children: [], anchorLocal: new CANNON.Vec3(), body: null, localPos: null, localQuat: null, subMass: 0,
-        maxSpeed: def.type === 'drive' ? cfg.parts.drive.maxSpeed : cfg.joints.motor.maxSpeed,
-        torque: def.type === 'drive' ? cfg.parts.drive.torque : cfg.joints.motor.torque,
+        maxSpeed: def.type === 'drive' ? cfg.parts.drive.maxSpeed : cfg.joints.motor.maxSpeed / gear,
+        torque: def.type === 'drive' ? cfg.parts.drive.torque : cfg.joints.motor.torque * gear,
       };
       shape.material = def.type === 'drive' ? matRubber : matHard;
       shape.partRef = p;
@@ -373,6 +383,9 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
         const rel = p.wquat.inverse().vmult(p.parent.wpos.vsub(p.wpos));
         p.anchorLocal.set(clamp(rel.x, -p.spec.half[0], p.spec.half[0]), clamp(rel.y, -p.spec.half[1], p.spec.half[1]), clamp(rel.z, -p.spec.half[2], p.spec.half[2]));
       }
+      else p.anchorLocal.copy(p.pivotLocal);
+      p.rel0 = p.parent.wquat.inverse().mult(p.wquat);
+      p.axisParent = p.rel0.vmult(p.axisLocal);
       const base = p.def.type === 'drive' ? cfg.parts.drive.strength : cfg.joints[p.jointType].strength;
       p.strength = base * Math.min(p.spec.strength, p.parent.spec.strength);
     }
@@ -441,14 +454,26 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       if (!p.parent || !p.intact || p.jointType === 'fixed') continue;
       const A = p.parent.body, B = p.body;
       const axisW = p.wquat.vmult(p.axisLocal);
+      const pivW = p.wpos.vadd(p.wquat.vmult(p.pivotLocal));
       const c = new CANNON.HingeConstraint(A, B, {
-        pivotA: A.quaternion.inverse().vmult(p.wpos.vsub(A.position)), pivotB: B.quaternion.inverse().vmult(p.wpos.vsub(B.position)),
+        pivotA: A.quaternion.inverse().vmult(pivW.vsub(A.position)), pivotB: B.quaternion.inverse().vmult(pivW.vsub(B.position)),
         axisA: A.quaternion.inverse().vmult(axisW), axisB: B.quaternion.inverse().vmult(axisW), collideConnected: false,
       });
       if (p.jointType === 'motor' && p.live) { c.enableMotor(); c.setMotorMaxForce(p.torque * dt); /* the solver limits impulse per step, so torque x dt */ c.setMotorSpeed(0); }
       c.part = p;
       world.addConstraint(c); bot.constraints.push(c);
     }
+  }
+
+  // How far a hinge or motor joint has turned from its built position, in radians, counted
+  // continuously (it does not wrap at a half turn). Positive is right-handed about the joint's axis.
+  const qP = new CANNON.Quaternion(), qC = new CANNON.Quaternion(), tmpV = new CANNON.Vec3();
+  function updateAngle(p) {
+    partWorld(p.parent, tmpV, qP); partWorld(p, tmpV, qC);
+    const d = qP.inverse().mult(qC).mult(p.rel0.inverse());
+    const a = p.axisParent;
+    const raw = wrap(2 * Math.atan2(d.x * a.x + d.y * a.y + d.z * a.z, d.w));
+    p.angle += wrap(raw - p.lastRaw); p.lastRaw = raw;
   }
 
   function sense(bot) {
@@ -458,14 +483,17 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
     const heading = Math.atan2(fwd.x, fwd.z);
     const dx = f.position.x - b.position.x, dz = f.position.z - b.position.z;
     const fup = f.quaternion.vmult(new CANNON.Vec3(0, 1, 0));
-    const parts = {};
-    for (const p of bot.parts) parts[p.id] = p.live;
+    const parts = {}, joints = {};
+    for (const p of bot.parts) {
+      parts[p.id] = p.live;
+      if (p.live && p.def.type !== 'drive' && (p.jointType === 'motor' || p.jointType === 'hinge')) joints[p.id] = { angle: p.angle };
+    }
     return {
       t: m.t,
       self: {
         x: b.position.x, y: b.position.y, z: b.position.z, heading, upright: up.y,
         speed: Math.hypot(b.velocity.x, b.velocity.z), forwardSpeed: b.velocity.x * fwd.x + b.velocity.z * fwd.z,
-        turnRate: b.angularVelocity.y, massLeft: bot.liveMass / bot.startMass, parts,
+        turnRate: b.angularVelocity.y, massLeft: bot.liveMass / bot.startMass, parts, joints,
       },
       enemy: { bearing: wrap(Math.atan2(dx, dz) - heading), distance: Math.hypot(dx, dz), height: f.position.y - b.position.y, upright: fup.y, massLeft: foe.liveMass / foe.startMass },
       arena: {
@@ -478,6 +506,7 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
   function control() {
     for (const bot of m.bots) {
       if (!bot.alive) continue;
+      for (const p of bot.parts) if (p.live && p.parent && p.intact && p.def.type !== 'drive' && p.jointType !== 'fixed') updateAngle(p);
       const out = {};
       try { bot.program(sense(bot), out, bot.mem); bot.out = out; }
       catch (e) { if (!bot.programFailed) { bot.programFailed = true; log('program_error', bot.index, `${bot.name}'s control program threw an error: ${e.message}`); } }
@@ -705,6 +734,129 @@ function lawnmowerProgram(s, out, mem) {
   out.wheel_fr = out.wheel_rr = clamp(drive + turn);
 }
 
+// Shared driving: chase the enemy, stay off the edge, back off when stuck.
+// Returns { drive, turn } and leaves the wheels to the caller.
+function chase(s, mem, { speed = 1, edge = 1.5, patience = 50 } = {}) {
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  let drive = speed;
+  let turn = clamp(s.enemy.bearing * 2.2);
+  if (Math.abs(s.enemy.bearing) > 0.9) drive = speed * 0.2;
+  if (s.arena.edgeDistance < edge && Math.abs(s.arena.centerBearing) > 0.9) { turn = clamp(s.arena.centerBearing * 2.5); drive = 0.25; }
+  mem.still = s.t > 2 && s.self.speed < 0.2 ? (mem.still || 0) + 1 : 0;
+  if (mem.still > patience) { mem.reverseUntil = s.t + 1.0; mem.reverseTurn = mem.reverseTurn === 0.6 ? -0.6 : 0.6; mem.still = 0; }
+  if (s.t < (mem.reverseUntil || 0)) { drive = -1; turn = mem.reverseTurn; }
+  return { drive, turn };
+}
+function tank(out, drive, turn) {
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  out.wheel_fl = out.wheel_rl = clamp(drive - turn);
+  out.wheel_fr = out.wheel_rr = clamp(drive + turn);
+}
+
+const PANCAKE = {
+  name: 'Pancake',
+  note: 'A flipper. A flat plate on a geared-down motor, hinged at its back edge, that slides under the other bot and throws it.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [1.2, 0.08, 1.3], pos: [0, -0.2, -0.1], parent: 'core' },
+    { id: 'wheel_fl', type: 'drive', pos: [0.72, -0.2, 0.3], parent: 'deck' },
+    { id: 'wheel_fr', type: 'drive', pos: [-0.72, -0.2, 0.3], parent: 'deck' },
+    { id: 'wheel_rl', type: 'drive', pos: [0.72, -0.2, -0.55], parent: 'deck' },
+    { id: 'wheel_rr', type: 'drive', pos: [-0.72, -0.2, -0.55], parent: 'deck' },
+    { id: 'ballast', type: 'block', material: 'steel', size: [0.4, 0.2, 0.3], pos: [0, -0.06, -0.6], parent: 'deck' },
+    { id: 'flipper', type: 'plate', material: 'aluminium', size: [1.0, 0.05, 0.9], pos: [0, -0.42, 1.0], parent: 'deck', joint: { type: 'motor', axis: [1, 0, 0], pivot: [0, -0.42, 0.55], gear: 6 } },
+  ],
+};
+function pancakeProgram(s, out, mem) {
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  const { drive, turn } = chase(s, mem);
+  tank(out, drive, turn);
+  const angle = s.self.joints.flipper ? s.self.joints.flipper.angle : 0;
+  // Negative angle lifts the front edge. Fire when the enemy is over the plate, then reset.
+  if (s.t > (mem.readyAt || 0) && s.enemy.distance < 1.75 && Math.abs(s.enemy.bearing) < 0.4) { mem.fireUntil = s.t + 0.35; mem.readyAt = s.t + 1.3; }
+  const target = s.t < (mem.fireUntil || 0) ? -1.2 : 0;
+  out.flipper = clamp((target - angle) * 8);
+}
+
+const GAVEL = {
+  name: 'Gavel',
+  note: 'A hammer. A steel block on a long arm that rests pointing backward and swings over the top to land in front.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [1.1, 0.08, 1.4], pos: [0, -0.2, 0], parent: 'core' },
+    { id: 'wheel_fl', type: 'drive', pos: [0.67, -0.2, 0.5], parent: 'deck' },
+    { id: 'wheel_fr', type: 'drive', pos: [-0.67, -0.2, 0.5], parent: 'deck' },
+    { id: 'wheel_rl', type: 'drive', pos: [0.67, -0.2, -0.5], parent: 'deck' },
+    { id: 'wheel_rr', type: 'drive', pos: [-0.67, -0.2, -0.5], parent: 'deck' },
+    { id: 'tower', type: 'block', material: 'aluminium', size: [0.3, 0.4, 0.3], pos: [0, 0.4, 0], parent: 'core' },
+    { id: 'arm', type: 'beam', material: 'steel', size: [0.1, 0.1, 1.3], pos: [0, 0.6, -0.65], parent: 'tower', joint: { type: 'motor', axis: [1, 0, 0], pivot: [0, 0.6, 0], gear: 3 } },
+    { id: 'head', type: 'block', material: 'steel', size: [0.3, 0.25, 0.3], pos: [0, 0.6, -1.4], parent: 'arm' },
+  ],
+};
+function gavelProgram(s, out, mem) {
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  const { drive, turn } = chase(s, mem, { speed: 0.85 });
+  tank(out, drive, turn);
+  const angle = s.self.joints.arm ? s.self.joints.arm.angle : 0;
+  // Positive angle swings the head up and over. Past 3.1 it is coming down in front.
+  if (s.t > (mem.readyAt || 0) && s.enemy.distance < 2.0 && Math.abs(s.enemy.bearing) < 0.3) { mem.swingUntil = s.t + 0.6; mem.readyAt = s.t + 1.8; }
+  // Power the swing only to the top of the arc and let the head's weight carry it down, then pull back
+  // before it can wedge itself under the bot.
+  out.arm = s.t < (mem.swingUntil || 0) && angle < 2.6 ? 1 : clamp((0 - angle) * 1.5);
+}
+
+const EGGBEATER = {
+  name: 'Eggbeater',
+  note: 'A vertical spinner. A thick steel disc on edge at the nose, turning so its front rises and kicks things upward.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [1.1, 0.08, 1.3], pos: [0, -0.2, -0.1], parent: 'core' },
+    { id: 'wheel_fl', type: 'drive', pos: [0.67, -0.2, 0.45], parent: 'deck' },
+    { id: 'wheel_fr', type: 'drive', pos: [-0.67, -0.2, 0.45], parent: 'deck' },
+    { id: 'wheel_rl', type: 'drive', pos: [0.67, -0.2, -0.6], parent: 'deck' },
+    { id: 'wheel_rr', type: 'drive', pos: [-0.67, -0.2, -0.6], parent: 'deck' },
+    { id: 'fork_l', type: 'beam', material: 'aluminium', size: [0.1, 0.12, 0.7], pos: [0.25, -0.2, 0.85], parent: 'deck' },
+    { id: 'fork_r', type: 'beam', material: 'aluminium', size: [0.1, 0.12, 0.7], pos: [-0.25, -0.2, 0.85], parent: 'deck' },
+    { id: 'disc', type: 'disc', material: 'steel', radius: 0.3, thickness: 0.14, pos: [0, -0.18, 1.0], rot: [0, 0, 90], parent: 'deck', joint: { type: 'motor', axis: [0, 1, 0] } },
+  ],
+};
+function eggbeaterProgram(s, out, mem) {
+  const { drive, turn } = chase(s, mem, { speed: s.t < 1.5 ? 0 : 0.8 });
+  tank(out, drive, turn);
+  out.disc = 1;
+}
+
+const CAROUSEL = {
+  name: 'Carousel',
+  note: 'A full-body spinner. A long rotor above the wheels with a steel weight hanging from each end, so the whole outline is a weapon.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [0.8, 0.08, 0.8], pos: [0, -0.2, 0], parent: 'core' },
+    { id: 'wheel_fl', type: 'drive', pos: [0.5, -0.2, 0.3], parent: 'deck' },
+    { id: 'wheel_fr', type: 'drive', pos: [-0.5, -0.2, 0.3], parent: 'deck' },
+    { id: 'wheel_rl', type: 'drive', pos: [0.5, -0.2, -0.3], parent: 'deck' },
+    { id: 'wheel_rr', type: 'drive', pos: [-0.5, -0.2, -0.3], parent: 'deck' },
+    { id: 'mast', type: 'block', material: 'steel', size: [0.2, 0.3, 0.2], pos: [0, 0.35, 0], parent: 'core' },
+    { id: 'rotor', type: 'beam', material: 'steel', size: [2.2, 0.08, 0.14], pos: [0, 0.55, 0], parent: 'mast', joint: { type: 'motor', axis: [0, 1, 0], gear: 3 } },
+    { id: 'weight_l', type: 'beam', material: 'steel', size: [0.18, 0.75, 0.18], pos: [1.0, 0.15, 0], parent: 'rotor' },
+    { id: 'weight_r', type: 'beam', material: 'steel', size: [0.18, 0.75, 0.18], pos: [-1.0, 0.15, 0], parent: 'rotor' },
+  ],
+};
+function carouselProgram(s, out, mem) {
+  const { drive, turn } = chase(s, mem, { speed: s.t < 2 ? 0 : 0.55, edge: 2.2 });
+  tank(out, drive, turn);
+  out.rotor = 1;
+}
+
+const ALL = [
+  { build: LAWNMOWER, program: lawnmowerProgram },
+  { build: DOORSTOP, program: doorstopProgram },
+  { build: PANCAKE, program: pancakeProgram },
+  { build: GAVEL, program: gavelProgram },
+  { build: EGGBEATER, program: eggbeaterProgram },
+  { build: CAROUSEL, program: carouselProgram },
+];
+
 const ROSTER = [
   { build: LAWNMOWER, program: lawnmowerProgram },
   { build: DOORSTOP, program: doorstopProgram },
@@ -899,9 +1051,9 @@ function runFight() {
   $('seed').value = seed;
   $('result').textContent = 'Simulating the fight.';
   setTimeout(() => {
-    match = createMatch({ builds: ROSTER.map((r) => r.build), programs: ROSTER.map((r) => r.program), seed, config: structuredClone(cfg) });
+    const pick = [ALL[Number($('botA').value)], ALL[Number($('botB').value)]];
+    match = createMatch({ builds: pick.map((r) => r.build), programs: pick.map((r) => r.program), seed, config: structuredClone(cfg) });
     match.run();
-    $('nameA').textContent = match.bots[0].name; $('nameB').textContent = match.bots[1].name;
     buildArena(); buildMeshes(); applyTheme();
     playhead = 0; lastEvent = -1;
     pose(0); cam.target.set(0, 0, 0);
@@ -927,10 +1079,17 @@ document.querySelectorAll('.tabs button').forEach((btn) => btn.addEventListener(
   document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b === btn)));
   for (const t of ['log', 'bots', 'settings']) $('tab-' + t).hidden = t !== btn.dataset.tab;
 }));
+for (const [id, def] of [['botA', 2], ['botB', 5]]) {
+  $(id).innerHTML = ALL.map((r, i) => `<option value="${i}">${esc(r.build.name)}</option>`).join('');
+  $(id).value = def;
+  $(id).addEventListener('change', () => { playing = true; runFight(); });
+}
 const knobs = [
   ['k-break', 'o-break', (v) => { cfg.breakage.scale = v; }, (v) => v.toFixed(1) + 'x', () => CONFIG.breakage.scale],
   ['k-grav', 'o-grav', (v) => { cfg.physics.gravity = v; }, (v) => v.toFixed(1), () => CONFIG.physics.gravity],
   ['k-grip', 'o-grip', (v) => { cfg.arena.grip = v; }, (v) => v.toFixed(2), () => CONFIG.arena.grip],
+  // Weapon power scales motor-joint speed and torque together. Fast weapons need finer time steps.
+  ['k-power', 'o-power', (v) => { cfg.joints.motor.maxSpeed = CONFIG.joints.motor.maxSpeed * v; cfg.joints.motor.torque = CONFIG.joints.motor.torque * v * (v > 1 ? 1.25 : 1); cfg.physics.hz = v > 1.3 ? 480 : CONFIG.physics.hz; }, (v) => v.toFixed(1) + 'x', () => 1],
 ];
 for (const [id, out, set, fmt] of knobs) $(id).addEventListener('input', (e) => { const v = Number(e.target.value); set(v); $(out).textContent = fmt(v); renderConfig(); });
 $('rerun').addEventListener('click', () => { playing = true; runFight(); });

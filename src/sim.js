@@ -10,7 +10,7 @@ export const CONFIG = {
   physics: { hz: 240, controlHz: 30, gravity: 9.81, solverIterations: 12 },
   arena: { size: 14, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2 },
   match: { maxSeconds: 60, countOutSeconds: 8, countOutRadius: 0.35, graceSeconds: 3 },
-  budget: { mass: 150, cost: 100, box: [2.6, 1.4, 2.6], maxParts: 24 },
+  budget: { mass: 150, cost: 100, box: [3, 2, 3], maxParts: 24 },
   // A joint's load = impulse x share of the bot it has to drag along x leverage x sharpness.
   // Sharpness: a hit at speedRef m/s counts 1.5x, faster hits count for more.
   breakage: { scale: 1, leverLength: 1.0, speedRef: 8, logImpulse: 45 },
@@ -22,11 +22,13 @@ export const CONFIG = {
   joints: {
     fixed: { strength: 500, cost: 0 },
     hinge: { strength: 500, cost: 2 },
-    motor: { strength: 1500, cost: 8, maxSpeed: 40, torque: 120 },
+    // A motor joint may set "gear": n. Speed is divided by n and torque multiplied by n (0.5 to 8).
+    // Hinge and motor joints may set "pivot": [x, y, z] in the bot frame; without it they turn about the part's centre.
+    motor: { strength: 1500, cost: 8, maxSpeed: 40, torque: 120, minGear: 0.5, maxGear: 8 },
   },
   parts: {
     core: { size: [0.4, 0.4, 0.4], mass: 20, cost: 0 },
-    beam: { maxSize: [0.3, 0.3, 2.0] },
+    beam: { maxSize: [0.3, 0.3, 2.4] },
     plate: { maxSize: [2.0, 0.15, 2.0] },
     block: { maxSize: [0.6, 0.6, 0.6] },
     wedge: { maxSize: [2.0, 0.6, 1.0] },
@@ -137,6 +139,10 @@ export function validateBuild(build, cfg = CONFIG) {
       if (p.type !== 'drive' && (jt === 'hinge' || jt === 'motor')) {
         const ax = p.joint.axis;
         if (!Array.isArray(ax) || ax.length !== 3 || Math.hypot(...ax) < 1e-6) errors.push(`${where}: a ${jt} joint needs an "axis" such as [0, 1, 0].`);
+        const pv = p.joint.pivot;
+        if (pv !== undefined && (!Array.isArray(pv) || pv.length !== 3 || pv.some((x) => typeof x !== 'number'))) errors.push(`${where}: "pivot" must be three numbers [x, y, z] measured from the core.`);
+        const g = p.joint.gear;
+        if (g !== undefined && !(g >= cfg.joints.motor.minGear && g <= cfg.joints.motor.maxGear)) errors.push(`${where}: "gear" must be between ${cfg.joints.motor.minGear} and ${cfg.joints.motor.maxGear}.`);
       }
       const b = cfg.budget.box;
       if (Math.abs(p.pos[0]) > b[0] / 2 || Math.abs(p.pos[1]) > b[1] / 2 || Math.abs(p.pos[2]) > b[2] / 2) errors.push(`${where}: its centre is outside the build box of ${JSON.stringify(b)} around the core.`);
@@ -226,13 +232,16 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       const jt = def.type === 'core' ? null : def.type === 'drive' ? 'motor' : (def.joint && def.joint.type) || 'fixed';
       const axis = def.type === 'drive' ? [1, 0, 0] : (def.joint && def.joint.axis) || [0, 1, 0];
       const shape = makeShape(spec);
+      const gear = def.type === 'drive' ? 1 : clamp(Number(def.joint && def.joint.gear) || 1, cfg.joints.motor.minGear, cfg.joints.motor.maxGear);
+      const pivotLocal = def.joint && def.joint.pivot && jt !== 'fixed' ? lq.inverse().vmult(V(def.joint.pivot).vsub(lp)) : new CANNON.Vec3();
       const p = {
+        pivotLocal, angle: 0, lastRaw: 0,
         id: def.id, def, spec, bot, index: m.parts.length, shape, mass: spec.mass,
         jointType: jt, axisLocal: V(axis).unit(), intact: def.type !== 'core', live: true, lostAt: null,
         wpos: origin.vadd(q0.vmult(lp)), wquat: q0.mult(lq), wvel: new CANNON.Vec3(), wang: new CANNON.Vec3(),
         parent: null, children: [], anchorLocal: new CANNON.Vec3(), body: null, localPos: null, localQuat: null, subMass: 0,
-        maxSpeed: def.type === 'drive' ? cfg.parts.drive.maxSpeed : cfg.joints.motor.maxSpeed,
-        torque: def.type === 'drive' ? cfg.parts.drive.torque : cfg.joints.motor.torque,
+        maxSpeed: def.type === 'drive' ? cfg.parts.drive.maxSpeed : cfg.joints.motor.maxSpeed / gear,
+        torque: def.type === 'drive' ? cfg.parts.drive.torque : cfg.joints.motor.torque * gear,
       };
       shape.material = def.type === 'drive' ? matRubber : matHard;
       shape.partRef = p;
@@ -248,6 +257,9 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
         const rel = p.wquat.inverse().vmult(p.parent.wpos.vsub(p.wpos));
         p.anchorLocal.set(clamp(rel.x, -p.spec.half[0], p.spec.half[0]), clamp(rel.y, -p.spec.half[1], p.spec.half[1]), clamp(rel.z, -p.spec.half[2], p.spec.half[2]));
       }
+      else p.anchorLocal.copy(p.pivotLocal);
+      p.rel0 = p.parent.wquat.inverse().mult(p.wquat);
+      p.axisParent = p.rel0.vmult(p.axisLocal);
       const base = p.def.type === 'drive' ? cfg.parts.drive.strength : cfg.joints[p.jointType].strength;
       p.strength = base * Math.min(p.spec.strength, p.parent.spec.strength);
     }
@@ -316,14 +328,26 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       if (!p.parent || !p.intact || p.jointType === 'fixed') continue;
       const A = p.parent.body, B = p.body;
       const axisW = p.wquat.vmult(p.axisLocal);
+      const pivW = p.wpos.vadd(p.wquat.vmult(p.pivotLocal));
       const c = new CANNON.HingeConstraint(A, B, {
-        pivotA: A.quaternion.inverse().vmult(p.wpos.vsub(A.position)), pivotB: B.quaternion.inverse().vmult(p.wpos.vsub(B.position)),
+        pivotA: A.quaternion.inverse().vmult(pivW.vsub(A.position)), pivotB: B.quaternion.inverse().vmult(pivW.vsub(B.position)),
         axisA: A.quaternion.inverse().vmult(axisW), axisB: B.quaternion.inverse().vmult(axisW), collideConnected: false,
       });
       if (p.jointType === 'motor' && p.live) { c.enableMotor(); c.setMotorMaxForce(p.torque * dt); /* the solver limits impulse per step, so torque x dt */ c.setMotorSpeed(0); }
       c.part = p;
       world.addConstraint(c); bot.constraints.push(c);
     }
+  }
+
+  // How far a hinge or motor joint has turned from its built position, in radians, counted
+  // continuously (it does not wrap at a half turn). Positive is right-handed about the joint's axis.
+  const qP = new CANNON.Quaternion(), qC = new CANNON.Quaternion(), tmpV = new CANNON.Vec3();
+  function updateAngle(p) {
+    partWorld(p.parent, tmpV, qP); partWorld(p, tmpV, qC);
+    const d = qP.inverse().mult(qC).mult(p.rel0.inverse());
+    const a = p.axisParent;
+    const raw = wrap(2 * Math.atan2(d.x * a.x + d.y * a.y + d.z * a.z, d.w));
+    p.angle += wrap(raw - p.lastRaw); p.lastRaw = raw;
   }
 
   function sense(bot) {
@@ -333,14 +357,17 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
     const heading = Math.atan2(fwd.x, fwd.z);
     const dx = f.position.x - b.position.x, dz = f.position.z - b.position.z;
     const fup = f.quaternion.vmult(new CANNON.Vec3(0, 1, 0));
-    const parts = {};
-    for (const p of bot.parts) parts[p.id] = p.live;
+    const parts = {}, joints = {};
+    for (const p of bot.parts) {
+      parts[p.id] = p.live;
+      if (p.live && p.def.type !== 'drive' && (p.jointType === 'motor' || p.jointType === 'hinge')) joints[p.id] = { angle: p.angle };
+    }
     return {
       t: m.t,
       self: {
         x: b.position.x, y: b.position.y, z: b.position.z, heading, upright: up.y,
         speed: Math.hypot(b.velocity.x, b.velocity.z), forwardSpeed: b.velocity.x * fwd.x + b.velocity.z * fwd.z,
-        turnRate: b.angularVelocity.y, massLeft: bot.liveMass / bot.startMass, parts,
+        turnRate: b.angularVelocity.y, massLeft: bot.liveMass / bot.startMass, parts, joints,
       },
       enemy: { bearing: wrap(Math.atan2(dx, dz) - heading), distance: Math.hypot(dx, dz), height: f.position.y - b.position.y, upright: fup.y, massLeft: foe.liveMass / foe.startMass },
       arena: {
@@ -353,6 +380,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
   function control() {
     for (const bot of m.bots) {
       if (!bot.alive) continue;
+      for (const p of bot.parts) if (p.live && p.parent && p.intact && p.def.type !== 'drive' && p.jointType !== 'fixed') updateAngle(p);
       const out = {};
       try { bot.program(sense(bot), out, bot.mem); bot.out = out; }
       catch (e) { if (!bot.programFailed) { bot.programFailed = true; log('program_error', bot.index, `${bot.name}'s control program threw an error: ${e.message}`); } }

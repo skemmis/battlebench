@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CONFIG, createMatch, partSpec } from './sim.js';
-import { ROSTER } from './bots.js';
+import { ALL } from './bots.js';
 
 // The page: runs a whole fight up front, then replays the recording.
 const $ = (id) => document.getElementById(id);
@@ -187,9 +187,9 @@ function runFight() {
   $('seed').value = seed;
   $('result').textContent = 'Simulating the fight.';
   setTimeout(() => {
-    match = createMatch({ builds: ROSTER.map((r) => r.build), programs: ROSTER.map((r) => r.program), seed, config: structuredClone(cfg) });
+    const pick = [ALL[Number($('botA').value)], ALL[Number($('botB').value)]];
+    match = createMatch({ builds: pick.map((r) => r.build), programs: pick.map((r) => r.program), seed, config: structuredClone(cfg) });
     match.run();
-    $('nameA').textContent = match.bots[0].name; $('nameB').textContent = match.bots[1].name;
     buildArena(); buildMeshes(); applyTheme();
     playhead = 0; lastEvent = -1;
     pose(0); cam.target.set(0, 0, 0);
@@ -215,10 +215,17 @@ document.querySelectorAll('.tabs button').forEach((btn) => btn.addEventListener(
   document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b === btn)));
   for (const t of ['log', 'bots', 'settings']) $('tab-' + t).hidden = t !== btn.dataset.tab;
 }));
+for (const [id, def] of [['botA', 2], ['botB', 5]]) {
+  $(id).innerHTML = ALL.map((r, i) => `<option value="${i}">${esc(r.build.name)}</option>`).join('');
+  $(id).value = def;
+  $(id).addEventListener('change', () => { playing = true; runFight(); });
+}
 const knobs = [
   ['k-break', 'o-break', (v) => { cfg.breakage.scale = v; }, (v) => v.toFixed(1) + 'x', () => CONFIG.breakage.scale],
   ['k-grav', 'o-grav', (v) => { cfg.physics.gravity = v; }, (v) => v.toFixed(1), () => CONFIG.physics.gravity],
   ['k-grip', 'o-grip', (v) => { cfg.arena.grip = v; }, (v) => v.toFixed(2), () => CONFIG.arena.grip],
+  // Weapon power scales motor-joint speed and torque together. Fast weapons need finer time steps.
+  ['k-power', 'o-power', (v) => { cfg.joints.motor.maxSpeed = CONFIG.joints.motor.maxSpeed * v; cfg.joints.motor.torque = CONFIG.joints.motor.torque * v * (v > 1 ? 1.25 : 1); cfg.physics.hz = v > 1.3 ? 480 : CONFIG.physics.hz; }, (v) => v.toFixed(1) + 'x', () => 1],
 ];
 for (const [id, out, set, fmt] of knobs) $(id).addEventListener('input', (e) => { const v = Number(e.target.value); set(v); $(out).textContent = fmt(v); renderConfig(); });
 $('rerun').addEventListener('click', () => { playing = true; runFight(); });

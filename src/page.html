@@ -76,7 +76,7 @@ details summary { cursor: pointer; font-weight: 500 } details[open] summary { ma
 <div class="wrap">
   <header>
     <h1>BattleBotBench</h1><span class="tag" id="version">prototype</span>
-    <div class="versus"><span><i class="dot a"></i><span id="nameA"></span></span><span style="color:var(--muted)">against</span><span><i class="dot b"></i><span id="nameB"></span></span></div>
+    <div class="versus"><span><i class="dot a"></i><select id="botA" aria-label="First bot"></select></span><span style="color:var(--muted)">against</span><span><i class="dot b"></i><select id="botB" aria-label="Second bot"></select></span></div>
   </header>
   <main>
     <section>
@@ -86,7 +86,7 @@ details summary { cursor: pointer; font-weight: 500 } details[open] summary { ma
         <div class="track"><div class="ticks" id="ticks"></div><input id="scrub" type="range" min="0" max="1" step="0.001" value="0" aria-label="Fight time"></div>
         <span class="clock" id="clock">0.0 / 0.0 s</span>
         <select id="speed" aria-label="Playback speed"><option value="0.25">0.25x</option><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select>
-        <label class="row">Seed <input id="seed" type="number" min="1" step="1" value="18"></label>
+        <label class="row">Seed <input id="seed" type="number" min="1" step="1" value="1"></label>
         <button id="next">Next fight</button>
       </div>
     </section>
@@ -108,10 +108,11 @@ details summary { cursor: pointer; font-weight: 500 } details[open] summary { ma
       </div>
       <div class="pane" id="tab-bots" hidden></div>
       <div class="pane" id="tab-settings" hidden>
-        <p class="note">Change a value and rerun the same seed to see what it does. These three are the ones we expect to tune most; the full list is below.</p>
+        <p class="note">Change a value and rerun the same seed to see what it does. These four are the ones we expect to tune most; the full list is below.</p>
         <div class="knob"><label for="k-break">Joint strength</label><input id="k-break" type="range" min="0.3" max="3" step="0.1" value="1"><output id="o-break">1.0x</output><small>Lower means parts come off more easily.</small></div>
         <div class="knob"><label for="k-grav">Gravity</label><input id="k-grav" type="range" min="2" max="20" step="0.5" value="9.81"><output id="o-grav">9.8</output><small>Metres per second squared. Earth is 9.8.</small></div>
         <div class="knob"><label for="k-grip">Floor grip</label><input id="k-grip" type="range" min="0.1" max="1.6" step="0.05" value="1"><output id="o-grip">1.00</output><small>How well wheels hold the floor. Low values feel like ice.</small></div>
+        <div class="knob"><label for="k-power">Weapon power</label><input id="k-power" type="range" min="0.5" max="3" step="0.1" value="1"><output id="o-power">1.0x</output><small>Speed and torque of motor joints (not wheels). Above 1.3x the fight takes longer to simulate.</small></div>
         <div class="row"><button id="rerun" class="primary">Rerun this seed</button><button id="reset">Reset</button></div>
         <h2>All settings</h2>
         <pre id="config"></pre>

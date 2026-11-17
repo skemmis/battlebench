@@ -2,7 +2,7 @@
 
 A 3D simulated arena where AI models assemble battle bots from parts and fight each other. It has two goals: a test space where pre-training gives little help, and something fun to watch.
 
-This is the first prototype. It has one arena, a small kit of basic parts, breakable joints, two hand-written bots, and a viewer that replays a fight and shows the log a model would read. No model calls yet.
+This is the first prototype. It has one arena, a small kit of basic parts, breakable joints, six hand-written bots, and a viewer that replays a fight and shows the log a model would read. No model calls yet.
 
 ## Try it
 
@@ -16,13 +16,14 @@ Open `dist/index.html` in a browser (it needs an internet connection to load its
 ```
 npm test           # the checks to rerun after any tuning change
 npm run sweep -- 20  # run 20 seeds and print how the fights came out
+npm run tournament -- 6  # every bot against every other bot, 6 seeds each
 ```
 
 ## How it works
 
 A bot is two things:
 
-- **A build**: a JSON parts list. Each part has a type, a size, a material, a position measured from the core, a parent, and a joint (`fixed`, `hinge` or `motor`).
+- **A build**: a JSON parts list. Each part has a type, a size, a material, a position measured from the core, a parent, and a joint (`fixed`, `hinge` or `motor`). A hinge or motor joint can set a `pivot` point, and a motor can set a `gear` that trades speed for torque. Programs can read each joint's angle.
 - **A control program**: a function that reads sensors and sets motors 30 times a second.
 
 The kit is mostly basic parts (`beam`, `plate`, `block`, `wedge`, `disc`, `ball`) plus a `core` every bot must have and one shortcut, `drive`, a wheel with its motor built in. There are no ready-made weapons. Lawnmower's blade is a steel beam on a motor joint.
@@ -50,7 +51,7 @@ Each fight produces three layers of data: a summary, timestamped events (hits, p
 ## Layout
 
 - `src/sim.js`: the simulator. All tunable values are in `CONFIG` at the top.
-- `src/bots.js`: the two hand-written bots, Lawnmower and Doorstop (the house bot).
+- `src/bots.js`: six hand-written bots. Lawnmower (horizontal bar spinner), Doorstop (wedge, the house bot), Pancake (flipper), Gavel (hammer), Eggbeater (vertical disc spinner) and Carousel (full-body spinner).
 - `src/viewer.js`, `src/page.html`: the replay page.
 - `scripts/build.mjs`: inlines everything into `dist/index.html`.
 - `test/fights.test.mjs`: build checks, repeatability, and physics sanity checks.
@@ -60,4 +61,6 @@ Each fight produces three layers of data: a summary, timestamped events (hits, p
 - Wheels are spheres in the physics and cylinders on screen.
 - Parts of the same bot do not collide with each other.
 - The physics engine is cannon-es, chosen because it is plain JavaScript and runs anywhere. Rapier is the likely upgrade if joints or fast spinners need more accuracy.
-- The two bots are simple on purpose. Lawnmower often gets shoved out before its blade does much.
+- Motor joints have a fixed power, so weapons carry little energy. A weapon hit is about as hard as a bump from a wheel. The Weapon power slider on the page shows what changes when that is raised.
+- There is no part that stores energy and releases it at once (a spring or piston), so the flipper and hammer are slow.
+- About a quarter of fights end with a bot stuck or tangled and counted out.
