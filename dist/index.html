@@ -1,0 +1,974 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+</head>
+<body style="margin:0">
+<title>BattleBotBench</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: a workbench. The arena is the bench top on the left; the clipboard (log, builds, settings) hangs on the right. */
+:root {
+  --bg: #e9ecf1; --surface: #f7f8fa; --raised: #ffffff; --ink: #18202c; --muted: #5b6676; --line: #cfd5de;
+  --team-a: #d9530b; --team-b: #1763c6; --warn: #b4290f; --stage: #dfe4ec; --floor: #aeb7c4; --grid: #8d98a8; --pit: #c9d0db;
+  --display: 'Space Grotesk', 'Avenir Next', system-ui, sans-serif;
+  --body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12161d; --surface: #1a2029; --raised: #222a35; --ink: #e8ecf2; --muted: #98a3b3; --line: #323c4a;
+  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --grid: #566273; --pit: #07090c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #12161d; --surface: #1a2029; --raised: #222a35; --ink: #e8ecf2; --muted: #98a3b3; --line: #323c4a;
+  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --grid: #566273; --pit: #07090c; color-scheme: dark }
+* { box-sizing: border-box }
+[hidden] { display: none !important }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.5 }
+.wrap { max-width: 1320px; margin: 0 auto; padding-block: 20px 32px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 16px }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px }
+h1 { font-family: var(--display); font-size: 26px; font-weight: 700; letter-spacing: -0.01em; margin: 0 }
+.tag { font-family: var(--mono); font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px }
+.versus { margin-left: auto; font-family: var(--display); font-weight: 500; font-size: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap }
+.dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; margin-right: 6px }
+.a { color: var(--team-a) } .b { color: var(--team-b) } .dot.a { background: var(--team-a) } .dot.b { background: var(--team-b) }
+main { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 16px; align-items: start }
+@media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr) } .versus { margin-left: 0 } }
+.stage { position: relative; background: var(--stage); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; aspect-ratio: 16 / 10; max-width: 100% }
+.stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab }
+.verdict { position: absolute; left: 12px; top: 12px; right: 12px; pointer-events: none; font-family: var(--display); font-weight: 500; font-size: 15px; text-shadow: 0 1px 0 var(--stage) }
+.hint { position: absolute; right: 10px; bottom: 8px; font-size: 11px; color: var(--muted); pointer-events: none }
+.transport { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px }
+.track { position: relative; flex: 1 1 220px; min-width: 0; height: 28px; display: flex; align-items: center }
+.track input { width: 100%; margin: 0; accent-color: var(--ink) }
+.ticks { position: absolute; left: 8px; right: 8px; top: 0; height: 6px; pointer-events: none }
+.ticks i { position: absolute; top: 0; width: 2px; height: 6px; background: var(--muted); opacity: .55 }
+.ticks i.lost { background: var(--warn); opacity: 1; height: 8px }
+button, select, input[type="number"] { font: inherit; color: var(--ink); background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 5px 10px }
+button { cursor: pointer; font-weight: 500 } button:hover { border-color: var(--muted) }
+button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink) }
+:focus-visible { outline: 2px solid var(--team-b); outline-offset: 2px }
+input[type="number"] { width: 5.5em }
+.clock { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; min-width: 9ch }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; min-width: 0; display: flex; flex-direction: column }
+.tabs { display: flex; border-bottom: 1px solid var(--line) }
+.tabs button { border: 0; background: none; border-radius: 0; padding: 10px 14px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink) }
+.pane { padding: 14px; display: flex; flex-direction: column; gap: 14px; max-height: 640px; overflow-y: auto; min-width: 0 }
+h2 { font-family: var(--display); font-size: 13px; font-weight: 500; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 }
+.result { font-family: var(--display); font-size: 17px; font-weight: 500; text-wrap: balance; margin: 0 }
+.cond { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px }
+.cond div { border-left: 3px solid var(--line); padding-left: 10px; min-width: 0 } .cond .a { border-color: var(--team-a) } .cond .b { border-color: var(--team-b) }
+.cond b { font-family: var(--display); font-weight: 500; display: block } .cond span { color: var(--ink); font-size: 13px; display: block }
+.events { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column }
+.events li { display: grid; grid-template-columns: 5ch minmax(0, 1fr); gap: 10px; padding: 5px 6px; border-radius: 4px; cursor: pointer; font-size: 13px; color: var(--ink) }
+.events li:hover { background: var(--raised) } .events li.now { background: var(--raised); box-shadow: inset 2px 0 0 var(--ink) }
+.events time { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); text-align: right }
+.events li.part_lost { font-weight: 600 } .events li.end { font-weight: 600 }
+.events .who { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; background: var(--line) }
+.events .who.a { background: var(--team-a) } .events .who.b { background: var(--team-b) }
+pre { font-family: var(--mono); font-size: 12px; line-height: 1.45; background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 10px; margin: 0; overflow-x: auto; max-height: 320px; color: var(--ink) }
+details summary { cursor: pointer; font-weight: 500 } details[open] summary { margin-bottom: 8px }
+.bot h3 { font-family: var(--display); font-size: 17px; margin: 0 0 2px } .bot p { margin: 0 0 8px; color: var(--muted) }
+.bot { display: flex; flex-direction: column; gap: 8px; min-width: 0 }
+.meter { display: flex; gap: 16px; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums }
+.ok { color: var(--muted) } .bad { color: var(--warn) }
+.knob { display: grid; grid-template-columns: minmax(0, 1fr) 6ch; gap: 2px 10px; align-items: center }
+.knob label { grid-column: 1 / -1; font-weight: 500 } .knob small { grid-column: 1 / -1; color: var(--muted) }
+.knob input { width: 100%; accent-color: var(--ink) } .knob output { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right }
+.note { color: var(--muted); font-size: 13px; margin: 0 }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center }
+</style>
+<div class="wrap">
+  <header>
+    <h1>BattleBotBench</h1><span class="tag" id="version">prototype</span>
+    <div class="versus"><span><i class="dot a"></i><span id="nameA"></span></span><span style="color:var(--muted)">against</span><span><i class="dot b"></i><span id="nameB"></span></span></div>
+  </header>
+  <main>
+    <section>
+      <div class="stage"><canvas id="view" aria-label="3D replay of the fight"></canvas><div class="verdict" id="verdict"></div><div class="hint">Drag to orbit, scroll to zoom</div></div>
+      <div class="transport">
+        <button id="play" class="primary">Pause</button>
+        <div class="track"><div class="ticks" id="ticks"></div><input id="scrub" type="range" min="0" max="1" step="0.001" value="0" aria-label="Fight time"></div>
+        <span class="clock" id="clock">0.0 / 0.0 s</span>
+        <select id="speed" aria-label="Playback speed"><option value="0.25">0.25x</option><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select>
+        <label class="row">Seed <input id="seed" type="number" min="1" step="1" value="18"></label>
+        <button id="next">Next fight</button>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-tab="log">Fight log</button>
+        <button role="tab" aria-selected="false" data-tab="bots">Bots</button>
+        <button role="tab" aria-selected="false" data-tab="settings">Settings</button>
+      </div>
+      <div class="pane" id="tab-log">
+        <p class="result" id="result">Simulating the fight.</p>
+        <div class="cond" id="cond"></div>
+        <h2>What happened</h2>
+        <ol class="events" id="events"></ol>
+        <details><summary>The same fight as data, the way a model would receive it</summary>
+          <p class="note">Three layers: a summary, timestamped events, and a motion track sampled 5 times a second. The log says what happened and leaves the why to the model.</p>
+          <div class="row" style="margin:8px 0"><button id="copy">Copy JSON</button><span class="note" id="copied"></span></div>
+          <pre id="json"></pre></details>
+      </div>
+      <div class="pane" id="tab-bots" hidden></div>
+      <div class="pane" id="tab-settings" hidden>
+        <p class="note">Change a value and rerun the same seed to see what it does. These three are the ones we expect to tune most; the full list is below.</p>
+        <div class="knob"><label for="k-break">Joint strength</label><input id="k-break" type="range" min="0.3" max="3" step="0.1" value="1"><output id="o-break">1.0x</output><small>Lower means parts come off more easily.</small></div>
+        <div class="knob"><label for="k-grav">Gravity</label><input id="k-grav" type="range" min="2" max="20" step="0.5" value="9.81"><output id="o-grav">9.8</output><small>Metres per second squared. Earth is 9.8.</small></div>
+        <div class="knob"><label for="k-grip">Floor grip</label><input id="k-grip" type="range" min="0.1" max="1.6" step="0.05" value="1"><output id="o-grip">1.00</output><small>How well wheels hold the floor. Low values feel like ice.</small></div>
+        <div class="row"><button id="rerun" class="primary">Rerun this seed</button><button id="reset">Reset</button></div>
+        <h2>All settings</h2>
+        <pre id="config"></pre>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js';
+
+
+// ───────────────────────────────────────────────────────────────────────────
+// SETTINGS. Every number we expect to tune lives here.
+// Lengths are metres, masses kg, impulses N·s, angles in builds are degrees.
+// A bot's frame: +z is forward, +y is up, +x is its left side.
+// ───────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  version: 'v0.1',
+  physics: { hz: 240, controlHz: 30, gravity: 9.81, solverIterations: 12 },
+  arena: { size: 14, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2 },
+  match: { maxSeconds: 60, countOutSeconds: 8, countOutRadius: 0.35, graceSeconds: 3 },
+  budget: { mass: 150, cost: 100, box: [2.6, 1.4, 2.6], maxParts: 24 },
+  // A joint's load = impulse x share of the bot it has to drag along x leverage x sharpness.
+  // Sharpness: a hit at speedRef m/s counts 1.5x, faster hits count for more.
+  breakage: { scale: 1, leverLength: 1.0, speedRef: 8, logImpulse: 45 },
+  materials: {
+    steel: { density: 780, strength: 1.5, costPerVolume: 70 },
+    aluminium: { density: 270, strength: 1.0, costPerVolume: 90 },
+    plastic: { density: 120, strength: 0.55, costPerVolume: 35 },
+  },
+  joints: {
+    fixed: { strength: 500, cost: 0 },
+    hinge: { strength: 500, cost: 2 },
+    motor: { strength: 1500, cost: 8, maxSpeed: 40, torque: 120 },
+  },
+  parts: {
+    core: { size: [0.4, 0.4, 0.4], mass: 20, cost: 0 },
+    beam: { maxSize: [0.3, 0.3, 2.0] },
+    plate: { maxSize: [2.0, 0.15, 2.0] },
+    block: { maxSize: [0.6, 0.6, 0.6] },
+    wedge: { maxSize: [2.0, 0.6, 1.0] },
+    disc: { maxRadius: 0.6, maxThickness: 0.2 },
+    ball: { maxRadius: 0.3 },
+    // Shortcut: a wheel with its motor built in. Axle runs along the part's x axis.
+    drive: { radius: 0.3, width: 0.24, mass: 6, cost: 9, maxSpeed: 12, torque: 60, strength: 320 },
+  },
+};
+
+const V = (a) => new CANNON.Vec3(a[0], a[1], a[2]);
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const wrap = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+const r2 = (v) => Math.round(v * 100) / 100;
+const BOX_TYPES = ['beam', 'plate', 'block'];
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ── Part geometry ──────────────────────────────────────────────────────────
+// Returns what the physics and the viewer both need to know about one part.
+function partSpec(def, cfg = CONFIG) {
+  const t = def.type;
+  if (t === 'core') {
+    const s = cfg.parts.core.size;
+    return { kind: 'box', size: s, half: s.map((x) => x / 2), volume: s[0] * s[1] * s[2], mass: cfg.parts.core.mass, cost: 0, strength: 1.5 };
+  }
+  if (t === 'drive') {
+    const d = cfg.parts.drive;
+    return { kind: 'wheel', radius: d.radius, width: d.width, half: [d.width / 2, d.radius, d.radius], volume: 0, mass: d.mass, cost: d.cost, strength: 1 };
+  }
+  const mat = cfg.materials[def.material] || cfg.materials.aluminium;
+  let kind, volume, half, extra = {};
+  if (BOX_TYPES.includes(t)) {
+    kind = 'box'; volume = def.size[0] * def.size[1] * def.size[2]; half = def.size.map((x) => x / 2); extra.size = def.size;
+  } else if (t === 'wedge') {
+    kind = 'wedge'; volume = (def.size[0] * def.size[1] * def.size[2]) / 2; half = def.size.map((x) => x / 2); extra.size = def.size;
+  } else if (t === 'disc') {
+    kind = 'disc'; volume = Math.PI * def.radius * def.radius * def.thickness; half = [def.radius, def.thickness / 2, def.radius];
+    extra.radius = def.radius; extra.thickness = def.thickness;
+  } else if (t === 'ball') {
+    kind = 'ball'; volume = (4 / 3) * Math.PI * def.radius ** 3; half = [def.radius, def.radius, def.radius]; extra.radius = def.radius;
+  }
+  return { kind, half, volume, mass: volume * mat.density, cost: volume * mat.costPerVolume, strength: mat.strength, ...extra };
+}
+
+function makeShape(spec) {
+  if (spec.kind === 'box') return new CANNON.Box(V(spec.half));
+  if (spec.kind === 'wheel') return new CANNON.Sphere(spec.radius);
+  if (spec.kind === 'ball') return new CANNON.Sphere(spec.radius);
+  if (spec.kind === 'disc') return new CANNON.Cylinder(spec.radius, spec.radius, spec.thickness, 12);
+  if (spec.kind === 'wedge') {
+    const [w, h, l] = spec.half;
+    return new CANNON.ConvexPolyhedron({
+      vertices: [V([-w, -h, -l]), V([w, -h, -l]), V([w, h, -l]), V([-w, h, -l]), V([-w, -h, l]), V([w, -h, l])],
+      faces: [[0, 3, 2, 1], [0, 1, 5, 4], [3, 4, 5, 2], [0, 4, 3], [1, 2, 5]],
+    });
+  }
+  throw new Error('unknown shape ' + spec.kind);
+}
+
+// ── Build checking ─────────────────────────────────────────────────────────
+// Forgiving on purpose: it reports every problem it can find in plain words.
+function validateBuild(build, cfg = CONFIG) {
+  const errors = [];
+  const warnings = [];
+  let mass = 0, cost = 0;
+  if (!build || !Array.isArray(build.parts)) return { ok: false, errors: ['The build needs a "parts" list.'], warnings, mass, cost };
+  const ids = new Map();
+  const cores = build.parts.filter((p) => p.type === 'core');
+  if (cores.length !== 1) errors.push(`A bot needs exactly one core part; this build has ${cores.length}.`);
+  if (build.parts.length > cfg.budget.maxParts) errors.push(`Too many parts: ${build.parts.length}, the limit is ${cfg.budget.maxParts}.`);
+  for (const p of build.parts) {
+    const where = `Part "${p.id}"`;
+    if (!p.id || typeof p.id !== 'string') { errors.push('Every part needs a text "id".'); continue; }
+    if (ids.has(p.id)) errors.push(`${where}: this id is used twice.`);
+    ids.set(p.id, p);
+    if (!cfg.parts[p.type]) { errors.push(`${where}: unknown type "${p.type}". Use one of ${Object.keys(cfg.parts).join(', ')}.`); continue; }
+    if (p.type !== 'core' && p.type !== 'drive' && !cfg.materials[p.material]) {
+      errors.push(`${where}: unknown material "${p.material}". Use one of ${Object.keys(cfg.materials).join(', ')}.`); continue;
+    }
+    const lim = cfg.parts[p.type];
+    if (BOX_TYPES.includes(p.type) || p.type === 'wedge') {
+      if (!Array.isArray(p.size) || p.size.length !== 3 || p.size.some((x) => !(x > 0.02))) { errors.push(`${where}: "size" must be three lengths, each above 0.02.`); continue; }
+      const a = [...p.size].sort((x, y) => x - y), b = [...lim.maxSize].sort((x, y) => x - y);
+      if (a.some((x, i) => x > b[i] + 1e-9)) errors.push(`${where}: size ${JSON.stringify(p.size)} is larger than a ${p.type} may be (${JSON.stringify(lim.maxSize)}).`);
+    }
+    if (p.type === 'disc') {
+      if (!(p.radius > 0.05) || !(p.thickness > 0.02)) { errors.push(`${where}: a disc needs "radius" above 0.05 and "thickness" above 0.02.`); continue; }
+      if (p.radius > lim.maxRadius || p.thickness > lim.maxThickness) errors.push(`${where}: a disc may be at most radius ${lim.maxRadius} and thickness ${lim.maxThickness}.`);
+    }
+    if (p.type === 'ball') {
+      if (!(p.radius > 0.03)) { errors.push(`${where}: a ball needs "radius" above 0.03.`); continue; }
+      if (p.radius > lim.maxRadius) errors.push(`${where}: a ball may be at most radius ${lim.maxRadius}.`);
+    }
+    if (p.type !== 'core') {
+      if (!Array.isArray(p.pos) || p.pos.length !== 3 || p.pos.some((x) => typeof x !== 'number')) { errors.push(`${where}: "pos" must be three numbers [x, y, z] measured from the core.`); continue; }
+      const jt = p.type === 'drive' ? 'motor' : (p.joint && p.joint.type) || 'fixed';
+      if (!cfg.joints[jt]) errors.push(`${where}: unknown joint type "${jt}". Use fixed, hinge or motor.`);
+      if (p.type !== 'drive' && (jt === 'hinge' || jt === 'motor')) {
+        const ax = p.joint.axis;
+        if (!Array.isArray(ax) || ax.length !== 3 || Math.hypot(...ax) < 1e-6) errors.push(`${where}: a ${jt} joint needs an "axis" such as [0, 1, 0].`);
+      }
+      const b = cfg.budget.box;
+      if (Math.abs(p.pos[0]) > b[0] / 2 || Math.abs(p.pos[1]) > b[1] / 2 || Math.abs(p.pos[2]) > b[2] / 2) errors.push(`${where}: its centre is outside the build box of ${JSON.stringify(b)} around the core.`);
+    }
+    try { const s = partSpec(p, cfg); mass += s.mass; cost += s.cost + (p.type === 'core' || p.type === 'drive' ? 0 : cfg.joints[(p.joint && p.joint.type) || 'fixed']?.cost || 0); } catch (e) { /* reported above */ }
+  }
+  for (const p of build.parts) {
+    if (p.type === 'core' || !p.id) continue;
+    if (!ids.has(p.parent)) { errors.push(`Part "${p.id}": its "parent" is "${p.parent}", which is not a part in this build.`); continue; }
+    let cur = p, hops = 0;
+    while (cur && cur.type !== 'core' && hops++ < 100) cur = ids.get(cur.parent);
+    if (!cur || cur.type !== 'core') errors.push(`Part "${p.id}": following its parents never reaches the core.`);
+  }
+  if (mass > cfg.budget.mass) errors.push(`Over the mass allowance: ${r2(mass)} kg, the limit is ${cfg.budget.mass} kg.`);
+  if (cost > cfg.budget.cost) errors.push(`Over the cost allowance: ${r2(cost)}, the limit is ${cfg.budget.cost}.`);
+  if (!build.parts.some((p) => p.type === 'drive' || (p.joint && p.joint.type === 'motor'))) warnings.push('Nothing in this build is powered, so it cannot move.');
+  return { ok: errors.length === 0, errors, warnings, mass: r2(mass), cost: r2(cost) };
+}
+
+// ── Match ──────────────────────────────────────────────────────────────────
+const GROUND = 1, DEBRIS = 8;
+const BOT_BIT = [2, 4];
+
+function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
+  const cfg = config;
+  const dt = 1 / cfg.physics.hz;
+  const stepsPerControl = Math.round(cfg.physics.hz / cfg.physics.controlHz);
+  const rng = mulberry32(seed);
+  const world = new CANNON.World();
+  world.gravity.set(0, -cfg.physics.gravity, 0);
+  world.solver.iterations = cfg.physics.solverIterations;
+  world.allowSleep = false;
+  world.defaultContactMaterial.friction = cfg.arena.slide;
+  world.defaultContactMaterial.restitution = 0.15;
+
+  const matFloor = new CANNON.Material('floor');
+  const matRubber = new CANNON.Material('rubber');
+  const matHard = new CANNON.Material('hard');
+  world.addContactMaterial(new CANNON.ContactMaterial(matFloor, matRubber, { friction: cfg.arena.grip, restitution: 0.05 }));
+  world.addContactMaterial(new CANNON.ContactMaterial(matFloor, matHard, { friction: cfg.arena.slide, restitution: 0.1 }));
+  world.addContactMaterial(new CANNON.ContactMaterial(matHard, matHard, { friction: 0.3, restitution: 0.2 }));
+  world.addContactMaterial(new CANNON.ContactMaterial(matRubber, matHard, { friction: 0.6, restitution: 0.1 }));
+
+  const half = cfg.arena.size / 2;
+  const floor = new CANNON.Body({ mass: 0, material: matFloor, collisionFilterGroup: GROUND, collisionFilterMask: -1 });
+  floor.addShape(new CANNON.Box(new CANNON.Vec3(half, cfg.arena.thickness / 2, half)));
+  floor.position.set(0, -cfg.arena.thickness / 2, 0);
+  world.addBody(floor);
+
+  const m = {
+    config: cfg, seed, t: 0, steps: 0, done: false, result: null,
+    events: [], track: [], frames: [], frameFlags: [], frameTimes: [],
+    bots: [], parts: [], world,
+  };
+  const log = (type, bot, text, data = {}) => m.events.push({ t: r2(m.t), type, bot, text, ...data });
+
+  // Spawn: opposite ends, roughly facing each other, with a little seeded variation.
+  const spawns = [0, 1].map((i) => {
+    const side = i === 0 ? -1 : 1;
+    const x = (rng() - 0.5) * 3, z = side * (half - 3.5);
+    const yaw = Math.atan2(-x, -z) + (rng() - 0.5) * 0.5;
+    return { x, z, yaw };
+  });
+
+  builds.forEach((build, i) => {
+    const check = validateBuild(build, cfg);
+    const bot = {
+      index: i, name: build.name || `Bot ${i + 1}`, build, check, program: programs[i], mem: {},
+      parts: [], byId: new Map(), bodies: [], constraints: [], out: {}, alive: true,
+      startMass: 0, liveMass: 0, flipped: false, airborne: false, warned: false, history: [],
+    };
+    const sp = spawns[i];
+    const q0 = new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 1, 0), sp.yaw);
+    // Find the lowest point of the build so it starts resting just above the floor.
+    let lowest = 0;
+    const specs = build.parts.map((def) => partSpec(def, cfg));
+    build.parts.forEach((def, k) => {
+      const y = (def.pos ? def.pos[1] : 0) - (def.rot ? Math.max(...specs[k].half) : specs[k].half[1]);
+      lowest = Math.min(lowest, y);
+    });
+    const origin = new CANNON.Vec3(sp.x, -lowest + 0.02, sp.z);
+    build.parts.forEach((def, k) => {
+      const spec = specs[k];
+      const lq = new CANNON.Quaternion();
+      if (def.rot) lq.setFromEuler((def.rot[0] * Math.PI) / 180, (def.rot[1] * Math.PI) / 180, (def.rot[2] * Math.PI) / 180, 'XYZ');
+      const lp = def.pos ? V(def.pos) : new CANNON.Vec3();
+      const jt = def.type === 'core' ? null : def.type === 'drive' ? 'motor' : (def.joint && def.joint.type) || 'fixed';
+      const axis = def.type === 'drive' ? [1, 0, 0] : (def.joint && def.joint.axis) || [0, 1, 0];
+      const shape = makeShape(spec);
+      const p = {
+        id: def.id, def, spec, bot, index: m.parts.length, shape, mass: spec.mass,
+        jointType: jt, axisLocal: V(axis).unit(), intact: def.type !== 'core', live: true, lostAt: null,
+        wpos: origin.vadd(q0.vmult(lp)), wquat: q0.mult(lq), wvel: new CANNON.Vec3(), wang: new CANNON.Vec3(),
+        parent: null, children: [], anchorLocal: new CANNON.Vec3(), body: null, localPos: null, localQuat: null, subMass: 0,
+        maxSpeed: def.type === 'drive' ? cfg.parts.drive.maxSpeed : cfg.joints.motor.maxSpeed,
+        torque: def.type === 'drive' ? cfg.parts.drive.torque : cfg.joints.motor.torque,
+      };
+      shape.material = def.type === 'drive' ? matRubber : matHard;
+      shape.partRef = p;
+      bot.parts.push(p); bot.byId.set(p.id, p); m.parts.push(p);
+      bot.startMass += p.mass;
+    });
+    for (const p of bot.parts) {
+      if (p.def.type === 'core') { bot.core = p; continue; }
+      p.parent = bot.byId.get(p.def.parent);
+      p.parent.children.push(p);
+      if (p.jointType === 'fixed') {
+        // Anchor: the point of this part closest to its parent's centre.
+        const rel = p.wquat.inverse().vmult(p.parent.wpos.vsub(p.wpos));
+        p.anchorLocal.set(clamp(rel.x, -p.spec.half[0], p.spec.half[0]), clamp(rel.y, -p.spec.half[1], p.spec.half[1]), clamp(rel.z, -p.spec.half[2], p.spec.half[2]));
+      }
+      const base = p.def.type === 'drive' ? cfg.parts.drive.strength : cfg.joints[p.jointType].strength;
+      p.strength = base * Math.min(p.spec.strength, p.parent.spec.strength);
+    }
+    m.bots.push(bot);
+    assemble(bot);
+    if (!check.ok) log('build_error', i, `${bot.name} has build problems: ${check.errors.join(' ')}`);
+  });
+
+  function partWorld(p, pos, quat) {
+    p.body.quaternion.vmult(p.localPos, pos); pos.vadd(p.body.position, pos);
+    if (quat) p.body.quaternion.mult(p.localQuat, quat);
+  }
+
+  // Rebuild a bot's rigid bodies from its parts and whichever joints are still intact.
+  function assemble(bot) {
+    for (const p of bot.parts) {
+      if (!p.body) continue;
+      const pos = new CANNON.Vec3(), quat = new CANNON.Quaternion();
+      partWorld(p, pos, quat);
+      const rel = pos.vsub(p.body.position);
+      p.wvel = p.body.velocity.vadd(p.body.angularVelocity.cross(rel));
+      p.wang = p.body.angularVelocity.clone();
+      p.wpos = pos; p.wquat = quat;
+    }
+    for (const c of bot.constraints) world.removeConstraint(c);
+    for (const b of bot.bodies) world.removeBody(b);
+    bot.constraints = []; bot.bodies = [];
+
+    // Which parts still reach the core through intact joints?
+    for (const p of bot.parts) p.live = false;
+    const stack = [bot.core];
+    bot.core.live = true;
+    while (stack.length) { const p = stack.pop(); for (const c of p.children) if (c.intact) { c.live = true; stack.push(c); } }
+    const sub = (p) => { p.subMass = p.mass; for (const c of p.children) if (c.intact) p.subMass += sub(c); return p.subMass; };
+    for (const p of bot.parts) if (!p.parent || !p.intact) sub(p);
+    bot.liveMass = bot.core.subMass;
+
+    // Group parts joined by intact fixed joints into one rigid body each.
+    const root = (p) => { while (p.parent && p.intact && p.jointType === 'fixed') p = p.parent; return p; };
+    const groups = new Map();
+    for (const p of bot.parts) { const g = root(p); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(p); }
+    for (const [g, list] of groups) {
+      let M = 0; const com = new CANNON.Vec3(), vel = new CANNON.Vec3();
+      let heavy = list[0];
+      for (const p of list) { M += p.mass; com.vadd(p.wpos.scale(p.mass), com); vel.vadd(p.wvel.scale(p.mass), vel); if (p.mass > heavy.mass) heavy = p; }
+      com.scale(1 / M, com); vel.scale(1 / M, vel);
+      const body = new CANNON.Body({ mass: M, angularDamping: 0.02, linearDamping: 0.01 });
+      body.position.copy(com); body.quaternion.copy(g.wquat);
+      const qi = g.wquat.inverse();
+      for (const p of list) {
+        p.localPos = qi.vmult(p.wpos.vsub(com)); p.localQuat = qi.mult(p.wquat); p.body = body;
+        body.addShape(p.shape, p.localPos, p.localQuat);
+      }
+      body.velocity.copy(vel); body.angularVelocity.copy(heavy.wang);
+      body.pv = vel.clone(); body.pw = heavy.wang.clone();
+      body.live = g.live; body.bot = bot; body.rootPart = g;
+      const other = BOT_BIT[1 - bot.index], own = BOT_BIT[bot.index];
+      if (g.live) { body.collisionFilterGroup = own; body.collisionFilterMask = GROUND | other | DEBRIS; }
+      else {
+        body.collisionFilterGroup = DEBRIS; body.collisionFilterMask = GROUND | other | DEBRIS;
+        body.rejoinAt = Math.max(...list.map((p) => p.lostAt ?? m.t)) + 0.4;
+      }
+      world.addBody(body); bot.bodies.push(body);
+    }
+    for (const p of bot.parts) {
+      if (!p.parent || !p.intact || p.jointType === 'fixed') continue;
+      const A = p.parent.body, B = p.body;
+      const axisW = p.wquat.vmult(p.axisLocal);
+      const c = new CANNON.HingeConstraint(A, B, {
+        pivotA: A.quaternion.inverse().vmult(p.wpos.vsub(A.position)), pivotB: B.quaternion.inverse().vmult(p.wpos.vsub(B.position)),
+        axisA: A.quaternion.inverse().vmult(axisW), axisB: B.quaternion.inverse().vmult(axisW), collideConnected: false,
+      });
+      if (p.jointType === 'motor' && p.live) { c.enableMotor(); c.setMotorMaxForce(p.torque * dt); /* the solver limits impulse per step, so torque x dt */ c.setMotorSpeed(0); }
+      c.part = p;
+      world.addConstraint(c); bot.constraints.push(c);
+    }
+  }
+
+  function sense(bot) {
+    const foe = m.bots[1 - bot.index];
+    const b = bot.core.body, f = foe.core.body;
+    const fwd = b.quaternion.vmult(new CANNON.Vec3(0, 0, 1)), up = b.quaternion.vmult(new CANNON.Vec3(0, 1, 0));
+    const heading = Math.atan2(fwd.x, fwd.z);
+    const dx = f.position.x - b.position.x, dz = f.position.z - b.position.z;
+    const fup = f.quaternion.vmult(new CANNON.Vec3(0, 1, 0));
+    const parts = {};
+    for (const p of bot.parts) parts[p.id] = p.live;
+    return {
+      t: m.t,
+      self: {
+        x: b.position.x, y: b.position.y, z: b.position.z, heading, upright: up.y,
+        speed: Math.hypot(b.velocity.x, b.velocity.z), forwardSpeed: b.velocity.x * fwd.x + b.velocity.z * fwd.z,
+        turnRate: b.angularVelocity.y, massLeft: bot.liveMass / bot.startMass, parts,
+      },
+      enemy: { bearing: wrap(Math.atan2(dx, dz) - heading), distance: Math.hypot(dx, dz), height: f.position.y - b.position.y, upright: fup.y, massLeft: foe.liveMass / foe.startMass },
+      arena: {
+        halfSize: half, edgeDistance: half - Math.max(Math.abs(b.position.x), Math.abs(b.position.z)),
+        centerBearing: wrap(Math.atan2(-b.position.x, -b.position.z) - heading), centerDistance: Math.hypot(b.position.x, b.position.z),
+      },
+    };
+  }
+
+  function control() {
+    for (const bot of m.bots) {
+      if (!bot.alive) continue;
+      const out = {};
+      try { bot.program(sense(bot), out, bot.mem); bot.out = out; }
+      catch (e) { if (!bot.programFailed) { bot.programFailed = true; log('program_error', bot.index, `${bot.name}'s control program threw an error: ${e.message}`); } }
+      for (const c of bot.constraints) {
+        const p = c.part;
+        if (p.jointType !== 'motor' || !p.live) continue;
+        const v = clamp(Number(out[p.id]) || 0, -1, 1);
+        c.setMotorSpeed(-v * p.maxSpeed);
+      }
+    }
+  }
+
+  // After each physics step, see whether any hit was hard enough to snap a joint.
+  const cp = new CANNON.Vec3(), pp = new CANNON.Vec3(), hitLog = new Map();
+  // Velocity of a contact point as it was just before the step, i.e. before the hit changed it.
+  const pointVel = (b, r) => (b.pv ? b.pv.vadd(b.pw.cross(r)) : new CANNON.Vec3());
+  function stress() {
+    const breaks = new Map();
+    // One log line per hard hit between two parts. The faster part is named as the one doing the hitting.
+    const noteHit = (p, q, sp, sq, J, speed) => {
+      if (!p || !q || J < cfg.breakage.logImpulse || (!p.live && !q.live)) return;
+      const [striker, target] = (sp >= sq ? [p, q] : [q, p]);
+      const key = [p.index, q.index].sort().join('-');
+      if (m.t - (hitLog.get(key) ?? -9) < 0.4) return;
+      hitLog.set(key, m.t);
+      const name = (x) => (x.live ? `${x.bot.name}'s ${x.id}` : `a loose ${x.id}`);
+      log('hit', target.live ? target.bot.index : striker.bot.index, `${name(striker)} hit ${name(target)} (impulse ${Math.round(J)}, closing at ${Math.round(speed)} m/s).`, { striker: striker.id, target: target.id, impulse: Math.round(J), speed: r2(speed) });
+    };
+    const side = (body, shape, r, J, speed, otherShape) => {
+      const part = shape && shape.partRef;
+      if (!part || !part.live || !body.live) return;
+      body.position.vadd(r, cp);
+      const bot = part.bot;
+      const op = otherShape && otherShape.partRef;
+      let cur = part, best = null;
+      while (cur.parent && cur.intact) {
+        partWorld(cur, pp);
+        const a = cur.body.quaternion.vmult(cur.localQuat.vmult(cur.anchorLocal)); pp.vadd(a, pp);
+        const lever = pp.distanceTo(cp);
+        const share = (bot.liveMass - cur.subMass) / bot.liveMass;
+        const load = J * share * (1 + lever / cfg.breakage.leverLength) * (0.5 + speed / cfg.breakage.speedRef);
+        const ratio = load / (cur.strength * cfg.breakage.scale);
+        if (ratio > 1 && (!best || ratio > best.ratio)) best = { part: cur, ratio, load };
+        cur = cur.parent;
+      }
+      if (best) { const prev = breaks.get(best.part); if (!prev || prev.ratio < best.ratio) breaks.set(best.part, { ...best, by: op }); }
+    };
+    for (const eq of world.contacts) {
+      const J = Math.abs(eq.multiplier) * dt;
+      if (J < 20) continue;
+      const vi = pointVel(eq.bi, eq.ri), vj = pointVel(eq.bj, eq.rj);
+      const speed = Math.abs(vi.vsub(vj).dot(eq.ni));
+      noteHit(eq.si && eq.si.partRef, eq.sj && eq.sj.partRef, vi.length(), vj.length(), J, speed);
+      side(eq.bi, eq.si, eq.ri, J, speed, eq.sj);
+      side(eq.bj, eq.sj, eq.rj, J, speed, eq.si);
+    }
+    if (!breaks.size) return;
+    const dirty = new Set();
+    for (const [part, info] of breaks) {
+      if (!part.intact) continue;
+      part.intact = false;
+      const lost = [];
+      const mark = (p) => { lost.push(p.id); p.lostAt = m.t; for (const c of p.children) if (c.intact) mark(c); };
+      mark(part);
+      const cause = info.by ? (info.by.bot === part.bot ? 'its own parts' : info.by.live ? `${info.by.bot.name}'s ${info.by.id}` : `loose ${info.by.id}`) : 'the floor';
+      log('part_lost', part.bot.index, `${part.bot.name} lost ${lost.join(', ')}: the ${part.jointType} joint on ${part.id} took a load of ${Math.round(info.load)} from ${cause}, above its limit of ${Math.round(part.strength * cfg.breakage.scale)}.`, { parts: lost, load: Math.round(info.load) });
+      dirty.add(part.bot);
+    }
+    for (const bot of dirty) assemble(bot);
+  }
+
+  function record() {
+    const f = new Float32Array(m.parts.length * 7), flags = new Uint8Array(m.parts.length);
+    const pos = new CANNON.Vec3(), q = new CANNON.Quaternion();
+    m.parts.forEach((p, i) => { partWorld(p, pos, q); f.set([pos.x, pos.y, pos.z, q.x, q.y, q.z, q.w], i * 7); flags[i] = p.live ? 0 : 1; });
+    m.frames.push(f); m.frameFlags.push(flags); m.frameTimes.push(m.t);
+  }
+
+  function observe() {
+    for (const bot of m.bots) {
+      const b = bot.core.body;
+      const up = b.quaternion.vmult(new CANNON.Vec3(0, 1, 0)).y;
+      if (!bot.flipped && up < -0.3) { bot.flipped = true; log('flipped', bot.index, `${bot.name} is upside down.`); }
+      else if (bot.flipped && up > 0.5) { bot.flipped = false; log('righted', bot.index, `${bot.name} is back on its wheels.`); }
+      const high = b.position.y > bot.restHeight + 0.5;
+      if (high && !bot.airborne && b.position.y > 0) log('airborne', bot.index, `${bot.name} was thrown into the air.`);
+      bot.airborne = high;
+    }
+  }
+
+  function sampleTrack() {
+    const row = { t: r2(m.t) };
+    m.bots.forEach((bot) => {
+      const b = bot.core.body;
+      const fwd = b.quaternion.vmult(new CANNON.Vec3(0, 0, 1)), up = b.quaternion.vmult(new CANNON.Vec3(0, 1, 0));
+      row[bot.index] = { x: r2(b.position.x), y: r2(b.position.y), z: r2(b.position.z), heading: r2(Math.atan2(fwd.x, fwd.z)), upright: r2(up.y), speed: r2(Math.hypot(b.velocity.x, b.velocity.z)) };
+      bot.history.push([m.t, b.position.x, b.position.y, b.position.z]);
+    });
+    m.track.push(row);
+  }
+
+  function judge() {
+    const out = m.bots.map((bot) => bot.core.body.position.y < -cfg.arena.ringOutDepth);
+    const stuck = m.bots.map((bot) => {
+      if (m.t < cfg.match.graceSeconds + cfg.match.countOutSeconds) return false;
+      const h = bot.history, now = h[h.length - 1];
+      let reach = 0;
+      for (let i = h.length - 1; i >= 0 && now[0] - h[i][0] <= cfg.match.countOutSeconds; i--) reach = Math.max(reach, Math.hypot(h[i][1] - now[1], h[i][2] - now[2], h[i][3] - now[3]));
+      if (!bot.warned && reach < cfg.match.countOutRadius && m.t > cfg.match.graceSeconds + cfg.match.countOutSeconds * 0.5) { /* placeholder for a future warning event */ }
+      return reach < cfg.match.countOutRadius;
+    });
+    const end = (winner, reason, text) => { m.done = true; m.result = { winner, reason, t: r2(m.t), text }; log('end', winner, text); };
+    const n = m.bots.map((b) => b.name);
+    if (out[0] || out[1]) {
+      if (out[0] && out[1]) return end(null, 'double_ring_out', 'Both bots left the arena. Draw.');
+      const w = out[0] ? 1 : 0;
+      return end(w, 'ring_out', `${n[1 - w]} fell out of the arena. ${n[w]} wins by ring-out.`);
+    }
+    if (stuck[0] || stuck[1]) {
+      if (stuck[0] && stuck[1]) return end(null, 'both_stuck', `Neither bot moved for ${cfg.match.countOutSeconds} seconds. Draw.`);
+      const w = stuck[0] ? 1 : 0;
+      return end(w, 'count_out', `${n[1 - w]} did not move for ${cfg.match.countOutSeconds} seconds and was counted out. ${n[w]} wins.`);
+    }
+    if (m.t >= cfg.match.maxSeconds) {
+      const left = m.bots.map((b) => b.liveMass / b.startMass);
+      if (Math.abs(left[0] - left[1]) < 0.02) return end(null, 'time_draw', 'Time ran out with both bots about equally intact. Draw.');
+      const w = left[0] > left[1] ? 0 : 1;
+      return end(w, 'time_decision', `Time ran out. ${n[w]} wins on condition, with ${Math.round(left[w] * 100)}% of its mass still attached against ${Math.round(left[1 - w] * 100)}%.`);
+    }
+  }
+
+  m.bots.forEach((bot) => { bot.restHeight = bot.core.body.position.y; });
+  log('start', null, `${m.bots[0].name} against ${m.bots[1].name}, seed ${seed}.`);
+  record(); sampleTrack();
+
+  m.step = () => {
+    if (m.done) return;
+    if (m.steps % stepsPerControl === 0) control();
+    for (const bot of m.bots) for (const b of bot.bodies) { b.pv.copy(b.velocity); b.pw.copy(b.angularVelocity); }
+    world.step(dt);
+    m.steps++; m.t = m.steps * dt;
+    stress();
+    // A broken-off part ignores the bot it came from until the two are clear of each other,
+    // so nothing gets flung by starting out overlapped.
+    if (m.steps % stepsPerControl === 0) for (const bot of m.bots) for (const b of bot.bodies) {
+      if (b.live || !b.rejoinAt || m.t < b.rejoinAt) continue;
+      b.updateAABB();
+      const clear = bot.bodies.every((o) => { if (!o.live) return true; o.updateAABB(); return !b.aabb.overlaps(o.aabb); });
+      if (clear) { b.collisionFilterMask |= BOT_BIT[bot.index]; b.rejoinAt = null; }
+    }
+    if (m.steps % stepsPerControl === 0) { record(); observe(); }
+    if (m.steps % Math.round(cfg.physics.hz / 5) === 0) { sampleTrack(); judge(); }
+  };
+  m.run = () => { while (!m.done) m.step(); return m; };
+  m.summary = () => ({
+    seed, result: m.result,
+    bots: m.bots.map((b) => ({ name: b.name, massLeft: r2(b.liveMass / b.startMass), partsLost: b.parts.filter((p) => !p.live).map((p) => p.id), hitsTaken: m.events.filter((e) => e.type === 'hit' && e.bot === b.index).length })),
+  });
+  return m;
+}
+
+// Two hand-written bots. Each is a build (the parts list a model would fill in)
+// and a control program that runs 30 times a second.
+
+const DOORSTOP = {
+  name: 'Doorstop',
+  note: 'House bot. A low wedge on four wheels that gets under things and shoves.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [1.2, 0.08, 1.4], pos: [0, -0.15, 0], parent: 'core' },
+    { id: 'wheel_fl', type: 'drive', pos: [0.72, -0.2, 0.45], parent: 'deck' },
+    { id: 'wheel_fr', type: 'drive', pos: [-0.72, -0.2, 0.45], parent: 'deck' },
+    { id: 'wheel_rl', type: 'drive', pos: [0.72, -0.2, -0.45], parent: 'deck' },
+    { id: 'wheel_rr', type: 'drive', pos: [-0.72, -0.2, -0.45], parent: 'deck' },
+    { id: 'scoop', type: 'wedge', material: 'aluminium', size: [1.2, 0.34, 0.6], pos: [0, -0.31, 1.0], parent: 'deck' },
+  ],
+};
+
+function doorstopProgram(s, out, mem) {
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  let drive = 1;
+  let turn = clamp(s.enemy.bearing * 2);
+  // Stay on the floor: near an edge, head back toward the middle first.
+  if (s.arena.edgeDistance < 1.4 && Math.abs(s.arena.centerBearing) > 0.9) {
+    turn = clamp(s.arena.centerBearing * 2.5);
+    drive = 0.25;
+  }
+  // If we have been pushing without moving, back off and come again.
+  mem.still = s.self.speed < 0.25 ? (mem.still || 0) + 1 : 0;
+  if (mem.still > 45) { mem.reverseUntil = s.t + 0.9; mem.still = 0; }
+  if (s.t < (mem.reverseUntil || 0)) { drive = -1; turn = 0.5; }
+  out.wheel_fl = out.wheel_rl = clamp(drive - turn);
+  out.wheel_fr = out.wheel_rr = clamp(drive + turn);
+}
+
+const LAWNMOWER = {
+  name: 'Lawnmower',
+  note: 'A heavy steel bar on a fast motor, carried on the nose. Nothing in the kit is called a weapon; this is one built from a beam.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [1.1, 0.08, 1.6], pos: [0, -0.15, 0.2], parent: 'core' },
+    { id: 'wheel_fl', type: 'drive', pos: [0.67, -0.2, 0.55], parent: 'deck' },
+    { id: 'wheel_fr', type: 'drive', pos: [-0.67, -0.2, 0.55], parent: 'deck' },
+    { id: 'wheel_rl', type: 'drive', pos: [0.67, -0.2, -0.45], parent: 'deck' },
+    { id: 'wheel_rr', type: 'drive', pos: [-0.67, -0.2, -0.45], parent: 'deck' },
+    { id: 'blade', type: 'beam', material: 'steel', size: [1.0, 0.14, 0.26], pos: [0, -0.04, 0.95], parent: 'deck', joint: { type: 'motor', axis: [0, 1, 0] } },
+  ],
+};
+
+function lawnmowerProgram(s, out, mem) {
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  out.blade = 1;
+  // Let the blade spin up before closing in.
+  let drive = s.t < 1.5 ? 0 : 0.7;
+  let turn = clamp(s.enemy.bearing * 2.5);
+  if (Math.abs(s.enemy.bearing) > 0.8) drive = 0.15;
+  if (s.arena.edgeDistance < 1.6 && Math.abs(s.arena.centerBearing) > 0.9) {
+    turn = clamp(s.arena.centerBearing * 2.5);
+    drive = 0.25;
+  }
+  mem.still = s.t > 2 && s.self.speed < 0.2 ? (mem.still || 0) + 1 : 0;
+  if (mem.still > 60) { mem.reverseUntil = s.t + 1.0; mem.still = 0; }
+  if (s.t < (mem.reverseUntil || 0)) { drive = -1; turn = -0.4; }
+  out.wheel_fl = out.wheel_rl = clamp(drive - turn);
+  out.wheel_fr = out.wheel_rr = clamp(drive + turn);
+}
+
+const ROSTER = [
+  { build: LAWNMOWER, program: lawnmowerProgram },
+  { build: DOORSTOP, program: doorstopProgram },
+];
+
+
+
+
+
+// The page: runs a whole fight up front, then replays the recording.
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const TEAM = ['a', 'b'];
+const FPS = CONFIG.physics.controlHz;
+
+let cfg = structuredClone(CONFIG);
+let match = null;
+let playhead = 0;
+let playing = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+let speed = 1;
+
+// ── Scene ──────────────────────────────────────────────────────────────────
+const canvas = $('view');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(42, 16 / 10, 0.1, 200);
+const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 1.5);
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(7, 14, 5);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 40 });
+scene.add(hemi, sun);
+
+const arena = new THREE.Group();
+scene.add(arena);
+let floorMat, gridLines, edgeLine;
+function buildArena() {
+  arena.clear();
+  const s = cfg.arena.size, t = cfg.arena.thickness;
+  floorMat = new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0.05 });
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(s, t, s), floorMat);
+  floor.position.y = -t / 2; floor.receiveShadow = true;
+  gridLines = new THREE.GridHelper(s, s, 0x888888, 0x888888);
+  gridLines.position.y = 0.005;
+  const h = s / 2;
+  edgeLine = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([[-h, -h], [h, -h], [h, h], [-h, h]].map(([x, z]) => new THREE.Vector3(x, 0.01, z))), new THREE.LineBasicMaterial());
+  arena.add(floor, gridLines, edgeLine);
+}
+
+function partMesh(part, color) {
+  const sp = part.spec;
+  let geo;
+  if (sp.kind === 'box') geo = new THREE.BoxGeometry(sp.half[0] * 2, sp.half[1] * 2, sp.half[2] * 2);
+  else if (sp.kind === 'ball') geo = new THREE.SphereGeometry(sp.radius, 20, 14);
+  else if (sp.kind === 'disc') geo = new THREE.CylinderGeometry(sp.radius, sp.radius, sp.thickness, 28);
+  else if (sp.kind === 'wheel') { geo = new THREE.CylinderGeometry(sp.radius, sp.radius, sp.width, 22); geo.rotateZ(Math.PI / 2); }
+  else if (sp.kind === 'wedge') {
+    const [w, h, l] = sp.half;
+    const v = [[-w, -h, -l], [w, -h, -l], [w, h, -l], [-w, h, -l], [-w, -h, l], [w, -h, l]];
+    const tris = [[0, 3, 2], [0, 2, 1], [0, 1, 5], [0, 5, 4], [3, 4, 5], [3, 5, 2], [0, 4, 3], [1, 2, 5]];
+    geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat().flatMap((i) => v[i]), 3));
+    geo.computeVertexNormals();
+  }
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.35, flatShading: sp.kind === 'wedge' });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  if (sp.kind === 'wheel') {
+    // A pale stripe across the hub so you can see the wheel turning.
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(sp.width * 1.04, sp.radius * 1.5, 0.05), new THREE.MeshStandardMaterial({ color: 0xb8c0cc, roughness: 0.6 }));
+    mesh.add(stripe);
+  }
+  return mesh;
+}
+
+const botsGroup = new THREE.Group();
+scene.add(botsGroup);
+let meshes = [];
+function partColor(part) {
+  const team = new THREE.Color(css(part.bot.index === 0 ? '--team-a' : '--team-b'));
+  const t = part.def.type, m = part.def.material;
+  if (t === 'core') return team;
+  if (t === 'drive') return new THREE.Color(0x2b2f36);
+  const steel = new THREE.Color(0x6f7a88), alu = new THREE.Color(0xc4ccd6), plastic = new THREE.Color(0xe9e2cf);
+  const base = m === 'steel' ? steel : m === 'plastic' ? plastic : alu;
+  return base.lerp(team, m === 'steel' ? 0.35 : 0.5);
+}
+function buildMeshes() {
+  botsGroup.clear();
+  meshes = match.parts.map((p) => {
+    const mesh = partMesh(p, partColor(p));
+    mesh.userData.base = mesh.material.color.clone();
+    botsGroup.add(mesh);
+    return mesh;
+  });
+}
+function applyTheme() {
+  scene.background = new THREE.Color(css('--stage'));
+  if (floorMat) {
+    floorMat.color.set(css('--floor'));
+    gridLines.material.color.set(css('--grid')); gridLines.material.opacity = 0.5; gridLines.material.transparent = true;
+    edgeLine.material.color.set(css('--warn'));
+  }
+  if (match) meshes.forEach((mesh, i) => { mesh.userData.base = partColor(match.parts[i]); });
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+// ── Camera: orbits the midpoint between the two cores ───────────────────────
+const cam = { az: 0.7, el: 0.62, zoom: 1, target: new THREE.Vector3(), dist: 16 };
+let drag = null;
+canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); canvas.style.cursor = 'grabbing'; });
+canvas.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  cam.az -= (e.clientX - drag.x) * 0.008; cam.el = Math.max(0.12, Math.min(1.45, cam.el + (e.clientY - drag.y) * 0.006));
+  drag = { x: e.clientX, y: e.clientY };
+});
+const endDrag = () => { drag = null; canvas.style.cursor = 'grab'; };
+canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); cam.zoom = Math.max(0.45, Math.min(2.2, cam.zoom * (e.deltaY > 0 ? 1.08 : 0.93))); }, { passive: false });
+
+const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), grey = new THREE.Color(0x7d848e);
+function pose(time) {
+  const n = match.frames.length;
+  const f = Math.max(0, Math.min(n - 1, time * FPS));
+  const i0 = Math.floor(f), i1 = Math.min(n - 1, i0 + 1), k = f - i0;
+  const A = match.frames[i0], B = match.frames[i1], flags = match.frameFlags[i0];
+  const cores = [];
+  meshes.forEach((mesh, i) => {
+    const o = i * 7;
+    mesh.position.set(A[o] + (B[o] - A[o]) * k, A[o + 1] + (B[o + 1] - A[o + 1]) * k, A[o + 2] + (B[o + 2] - A[o + 2]) * k);
+    qa.set(A[o + 3], A[o + 4], A[o + 5], A[o + 6]); qb.set(B[o + 3], B[o + 4], B[o + 5], B[o + 6]);
+    mesh.quaternion.slerpQuaternions(qa, qb, k);
+    mesh.material.color.copy(mesh.userData.base);
+    if (flags[i]) mesh.material.color.lerp(grey, 0.6);
+    if (match.parts[i].def.type === 'core') cores.push(mesh.position);
+  });
+  const mid = cores[0].clone().add(cores[1]).multiplyScalar(0.5);
+  mid.y = Math.max(0, mid.y);
+  cam.target.lerp(mid, 0.08);
+  const want = Math.max(9, cores[0].distanceTo(cores[1]) * 1.25 + 7);
+  cam.dist += (want - cam.dist) * 0.05;
+}
+function render() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * renderer.getPixelRatio()) || canvas.height !== Math.round(h * renderer.getPixelRatio())) {
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  const d = cam.dist * cam.zoom;
+  camera.position.set(cam.target.x + d * Math.cos(cam.el) * Math.sin(cam.az), cam.target.y + d * Math.sin(cam.el), cam.target.z + d * Math.cos(cam.el) * Math.cos(cam.az));
+  camera.lookAt(cam.target);
+  renderer.render(scene, camera);
+}
+
+// ── Panels ─────────────────────────────────────────────────────────────────
+function duration() { return match ? match.frameTimes[match.frameTimes.length - 1] : 0; }
+function seek(t) { playhead = Math.max(0, Math.min(duration(), t)); }
+
+function fightData() {
+  return { summary: match.summary(), events: match.events, motionTrack: { samplesPerSecond: 5, fields: 'x, y, z in metres; heading in radians; upright is 1 when level and -1 when upside down; speed in m/s', samples: match.track } };
+}
+function renderLog() {
+  const r = match.result, s = match.summary();
+  $('result').innerHTML = esc(r.text);
+  $('verdict').textContent = '';
+  $('cond').innerHTML = s.bots.map((b, i) => `<div class="${TEAM[i]}"><b>${esc(b.name)}</b><span>${Math.round(b.massLeft * 100)}% of its mass still attached</span><span>${b.partsLost.length ? 'Lost ' + esc(b.partsLost.join(', ')) : 'No parts lost'}</span><span>${b.hitsTaken} hard hits taken</span></div>`).join('');
+  $('events').innerHTML = match.events.map((e, i) => `<li class="${e.type}" data-i="${i}" data-t="${e.t}" tabindex="0"><time>${e.t.toFixed(1)}</time><span><i class="who ${e.bot == null ? '' : TEAM[e.bot]}"></i>${esc(e.text)}</span></li>`).join('');
+  const d = duration();
+  $('ticks').innerHTML = match.events.filter((e) => e.type === 'part_lost' || e.type === 'hit' || e.type === 'flipped').map((e) => `<i class="${e.type === 'part_lost' ? 'lost' : ''}" style="left:${(e.t / d) * 100}%"></i>`).join('');
+  const data = fightData();
+  const shown = { ...data, motionTrack: { ...data.motionTrack, samples: data.motionTrack.samples.slice(0, 3).concat([`… ${data.motionTrack.samples.length - 3} more samples; Copy JSON includes them all`]) } };
+  $('json').textContent = JSON.stringify(shown, null, 1);
+}
+function renderBots() {
+  $('tab-bots').innerHTML = `<p class="note">A bot is two things: a parts list and a control program. The program reads sensors and sets motors ${cfg.physics.controlHz} times a second. Positions are in metres from the core; +z is forward, +y is up.</p>` + match.bots.map((b, i) => {
+    const c = b.check;
+    return `<div class="bot"><div><h3 class="${TEAM[i]}">${esc(b.name)}</h3><p>${esc(b.build.note || '')}</p>
+      <div class="meter"><span>mass ${c.mass} / ${cfg.budget.mass} kg</span><span>cost ${c.cost} / ${cfg.budget.cost}</span><span class="${c.ok ? 'ok' : 'bad'}">${c.ok ? 'build passes checks' : esc(c.errors.join(' '))}</span></div></div>
+      <details><summary>Build (${b.build.parts.length} parts)</summary><pre>${esc('{\n "name": ' + JSON.stringify(b.build.name) + ',\n "parts": [\n' + b.build.parts.map((p) => '  ' + JSON.stringify(p)).join(',\n') + '\n ]\n}')}</pre></details>
+      <details><summary>Control program</summary><pre>${esc(b.program.toString())}</pre></details></div>`;
+  }).join('');
+}
+function renderConfig() { $('config').textContent = JSON.stringify(cfg, null, 1); $('version').textContent = 'prototype ' + cfg.version; }
+
+function runFight() {
+  const seed = Math.max(1, Math.floor(Number($('seed').value) || 1));
+  $('seed').value = seed;
+  $('result').textContent = 'Simulating the fight.';
+  setTimeout(() => {
+    match = createMatch({ builds: ROSTER.map((r) => r.build), programs: ROSTER.map((r) => r.program), seed, config: structuredClone(cfg) });
+    match.run();
+    $('nameA').textContent = match.bots[0].name; $('nameB').textContent = match.bots[1].name;
+    buildArena(); buildMeshes(); applyTheme();
+    playhead = 0; lastEvent = -1;
+    pose(0); cam.target.set(0, 0, 0);
+    renderLog(); renderBots(); renderConfig();
+    window.__fight = fightData();
+  }, 20);
+}
+
+// ── Controls ───────────────────────────────────────────────────────────────
+$('play').addEventListener('click', () => { if (!playing && playhead >= duration() - 0.01) playhead = 0; playing = !playing; });
+$('scrub').addEventListener('input', (e) => { playing = false; seek(Number(e.target.value) * duration()); });
+$('speed').addEventListener('change', (e) => { speed = Number(e.target.value); });
+$('next').addEventListener('click', () => { $('seed').value = Number($('seed').value) + 1; playing = true; runFight(); });
+$('seed').addEventListener('change', () => { playing = true; runFight(); });
+$('events').addEventListener('click', (e) => { const li = e.target.closest('li'); if (li) { seek(Number(li.dataset.t) - 0.4); playing = true; } });
+$('events').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.click(); });
+$('copy').addEventListener('click', async () => {
+  const text = JSON.stringify(fightData());
+  try { await navigator.clipboard.writeText(text); $('copied').textContent = 'Copied.'; }
+  catch { $('json').textContent = JSON.stringify(fightData(), null, 1); $('copied').textContent = 'Copy was blocked here, so the full data is shown below to select.'; }
+});
+document.querySelectorAll('.tabs button').forEach((btn) => btn.addEventListener('click', () => {
+  document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b === btn)));
+  for (const t of ['log', 'bots', 'settings']) $('tab-' + t).hidden = t !== btn.dataset.tab;
+}));
+const knobs = [
+  ['k-break', 'o-break', (v) => { cfg.breakage.scale = v; }, (v) => v.toFixed(1) + 'x', () => CONFIG.breakage.scale],
+  ['k-grav', 'o-grav', (v) => { cfg.physics.gravity = v; }, (v) => v.toFixed(1), () => CONFIG.physics.gravity],
+  ['k-grip', 'o-grip', (v) => { cfg.arena.grip = v; }, (v) => v.toFixed(2), () => CONFIG.arena.grip],
+];
+for (const [id, out, set, fmt] of knobs) $(id).addEventListener('input', (e) => { const v = Number(e.target.value); set(v); $(out).textContent = fmt(v); renderConfig(); });
+$('rerun').addEventListener('click', () => { playing = true; runFight(); });
+$('reset').addEventListener('click', () => { cfg = structuredClone(CONFIG); for (const [id, out, , fmt, def] of knobs) { $(id).value = def(); $(out).textContent = fmt(def()); } playing = true; runFight(); });
+
+let last = performance.now(), lastEvent = -1;
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (match) {
+    const d = duration();
+    if (playing) { playhead += dt * speed; if (playhead >= d) { playhead = d; playing = false; } }
+    pose(playhead);
+    $('scrub').value = d ? playhead / d : 0;
+    $('clock').textContent = `${playhead.toFixed(1)} / ${d.toFixed(1)} s`;
+    $('play').textContent = playing ? 'Pause' : playhead >= d - 0.01 ? 'Replay' : 'Play';
+    $('verdict').textContent = playhead >= d - 0.01 ? match.result.text : '';
+    let cur = -1;
+    match.events.forEach((e, i) => { if (e.t <= playhead + 0.05) cur = i; });
+    if (cur !== lastEvent) {
+      lastEvent = cur;
+      const items = $('events').children;
+      for (let i = 0; i < items.length; i++) items[i].classList.toggle('now', i === cur);
+      if (playing && items[cur] && !$('tab-log').hidden) { const pane = $('tab-log'), li = items[cur]; if (li.offsetTop > pane.scrollTop + pane.clientHeight - 60 || li.offsetTop < pane.scrollTop) pane.scrollTop = li.offsetTop - pane.clientHeight / 2; }
+    }
+    render();
+  }
+  requestAnimationFrame(frame);
+}
+runFight();
+requestAnimationFrame(frame);
+
+</script>
+</body>
+</html>
