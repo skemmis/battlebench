@@ -76,7 +76,7 @@ details summary { cursor: pointer; font-weight: 500 } details[open] summary { ma
 <div class="wrap">
   <header>
     <h1>BattleBotBench</h1><span class="tag" id="version">prototype</span>
-    <div class="versus"><span><i class="dot a"></i><select id="botA" aria-label="First bot"></select></span><span style="color:var(--muted)">against</span><span><i class="dot b"></i><select id="botB" aria-label="Second bot"></select></span></div>
+    <div class="versus"><span><i class="dot a"></i><select id="botA" aria-label="First bot"></select></span><span style="color:var(--muted)">against</span><span><i class="dot b"></i><select id="botB" aria-label="Second bot"></select></span><span style="color:var(--muted)">in</span><span><select id="challenge" aria-label="Challenge"></select></span></div>
   </header>
   <main>
     <section>
@@ -97,6 +97,7 @@ details summary { cursor: pointer; font-weight: 500 } details[open] summary { ma
         <button role="tab" aria-selected="false" data-tab="settings">Settings</button>
       </div>
       <div class="pane" id="tab-log">
+        <p class="note" id="brief"></p>
         <p class="result" id="result">Simulating the fight.</p>
         <div class="cond" id="cond"></div>
         <h2>What happened</h2>

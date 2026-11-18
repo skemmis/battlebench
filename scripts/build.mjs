@@ -11,7 +11,7 @@ const strip = (code) => code.replace(/^import .*$/gm, '').replace(/^export /gm, 
 const script = [
   `import * as THREE from '${CDN.three}';`,
   `import * as CANNON from '${CDN['cannon-es']}';`,
-  strip(read('sim.js')), strip(read('bots.js')), strip(read('viewer.js')),
+  strip(read('challenges.js')), strip(read('sim.js')), strip(read('bots.js')), strip(read('viewer.js')),
 ].join('\n');
 const fragment = `${read('page.html')}\n<script type="module">\n${script}\n</script>\n`;
 mkdirSync(new URL('../dist/', import.meta.url), { recursive: true });

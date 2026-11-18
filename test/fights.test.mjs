@@ -86,3 +86,39 @@ test('programs are told the whole state: every part of both bots and loose objec
   assert.ok(seen.enemy.parts.scoop.attached && typeof seen.enemy.parts.scoop.x === 'number');
   assert.ok(Array.isArray(seen.loose) && typeof seen.enemy.vx === 'number' && typeof seen.timeLeft === 'number');
 });
+
+import { drawChallenge, NAMED, OPEN } from '../src/challenges.js';
+
+test('a challenge is drawn from its number alone, and the same number gives the same round', () => {
+  assert.deepEqual(drawChallenge(7), drawChallenge(7));
+  const kinds = new Set(Array.from({ length: 40 }, (_, i) => Object.values(drawChallenge(i + 1).keys).join()));
+  assert.ok(kinds.size > 15, `only ${kinds.size} kinds in 40 draws`);
+});
+
+test('every named challenge plays to a result, and programs are told the conditions', () => {
+  for (const ch of NAMED) {
+    let seen = null;
+    const sq = byName('Squatter');
+    const m = createMatch({ builds: [sq.build, DOORSTOP], programs: [(s, out, mem) => { seen = s; sq.program(s, out, mem); }, ROSTER[1].program], seed: 2, challenge: ch }).run();
+    assert.ok(m.result && m.result.t <= CONFIG.match.maxSeconds + 0.5, ch.name);
+    assert.equal(seen.challenge.gravity, ch.gravity);
+    assert.ok(ch.objective.type === 'deliver' ? seen.crate && seen.target === null : typeof seen.target.bearing === 'number', ch.name);
+  }
+});
+
+test('a crate round is won by getting the crate toward your own end', () => {
+  const ch = NAMED.find((c) => c.name === 'Bring it home');
+  const push = (s, out) => { for (const w of ['wheel_fl', 'wheel_fr', 'wheel_rl', 'wheel_rr']) out[w] = 1; };
+  // Bot 1 starts at +z facing the middle; driving straight shoves the crate toward bot 0's end.
+  const m = createMatch({ builds: [DOORSTOP, DOORSTOP], programs: [() => {}, push], seed: 4, challenge: ch }).run();
+  assert.ok(m.result.reason.startsWith('crate') || m.result.reason === 'ring_out');
+  if (m.result.reason.startsWith('crate') && m.result.winner !== null) assert.equal(m.result.winner, 0);
+});
+
+test('a control program over the size limit does not run', () => {
+  const big = new Function('s', 'out', `out.wheel_fl = 1; /* ${'x'.repeat(CONFIG.program.maxChars)} */`);
+  const m = createMatch({ builds: [DOORSTOP, DOORSTOP], programs: [big, () => {}], seed: 1, challenge: OPEN });
+  for (let i = 0; i < 480; i++) m.step();
+  assert.ok(m.events.some((e) => e.type === 'program_error'));
+  assert.ok(m.bots[0].core.body.velocity.length() < 0.2);
+});

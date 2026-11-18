@@ -1,4 +1,5 @@
 import * as CANNON from 'cannon-es';
+import { OPEN, targetAt, onFloor, edgeDistance } from './challenges.js';
 
 // ───────────────────────────────────────────────────────────────────────────
 // SETTINGS. Every number we expect to tune lives here.
@@ -6,7 +7,7 @@ import * as CANNON from 'cannon-es';
 // A bot's frame: +z is forward, +y is up, +x is its left side.
 // ───────────────────────────────────────────────────────────────────────────
 export const CONFIG = {
-  version: 'v0.2',
+  version: 'v0.3',
   physics: { hz: 480, controlHz: 30, gravity: 9.81, solverIterations: 12 },
   arena: { size: 14, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2 },
   // A fight ends when a core leaves the arena, when nothing has moved for stalemateSeconds, or at maxSeconds.
@@ -14,6 +15,8 @@ export const CONFIG = {
   // Nothing here rewards damage or movement for their own sake, so sitting still or shedding parts is allowed.
   match: { maxSeconds: 45, stalemateSeconds: 8, stalemateRadius: 0.35, graceSeconds: 3, centerMargin: 0.5 },
   budget: { mass: 150, cost: 100, box: [3, 2, 3], maxParts: 24 },
+  // Limits on the control program itself. It may see everything, but it has to be small.
+  program: { maxChars: 20000 },
   // A joint's load = impulse x share of the bot it has to drag along x leverage x sharpness.
   // Sharpness: a hit at speedRef m/s counts 1.5x, faster hits count for more.
   breakage: { scale: 1, leverLength: 1.0, speedRef: 8, logImpulse: 45 },
@@ -176,43 +179,59 @@ export function validateBuild(build, cfg = CONFIG) {
 const GROUND = 1, DEBRIS = 8;
 const BOT_BIT = [2, 4];
 
-export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
-  const cfg = config;
+export function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = OPEN }) {
+  const cfg = config, ch = challenge;
   const dt = 1 / cfg.physics.hz;
   const stepsPerControl = Math.round(cfg.physics.hz / cfg.physics.controlHz);
   const rng = mulberry32(seed);
   const world = new CANNON.World();
-  world.gravity.set(0, -cfg.physics.gravity, 0);
+  world.gravity.set(0, -cfg.physics.gravity * ch.gravity, 0);
   world.solver.iterations = cfg.physics.solverIterations;
   world.allowSleep = false;
-  world.defaultContactMaterial.friction = cfg.arena.slide;
+  world.defaultContactMaterial.friction = cfg.arena.slide * ch.surface.slide;
   world.defaultContactMaterial.restitution = 0.15;
 
   const matFloor = new CANNON.Material('floor');
   const matRubber = new CANNON.Material('rubber');
   const matHard = new CANNON.Material('hard');
-  world.addContactMaterial(new CANNON.ContactMaterial(matFloor, matRubber, { friction: cfg.arena.grip, restitution: 0.05 }));
-  world.addContactMaterial(new CANNON.ContactMaterial(matFloor, matHard, { friction: cfg.arena.slide, restitution: 0.1 }));
+  world.addContactMaterial(new CANNON.ContactMaterial(matFloor, matRubber, { friction: cfg.arena.grip * ch.surface.grip, restitution: 0.05 }));
+  world.addContactMaterial(new CANNON.ContactMaterial(matFloor, matHard, { friction: cfg.arena.slide * ch.surface.slide, restitution: 0.1 }));
   world.addContactMaterial(new CANNON.ContactMaterial(matHard, matHard, { friction: 0.3, restitution: 0.2 }));
   world.addContactMaterial(new CANNON.ContactMaterial(matRubber, matHard, { friction: 0.6, restitution: 0.1 }));
 
-  const half = cfg.arena.size / 2;
+  // The floor: slabs with their top at height 0, plus any walls standing on them. An unchanged Open floor
+  // follows the arena size in the settings.
+  const slabs = ch === OPEN ? [{ x: 0, z: 0, w: cfg.arena.size, d: cfg.arena.size }] : ch.floor;
+  const geo = { ...ch, floor: slabs };
   const floor = new CANNON.Body({ mass: 0, material: matFloor, collisionFilterGroup: GROUND, collisionFilterMask: -1 });
-  floor.addShape(new CANNON.Box(new CANNON.Vec3(half, cfg.arena.thickness / 2, half)));
-  floor.position.set(0, -cfg.arena.thickness / 2, 0);
+  for (const sl of slabs) floor.addShape(new CANNON.Box(new CANNON.Vec3(sl.w / 2, cfg.arena.thickness / 2, sl.d / 2)), new CANNON.Vec3(sl.x, -cfg.arena.thickness / 2, sl.z));
+  for (const wl of ch.walls) { const sh = new CANNON.Box(new CANNON.Vec3(wl.w / 2, wl.h / 2, wl.d / 2)); sh.label = 'a wall'; floor.addShape(sh, new CANNON.Vec3(wl.x, wl.h / 2, wl.z)); }
   world.addBody(floor);
+  // Loose objects that belong to the arena, not to a bot.
+  const props = [];
+  if (ch.objective.type === 'deliver') {
+    const c = ch.objective.crate, sh = new CANNON.Box(new CANNON.Vec3(c.size / 2, c.size / 2, c.size / 2));
+    sh.label = 'the crate'; sh.material = matHard;
+    const body = new CANNON.Body({ mass: c.mass, collisionFilterGroup: DEBRIS, collisionFilterMask: -1, angularDamping: 0.1 });
+    body.addShape(sh); body.position.set(c.x, c.size / 2 + 0.02, c.z);
+    body.pv = new CANNON.Vec3(); body.pw = new CANNON.Vec3();
+    world.addBody(body);
+    props.push({ id: 'crate', kind: 'box', size: [c.size, c.size, c.size], body, lost: false });
+  }
+  const crate = props[0] || null;
 
   const m = {
     config: cfg, seed, t: 0, steps: 0, done: false, result: null,
     events: [], track: [], frames: [], frameFlags: [], frameTimes: [],
-    bots: [], parts: [], world,
+    bots: [], parts: [], world, challenge: geo, props, propFrames: [], score: [0, 0],
   };
   const log = (type, bot, text, data = {}) => m.events.push({ t: r2(m.t), type, bot, text, ...data });
 
   // Spawn: opposite ends, roughly facing each other, with a little seeded variation.
   const spawns = [0, 1].map((i) => {
     const side = i === 0 ? -1 : 1;
-    const x = (rng() - 0.5) * 3, z = side * (half - 3.5);
+    const sp = ch === OPEN ? { x: 0, z: side * (cfg.arena.size / 2 - 3.5) } : ch.spawn[i];
+    const x = sp.x + (rng() - 0.5) * 3, z = sp.z;
     const yaw = Math.atan2(-x, -z) + (rng() - 0.5) * 0.5;
     return { x, z, yaw };
   });
@@ -393,7 +412,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       vx: b.velocity.x, vy: b.velocity.y, vz: b.velocity.z,
       speed: Math.hypot(b.velocity.x, b.velocity.z), forwardSpeed: b.velocity.x * fwd.x + b.velocity.z * fwd.z,
       turnRate: b.angularVelocity.y, massLeft: bot.liveMass / bot.startMass,
-      centerDistance: Math.hypot(b.position.x, b.position.z), edgeDistance: half - Math.max(Math.abs(b.position.x), Math.abs(b.position.z)),
+      centerDistance: Math.hypot(b.position.x, b.position.z), edgeDistance: edgeDistance(geo, b.position.x, b.position.z),
       parts, joints,
     };
   }
@@ -408,9 +427,18 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       loose.push({ id: body.rootPart.id, mine: owner === bot, x: body.position.x, y: body.position.y, z: body.position.z, speed: body.velocity.length(), ...rel(body.position.x, body.position.z) });
     }
     loose.sort((a, b) => a.distance - b.distance);
+    const tg = targetAt(ch, m.t);
+    const side = bot.index === 0 ? -1 : 1;
     return {
       t: m.t, timeLeft: cfg.match.maxSeconds - m.t, self, enemy, loose,
-      arena: { halfSize: half, edgeDistance: self.edgeDistance, centerBearing: wrap(Math.atan2(-self.x, -self.z) - self.heading), centerDistance: self.centerDistance },
+      // The round's conditions, whole, exactly as drawn. Read s.challenge.brief for them in words.
+      challenge: geo,
+      // The point to hold right now (null when the objective is the crate), and the crate if there is one.
+      target: tg && { x: tg.x, z: tg.z, ...rel(tg.x, tg.z) },
+      crate: crate && { x: crate.body.position.x, y: crate.body.position.y, z: crate.body.position.z, vx: crate.body.velocity.x, vz: crate.body.velocity.z, ...rel(crate.body.position.x, crate.body.position.z) },
+      // Your own end of the arena is at z = homeSide x (far edge). Score is time spent closest, when that is the rule.
+      homeSide: side, score: { mine: m.score[bot.index], theirs: m.score[1 - bot.index] },
+      arena: { edgeDistance: self.edgeDistance, centerBearing: wrap(Math.atan2(-self.x, -self.z) - self.heading), centerDistance: self.centerDistance },
     };
   }
 
@@ -427,6 +455,14 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
         if (p.jointType !== 'motor' || !p.live) continue;
         const v = clamp(Number(out[p.id]) || 0, -1, 1);
         c.setMotorSpeed(-v * p.maxSpeed);
+        // Like a real electric motor, torque is highest at a standstill and fades to a tenth at top speed.
+        // A spinner's punch comes from the energy stored in the spinning part, not from the motor pushing
+        // through the hit. Braking always gets full torque.
+        const eq = c.motorEquation;
+        const rate = eq.axisA.dot(c.bodyA.angularVelocity) - eq.axisB.dot(c.bodyB.angularVelocity);
+        const want = eq.targetVelocity - rate;
+        const fade = want * rate > 0 ? 1 - Math.min(0.9, Math.abs(rate) / p.maxSpeed) : 1;
+        c.setMotorMaxForce(p.torque * fade * dt);
       }
       // A program may let go of parts on purpose: out.release = ['id', ...].
       if (Array.isArray(out.release)) {
@@ -486,7 +522,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       if (m.t - (hitLog.get(key) ?? -9) < 0.4) return;
       hitLog.set(key, m.t);
       const name = (x) => (x.live ? `${x.bot.name}'s ${x.id}` : `a loose ${x.id}`);
-      log('hit', target.live ? target.bot.index : striker.bot.index, `${name(striker)} hit ${name(target)} (impulse ${Math.round(J)}, closing at ${Math.round(speed)} m/s).`, { striker: striker.id, target: target.id, impulse: Math.round(J), speed: r2(speed) });
+      log('hit', target.live ? target.bot.index : striker.bot.index, `${name(striker)} hit ${name(target)} (impulse ${Math.round(J)}, closing at ${Math.round(speed)} m/s).`, { striker: striker.id, target: target.id, impulse: Math.round(J), speed: r2(speed), flash: [striker.index, target.index] });
     };
     const side = (body, shape, r, J, speed, otherShape) => {
       const part = shape && shape.partRef;
@@ -494,6 +530,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       body.position.vadd(r, cp);
       const bot = part.bot;
       const op = otherShape && otherShape.partRef;
+      const label = (otherShape && otherShape.label) || 'the floor';
       let cur = part, best = null;
       while (cur.parent && cur.intact) {
         partWorld(cur, pp);
@@ -505,7 +542,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
         if (ratio > 1 && (!best || ratio > best.ratio)) best = { part: cur, ratio, load };
         cur = cur.parent;
       }
-      if (best) { const prev = breaks.get(best.part); if (!prev || prev.ratio < best.ratio) breaks.set(best.part, { ...best, by: op }); }
+      if (best) { const prev = breaks.get(best.part); if (!prev || prev.ratio < best.ratio) breaks.set(best.part, { ...best, by: op, label }); }
     };
     for (const eq of world.contacts) {
       const J = Math.abs(eq.multiplier) * dt;
@@ -524,7 +561,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       const lost = [];
       const mark = (p) => { lost.push(p.id); p.lostAt = m.t; for (const c of p.children) if (c.intact) mark(c); };
       mark(part);
-      const cause = info.by ? (info.by.bot === part.bot ? 'its own parts' : info.by.live ? `${info.by.bot.name}'s ${info.by.id}` : `loose ${info.by.id}`) : 'the floor';
+      const cause = info.by ? (info.by.bot === part.bot ? 'its own parts' : info.by.live ? `${info.by.bot.name}'s ${info.by.id}` : `loose ${info.by.id}`) : info.label;
       log('part_lost', part.bot.index, `${part.bot.name} lost ${lost.join(', ')}: the ${part.jointType} joint on ${part.id} took a load of ${Math.round(info.load)} from ${cause}, above its limit of ${Math.round(part.strength * cfg.breakage.scale)}.`, { parts: lost, load: Math.round(info.load) });
       dirty.add(part.bot);
     }
@@ -536,6 +573,9 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
     const pos = new CANNON.Vec3(), q = new CANNON.Quaternion();
     m.parts.forEach((p, i) => { partWorld(p, pos, q); f.set([pos.x, pos.y, pos.z, q.x, q.y, q.z, q.w], i * 7); flags[i] = p.live ? 0 : 1; });
     m.frames.push(f); m.frameFlags.push(flags); m.frameTimes.push(m.t);
+    const pf = new Float32Array(props.length * 7);
+    props.forEach((pr, i) => { const b = pr.body; pf.set([b.position.x, b.position.y, b.position.z, b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w], i * 7); });
+    m.propFrames.push(pf);
   }
 
   function observe() {
@@ -577,25 +617,48 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       const w = out[0] ? 1 : 0;
       return end(w, 'ring_out', `${n[1 - w]} fell out of the arena. ${n[w]} wins by ring-out.`);
     }
+    const over = m.t >= cfg.match.maxSeconds;
+    const obj = ch.objective;
+    if (obj.type === 'deliver') {
+      const cb = crate.body, gone = cb.position.y < -cfg.arena.ringOutDepth;
+      const crateStill = cb.velocity.length() < 0.15;
+      if (!(gone || over || (still[0] && still[1] && crateStill))) return;
+      const why = gone ? 'The crate fell off the arena.' : over ? 'Time ran out.' : `Nothing moved for ${cfg.match.stalemateSeconds} seconds.`;
+      const z = cb.position.z;
+      if (Math.abs(z) < cfg.match.centerMargin) return end(null, 'crate_draw', `${why} It ended within ${cfg.match.centerMargin} m of the middle. Draw.`);
+      const w = z < 0 ? 0 : 1;
+      return end(w, gone ? 'crate_off' : 'crate_home', `${why} It ended ${Math.abs(z).toFixed(1)} m toward ${n[w]}'s end. ${n[w]} wins.`);
+    }
+    const tg = targetAt(ch, m.t);
+    const d = m.bots.map((b) => Math.hypot(b.core.body.position.x - tg.x, b.core.body.position.z - tg.z));
+    if (obj.scoring === 'time') {
+      if (Math.abs(d[0] - d[1]) >= cfg.match.centerMargin) m.score[d[0] < d[1] ? 0 : 1] += 0.2;
+      if (!over) return;
+      const sc = m.score.map((v) => Math.round(v * 10) / 10);
+      if (Math.abs(sc[0] - sc[1]) < 1) return end(null, 'time_draw', `Time ran out. Each bot was closest to the point for about ${sc[0].toFixed(0)} seconds. Draw.`);
+      const w = sc[0] > sc[1] ? 0 : 1;
+      return end(w, 'time_closest', `Time ran out. ${n[w]} wins: it was closest to the point for ${sc[w].toFixed(0)} seconds against ${sc[1 - w].toFixed(0)}.`);
+    }
     const settled = still[0] && still[1];
-    if (settled || m.t >= cfg.match.maxSeconds) {
-      const d = m.bots.map((b) => Math.hypot(b.core.body.position.x, b.core.body.position.z));
+    if (settled || over) {
       const why = settled ? `Nothing moved for ${cfg.match.stalemateSeconds} seconds.` : 'Time ran out.';
       const kind = settled ? 'settled' : 'time';
-      if (Math.abs(d[0] - d[1]) < cfg.match.centerMargin) return end(null, kind + '_draw', `${why} Both cores are about the same distance from the centre. Draw.`);
+      if (Math.abs(d[0] - d[1]) < cfg.match.centerMargin) return end(null, kind + '_draw', `${why} Both cores are about the same distance from the ${ch === OPEN ? 'centre' : 'point'}. Draw.`);
       const w = d[0] < d[1] ? 0 : 1;
-      return end(w, kind + '_center', `${why} ${n[w]} wins by holding the centre: its core is ${d[w].toFixed(1)} m from the middle against ${d[1 - w].toFixed(1)} m.`);
+      return end(w, kind + '_center', `${why} ${n[w]} wins by holding the ${ch === OPEN ? 'centre' : 'point'}: its core is ${d[w].toFixed(1)} m from ${ch === OPEN ? 'the middle' : 'it'} against ${d[1 - w].toFixed(1)} m.`);
     }
   }
 
   m.bots.forEach((bot) => { bot.restHeight = bot.core.body.position.y; });
-  log('start', null, `${m.bots[0].name} against ${m.bots[1].name}, seed ${seed}.`);
+  log('start', null, `${m.bots[0].name} against ${m.bots[1].name}, seed ${seed}.${ch === OPEN ? '' : ' ' + ch.brief}`);
+  m.bots.forEach((bot, i) => { const len = String(bot.program).length; if (len > cfg.program.maxChars) { bot.program = () => {}; log('program_error', i, `${bot.name}'s control program is ${len} characters, over the limit of ${cfg.program.maxChars}. It will not run.`); } });
   record(); sampleTrack();
 
   m.step = () => {
     if (m.done) return;
     if (m.steps % stepsPerControl === 0) control();
     for (const bot of m.bots) for (const b of bot.bodies) { b.pv.copy(b.velocity); b.pw.copy(b.angularVelocity); }
+    for (const pr of props) { pr.body.pv.copy(pr.body.velocity); pr.body.pw.copy(pr.body.angularVelocity); }
     drivePistons();
     world.step(dt);
     m.steps++; m.t = m.steps * dt;
@@ -613,7 +676,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
   };
   m.run = () => { while (!m.done) m.step(); return m; };
   m.summary = () => ({
-    seed, result: m.result,
+    seed, challenge: ch === OPEN ? ch.name : ch.brief, result: m.result,
     bots: m.bots.map((b) => ({ name: b.name, massLeft: r2(b.liveMass / b.startMass), partsLost: b.parts.filter((p) => !p.live).map((p) => p.id), hitsTaken: m.events.filter((e) => e.type === 'hit' && e.bot === b.index).length })),
   });
   return m;

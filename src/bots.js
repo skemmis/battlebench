@@ -20,8 +20,8 @@ export function doorstopProgram(s, out, mem) {
   let drive = 1;
   let turn = clamp(s.enemy.bearing * 2);
   // Stay on the floor: near an edge, head back toward the middle first.
-  if (s.arena.edgeDistance < 1.4 && Math.abs(s.arena.centerBearing) > 0.9) {
-    turn = clamp(s.arena.centerBearing * 2.5);
+  if (s.arena.edgeDistance < 1.4 && Math.abs(goal(s).bearing) > 0.9) {
+    turn = clamp(goal(s).bearing * 2.5);
     drive = 0.25;
   }
   // If we have been pushing without moving, back off and come again.
@@ -53,8 +53,8 @@ export function lawnmowerProgram(s, out, mem) {
   let drive = s.t < 1.5 ? 0 : 0.7;
   let turn = clamp(s.enemy.bearing * 2.5);
   if (Math.abs(s.enemy.bearing) > 0.8) drive = 0.15;
-  if (s.arena.edgeDistance < 1.6 && Math.abs(s.arena.centerBearing) > 0.9) {
-    turn = clamp(s.arena.centerBearing * 2.5);
+  if (s.arena.edgeDistance < 1.6 && Math.abs(goal(s).bearing) > 0.9) {
+    turn = clamp(goal(s).bearing * 2.5);
     drive = 0.25;
   }
   mem.still = s.t > 2 && s.self.speed < 0.2 ? (mem.still || 0) + 1 : 0;
@@ -64,6 +64,18 @@ export function lawnmowerProgram(s, out, mem) {
   out.wheel_fr = out.wheel_rr = clamp(drive + turn);
 }
 
+// Where a bot that "holds the middle" should go under the round's objective: the point to hold, or, when
+// the objective is a crate, the far side of the crate and then through it toward home.
+function goal(s) {
+  if (s.target) return s.target;
+  if (!s.crate) return { bearing: s.arena.centerBearing, distance: s.arena.centerDistance };
+  const c = s.crate, behind = (s.self.z - c.z) * s.homeSide < -0.4;
+  const x = behind ? c.x : c.x + (s.self.x >= c.x ? 1.3 : -1.3), z = behind ? c.z + s.homeSide * 0.6 : c.z - s.homeSide * 1.5;
+  let b = Math.atan2(x - s.self.x, z - s.self.z) - s.self.heading;
+  while (b > Math.PI) b -= 2 * Math.PI; while (b < -Math.PI) b += 2 * Math.PI;
+  return { bearing: b, distance: Math.hypot(x - s.self.x, z - s.self.z) };
+}
+
 // Shared driving: chase the enemy, stay off the edge, back off when stuck.
 // Returns { drive, turn } and leaves the wheels to the caller.
 function chase(s, mem, { speed = 1, edge = 1.5, patience = 50 } = {}) {
@@ -71,7 +83,7 @@ function chase(s, mem, { speed = 1, edge = 1.5, patience = 50 } = {}) {
   let drive = speed;
   let turn = clamp(s.enemy.bearing * 2.2);
   if (Math.abs(s.enemy.bearing) > 0.9) drive = speed * 0.2;
-  if (s.arena.edgeDistance < edge && Math.abs(s.arena.centerBearing) > 0.9) { turn = clamp(s.arena.centerBearing * 2.5); drive = 0.25; }
+  if (s.arena.edgeDistance < edge && Math.abs(goal(s).bearing) > 0.9) { turn = clamp(goal(s).bearing * 2.5); drive = 0.25; }
   mem.still = s.t > 2 && s.self.speed < 0.2 ? (mem.still || 0) + 1 : 0;
   if (mem.still > patience) { mem.reverseUntil = s.t + 1.0; mem.reverseTurn = mem.reverseTurn === 0.6 ? -0.6 : 0.6; mem.still = 0; }
   if (s.t < (mem.reverseUntil || 0)) { drive = -1; turn = mem.reverseTurn; }
@@ -113,13 +125,13 @@ export const GAVEL = {
   note: 'A hammer. A steel block on a long arm that rests pointing backward and swings over the top to land in front.',
   parts: [
     { id: 'core', type: 'core' },
-    { id: 'deck', type: 'plate', material: 'aluminium', size: [1.1, 0.08, 1.4], pos: [0, -0.2, 0], parent: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [1.1, 0.08, 1.8], pos: [0, -0.2, -0.15], parent: 'core' },
     { id: 'wheel_fl', type: 'drive', pos: [0.67, -0.2, 0.5], parent: 'deck' },
     { id: 'wheel_fr', type: 'drive', pos: [-0.67, -0.2, 0.5], parent: 'deck' },
-    { id: 'wheel_rl', type: 'drive', pos: [0.67, -0.2, -0.5], parent: 'deck' },
-    { id: 'wheel_rr', type: 'drive', pos: [-0.67, -0.2, -0.5], parent: 'deck' },
+    { id: 'wheel_rl', type: 'drive', pos: [0.67, -0.2, -0.85], parent: 'deck' },
+    { id: 'wheel_rr', type: 'drive', pos: [-0.67, -0.2, -0.85], parent: 'deck' },
     { id: 'tower', type: 'block', material: 'aluminium', size: [0.3, 0.4, 0.3], pos: [0, 0.4, 0], parent: 'core' },
-    { id: 'arm', type: 'beam', material: 'steel', size: [0.1, 0.1, 1.3], pos: [0, 0.6, -0.65], parent: 'tower', joint: { type: 'motor', axis: [1, 0, 0], pivot: [0, 0.6, 0], gear: 3 } },
+    { id: 'arm', type: 'beam', material: 'steel', size: [0.1, 0.1, 1.3], pos: [0, 0.6, -0.65], parent: 'tower', joint: { type: 'motor', axis: [1, 0, 0], pivot: [0, 0.6, 0], gear: 2 } },
     { id: 'head', type: 'block', material: 'steel', size: [0.3, 0.25, 0.3], pos: [0, 0.6, -1.4], parent: 'arm' },
   ],
 };
@@ -206,7 +218,7 @@ export function fleaProgram(s, out, mem) {
   if (grounded && ready && s.t > (mem.kickUntil || 0) + 0.3) {
     mem.kickUntil = s.t + 0.2;
     // Facing the target: kick with both legs. Otherwise kick with one, which twists the body round.
-    const want = s.arena.edgeDistance < 2 ? s.arena.centerBearing : s.enemy.bearing;
+    const want = s.arena.edgeDistance < 2 ? goal(s).bearing : s.enemy.bearing;
     mem.legs = Math.abs(want) < 0.45 ? 'both' : want > 0 ? 'right' : 'left';
   }
   const kicking = s.t < (mem.kickUntil || 0);
@@ -235,14 +247,14 @@ export const SQUATTER = {
 };
 export function squatterProgram(s, out, mem) {
   const clamp = (v) => Math.max(-1, Math.min(1, v));
-  const d = s.arena.centerDistance;
+  const d = goal(s).distance;
   // Dig in once on the spot; pull the pads up and drive back if shoved well away from it.
   if (d < 0.35) mem.planted = true;
   if (d > 1.5) mem.planted = false;
   const pads = mem.planted ? 1 : 0;
   out.pad_fl = out.pad_fr = out.pad_rear = pads;
   if (mem.planted) { tank(out, 0, 0); return; }
-  const b = s.arena.centerBearing;
+  const b = goal(s).bearing;
   // Either end can lead, so reverse in if the middle is behind.
   const back = Math.abs(b) > Math.PI / 2;
   const err = back ? (b > 0 ? b - Math.PI : b + Math.PI) : b;
@@ -275,7 +287,7 @@ export function slingshotProgram(s, out, mem) {
   }
   if (!shots.length) {
     // Nothing left to throw: go and sit on the centre.
-    const b = s.arena.centerBearing, d = s.arena.centerDistance;
+    const b = goal(s).bearing, d = goal(s).distance;
     tank(out, d < 0.4 ? 0 : Math.abs(b) > 0.7 ? 0.2 : 0.8, d < 0.4 ? 0 : clamp(b * 2.5));
     return;
   }
@@ -284,7 +296,7 @@ export function slingshotProgram(s, out, mem) {
   let turn = clamp(e.bearing * 3);
   // Cornered: stop keeping range and break out toward the middle.
   if (s.arena.edgeDistance < 2) mem.escapeUntil = s.t + 1.5;
-  if (s.t < (mem.escapeUntil || 0)) { turn = clamp(s.arena.centerBearing * 2.5); drive = Math.abs(s.arena.centerBearing) > 1 ? 0.3 : 1; }
+  if (s.t < (mem.escapeUntil || 0)) { turn = clamp(goal(s).bearing * 2.5); drive = Math.abs(goal(s).bearing) > 1 ? 0.3 : 1; }
   tank(out, drive, turn);
   if (!mem.firing && s.t > (mem.nextShot || 1) && Math.abs(e.bearing) < 0.08 && e.distance < 7 && Math.abs(s.self.turnRate) < 0.8) mem.firing = shots[0];
 }

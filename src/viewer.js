@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CONFIG, createMatch, partSpec } from './sim.js';
 import { ALL } from './bots.js';
+import { NAMED, drawChallenge, targetAt } from './challenges.js';
 
 // The page: runs a whole fight up front, then replays the recording.
 const $ = (id) => document.getElementById(id);
@@ -33,18 +34,44 @@ scene.add(hemi, sun);
 
 const arena = new THREE.Group();
 scene.add(arena);
-let floorMat, gridLines, edgeLine;
+let floorMat, wallMat, gridLines, edgeLine, targetRing, propMeshes = [];
 function buildArena() {
   arena.clear();
-  const s = cfg.arena.size, t = cfg.arena.thickness;
-  floorMat = new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0.05 });
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(s, t, s), floorMat);
-  floor.position.y = -t / 2; floor.receiveShadow = true;
-  gridLines = new THREE.GridHelper(s, s, 0x888888, 0x888888);
-  gridLines.position.y = 0.005;
-  const h = s / 2;
-  edgeLine = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([[-h, -h], [h, -h], [h, h], [-h, h]].map(([x, z]) => new THREE.Vector3(x, 0.01, z))), new THREE.LineBasicMaterial());
-  arena.add(floor, gridLines, edgeLine);
+  const ch = match.challenge, t = cfg.arena.thickness;
+  floorMat = new THREE.MeshStandardMaterial({ roughness: ch.surface.grip < 0.5 ? 0.25 : 0.9, metalness: 0.05 });
+  wallMat = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.1 });
+  const grid = [], edge = [];
+  for (const sl of ch.floor) {
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(sl.w, t, sl.d), floorMat);
+    slab.position.set(sl.x, -t / 2, sl.z); slab.receiveShadow = true;
+    arena.add(slab);
+    const x0 = sl.x - sl.w / 2, x1 = sl.x + sl.w / 2, z0 = sl.z - sl.d / 2, z1 = sl.z + sl.d / 2;
+    for (let x = Math.ceil(x0); x <= x1; x++) grid.push(x, 0.005, z0, x, 0.005, z1);
+    for (let z = Math.ceil(z0); z <= z1; z++) grid.push(x0, 0.005, z, x1, 0.005, z);
+    edge.push(x0, 0.01, z0, x1, 0.01, z0, x1, 0.01, z0, x1, 0.01, z1, x1, 0.01, z1, x0, 0.01, z1, x0, 0.01, z1, x0, 0.01, z0);
+  }
+  const lines = (pts, mat) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); return new THREE.LineSegments(g, mat); };
+  gridLines = lines(grid, new THREE.LineBasicMaterial({ transparent: true, opacity: 0.5 }));
+  edgeLine = lines(edge, new THREE.LineBasicMaterial());
+  arena.add(gridLines, edgeLine);
+  for (const wl of ch.walls) {
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(wl.w, wl.h, wl.d), wallMat);
+    wall.position.set(wl.x, wl.h / 2, wl.z); wall.castShadow = true; wall.receiveShadow = true;
+    arena.add(wall);
+  }
+  // The point to hold: a flat ring on the floor that moves with the objective.
+  targetRing = null;
+  if (targetAt(ch, 0)) {
+    targetRing = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.6, 40), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true, opacity: 0.9 }));
+    targetRing.rotation.x = -Math.PI / 2;
+    arena.add(targetRing);
+  }
+  propMeshes = match.props.map((pr) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...pr.size), new THREE.MeshStandardMaterial({ roughness: 0.7, metalness: 0.1 }));
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    arena.add(mesh);
+    return mesh;
+  });
 }
 
 function partMesh(part, color) {
@@ -98,8 +125,13 @@ function applyTheme() {
   scene.background = new THREE.Color(css('--stage'));
   if (floorMat) {
     floorMat.color.set(css('--floor'));
-    gridLines.material.color.set(css('--grid')); gridLines.material.opacity = 0.5; gridLines.material.transparent = true;
+    if (match && match.challenge.surface.grip < 0.5) floorMat.color.lerp(new THREE.Color(0x9fd0ee), 0.45);
+    if (match && match.challenge.surface.slide > 1.5) floorMat.color.lerp(new THREE.Color(0x8a6f3c), 0.35);
+    wallMat.color.set(css('--grid'));
+    gridLines.material.color.set(css('--grid'));
     edgeLine.material.color.set(css('--warn'));
+    if (targetRing) targetRing.material.color.set(css('--warn'));
+    propMeshes.forEach((mesh) => mesh.material.color.set(0xc9a35c));
   }
   if (match) meshes.forEach((mesh, i) => { mesh.userData.base = partColor(match.parts[i]); });
 }
@@ -119,7 +151,8 @@ const endDrag = () => { drag = null; canvas.style.cursor = 'grab'; };
 canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
 canvas.addEventListener('wheel', (e) => { e.preventDefault(); cam.zoom = Math.max(0.45, Math.min(2.2, cam.zoom * (e.deltaY > 0 ? 1.08 : 0.93))); }, { passive: false });
 
-const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), grey = new THREE.Color(0x7d848e);
+const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), grey = new THREE.Color(0x7d848e), spark = new THREE.Color(0xfff2b0);
+let flashes = [];
 function pose(time) {
   const n = match.frames.length;
   const f = Math.max(0, Math.min(n - 1, time * FPS));
@@ -134,6 +167,20 @@ function pose(time) {
     mesh.material.color.copy(mesh.userData.base);
     if (flags[i]) mesh.material.color.lerp(grey, 0.6);
     if (match.parts[i].def.type === 'core') cores.push(mesh.position);
+  });
+  // Light up the two parts that touched in a hard hit, fading over a third of a second.
+  for (const fl of flashes) {
+    const age = time - fl.t;
+    if (age < -0.03 || age > 0.35) continue;
+    for (const i of fl.parts) meshes[i].material.color.lerp(spark, 0.9 * (1 - Math.max(0, age) / 0.35));
+  }
+  if (targetRing) { const tg = targetAt(match.challenge, time); targetRing.position.set(tg.x, 0.02, tg.z); }
+  const PA = match.propFrames[i0], PB = match.propFrames[i1];
+  propMeshes.forEach((mesh, i) => {
+    const o = i * 7;
+    mesh.position.set(PA[o] + (PB[o] - PA[o]) * k, PA[o + 1] + (PB[o + 1] - PA[o + 1]) * k, PA[o + 2] + (PB[o + 2] - PA[o + 2]) * k);
+    qa.set(PA[o + 3], PA[o + 4], PA[o + 5], PA[o + 6]); qb.set(PB[o + 3], PB[o + 4], PB[o + 5], PB[o + 6]);
+    mesh.quaternion.slerpQuaternions(qa, qb, k);
   });
   const mid = cores[0].clone().add(cores[1]).multiplyScalar(0.5);
   mid.y = Math.max(0, mid.y);
@@ -162,6 +209,7 @@ function fightData() {
 function renderLog() {
   const r = match.result, s = match.summary();
   $('result').innerHTML = esc(r.text);
+  $('brief').textContent = match.challenge.brief;
   $('verdict').textContent = '';
   $('cond').innerHTML = s.bots.map((b, i) => `<div class="${TEAM[i]}"><b>${esc(b.name)}</b><span>${Math.round(b.massLeft * 100)}% of its mass still attached</span><span>${b.partsLost.length ? 'Lost ' + esc(b.partsLost.join(', ')) : 'No parts lost'}</span><span>${b.hitsTaken} hard hits taken</span></div>`).join('');
   $('events').innerHTML = match.events.map((e, i) => `<li class="${e.type}" data-i="${i}" data-t="${e.t}" tabindex="0"><time>${e.t.toFixed(1)}</time><span><i class="who ${e.bot == null ? '' : TEAM[e.bot]}"></i>${esc(e.text)}</span></li>`).join('');
@@ -188,7 +236,9 @@ function runFight() {
   $('seed').value = seed;
   const id = ++runId;
   const pick = [ALL[Number($('botA').value)], ALL[Number($('botB').value)]];
-  const sim = createMatch({ builds: pick.map((r) => r.build), programs: pick.map((r) => r.program), seed, config: structuredClone(cfg) });
+  const chosen = $('challenge').value;
+  const challenge = chosen === 'draw' ? drawChallenge(seed) : NAMED[Number(chosen)];
+  const sim = createMatch({ builds: pick.map((r) => r.build), programs: pick.map((r) => r.program), seed, config: structuredClone(cfg), challenge });
   // Simulate in short slices so the page stays responsive, then swap the finished fight in.
   const slice = () => {
     if (id !== runId) return;
@@ -196,6 +246,7 @@ function runFight() {
     while (!sim.done && performance.now() < until) sim.step();
     if (!sim.done) { $('result').textContent = `Simulating the fight: ${sim.t.toFixed(0)} of up to ${cfg.match.maxSeconds} seconds.`; setTimeout(slice, 0); return; }
     match = sim;
+    flashes = sim.events.filter((e) => e.type === 'hit' && e.flash).map((e) => ({ t: e.t, parts: e.flash }));
     buildArena(); buildMeshes(); applyTheme();
     playhead = 0; lastEvent = -1;
     pose(0); cam.target.set(0, 0, 0);
@@ -223,6 +274,9 @@ document.querySelectorAll('.tabs button').forEach((btn) => btn.addEventListener(
   document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b === btn)));
   for (const t of ['log', 'bots', 'settings']) $('tab-' + t).hidden = t !== btn.dataset.tab;
 }));
+$('challenge').innerHTML = NAMED.map((c, i) => `<option value="${i}">${esc(c.name)}</option>`).join('') + '<option value="draw">Random round (from seed)</option>';
+$('challenge').value = '3';
+$('challenge').addEventListener('change', () => { playing = true; runFight(); });
 for (const [id, def] of [['botA', 8], ['botB', 1]]) {
   $(id).innerHTML = ALL.map((r, i) => `<option value="${i}">${esc(r.build.name)}</option>`).join('');
   $(id).value = def;
