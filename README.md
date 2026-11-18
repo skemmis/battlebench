@@ -1,12 +1,12 @@
 # BattleBotBench
 
-A 3D simulated arena where AI models build battlers from parts and pit them against each other. It has two goals: a test space where pre-training gives little help, and something fun to watch. What it means to reward is creative problem solving under conditions the model has not seen.
+A 3D simulated arena where AI models build battlers from parts and pit them against each other. It has two goals: a test space where pre-training gives little help, and something fun to watch. What it means to reward is creative problem solving under conditions the builder has not seen before.
 
-This is an early prototype. It has a family of challenges, a small kit of basic parts, breakable joints, twelve hand-written bots, and a viewer that replays a fight and shows the log a model would read. No model calls yet.
+This is an early prototype (v0.5). It has a family of challenges, a kit of plain pieces, breakable joints, five hand-built machines, and a viewer that replays a fight and shows what each machine says it is doing. No model calls yet: the machines here are written by hand, to the standard a model's would need to reach.
 
-The kit and the physics stay fixed. What changes from round to round is the challenge: the shape of the floor, the surface, gravity and the objective. A bot that only works in one arena does badly.
+The kit and the physics stay fixed. What changes from round to round is the challenge: the shape of the floor, the surface, gravity and the objective. A machine that only works in one arena does badly.
 
-The rules try not to assume what a good bot looks like, and in particular not that it has four wheels. Three of the nine bots are not battlebots at all: one hops, one sits on the centre and refuses to move, and one throws things from a distance.
+There are no ready-made parts. No wheel unit, no track, no thruster, no gripper. A wheel is a rubber ball on a small geared motor; a leg is a hub with spokes; a gate is a beam on a motor with limits. Function has to be assembled, so machines end up as mechanisms and not as one idea on a box.
 
 ## Try it
 
@@ -15,25 +15,34 @@ npm install
 npm run build      # writes dist/index.html
 ```
 
-Open `dist/index.html` in a browser (it needs an internet connection to load its two libraries). Pick a seed, watch the fight, and use the Settings tab to change joint strength, gravity or floor grip and rerun.
+Open `dist/index.html` in a browser (it needs an internet connection to load its two libraries). The Showcase strip at the top steps through seven fights, each picked to show one idea. Or pick two machines, a challenge and a seed yourself.
 
 ```
-npm test           # the checks to rerun after any tuning change
-npm run sweep -- 20  # run 20 seeds and print how the fights came out
-npm run tournament -- 6  # every bot against every other bot, 6 seeds each, on the open floor
-npm run gauntlet -- 12   # every bot against every other bot in each of 12 drawn challenges
+npm test                 # the checks to rerun after any change
+npm run gauntlet -- 12   # every machine against every other in each of 12 drawn challenges
 ```
 
 ## How it works
 
-A bot is two things:
+A machine is two things:
 
-- **A build**: a JSON parts list. Each part has a type, a size, a material, a position measured from the core, a parent, and a joint (`fixed`, `hinge`, `motor` or `piston`). A hinge or motor joint can set a `pivot` point, and a motor can set a `gear` that trades speed for torque. A piston slides its part along an axis and stores energy: pushing out is fast and strong but drains its charge, and the charge refills over a few seconds.
-- **A control program**: a function called 30 times a second with the whole state of the fight. It sets motors and pistons, and can let go of any part with `out.release = ['id']`.
+- **A build**: a JSON parts list. Each part has a type (`core`, `beam`, `plate`, `block`, `wedge`, `disc`, `ball`), a size, a material (steel, aluminium, plastic, rubber), a position measured from the core, a parent, and a joint.
+- **A control program**: a function `(s, out, mem, lib)` called 30 times a second with the whole state of the fight. It sets motors and pistons, can let go of any part with `out.release = ['id']`, and can say what it is doing with `out.say = 'text'`, which is shown on screen and written to the log.
 
-The program sees everything: its own and the enemy's position, speed and heading, every part of both bots with its position and whether it is still attached, joint angles and piston charge, loose parts on the floor, and the time left. The plan is to limit the program itself (code size, compute per tick, no outside help during a fight), not what it can see. Those limits are not enforced yet.
+Joints:
 
-The kit is mostly basic parts (`beam`, `plate`, `block`, `wedge`, `disc`, `ball`) in steel, aluminium, plastic or rubber, plus a `core` every bot must have and four ready-made parts: `drive` (a wheel with its motor built in), `track` (a tread that drives along its own length and resists sliding sideways), `thruster` (pushes in one direction and burns a charge that refills while it is off) and `gripper` (locks onto the next thing it touches: the other bot, a loose part, the crate, a wall or the floor). Rubber grips the floor; everything else slides. There are no ready-made weapons. Lawnmower's blade is a steel beam on a motor joint.
+- `fixed`: rigid. Parts joined this way move as one body.
+- `hinge`: turns freely about `axis` through `pivot`. Optional `limits: [low, high]` in degrees, and a `spring` that pulls it toward `rest`.
+- `motor`: a driven hinge. `gear` from 0.5 to 8 trades speed for torque, and `power` from 0.02 to 1 picks the size of the motor (torque and cost scale with it). May also have limits and a spring.
+- `piston`: stores energy and lets it go in a kick.
+
+Joint `axis` and `pivot` are given in the machine's own frame. Limits: 200 parts, 500 kg, 300 cost, a 5 x 4 x 5 m box. Arenas are 14 to 34 m across.
+
+Parts of one machine collide with each other unless they were built touching, so mechanisms can interlock, rest on stops, and jam.
+
+The program sees everything: both machines' position, speed and heading, every part with its position and whether it is still attached, joint angles, loose parts, the challenge, the target or crate, and the score. It is limited in size (20,000 characters), not in what it can see.
+
+`src/lib.js` is a small helper library passed to every program: bearings and interception, a map of the floor, a route planner that goes round gaps and walls and says when there is no way, and a guard that keeps a machine from driving off an edge. The guard works out braking distance from the round's grip and gravity, then corrects it by measuring how the machine actually picks up speed. Strategy stays in the program.
 
 A fight is simulated in full first and then replayed, so the same seed always gives the same fight.
 
@@ -59,7 +68,7 @@ Sizes, speeds and masses are drawn too, so there are a few hundred kinds of roun
 ### How a round ends
 
 - **Ring-out**: a core that falls off the floor loses, whatever the objective.
-- **Hold a fixed point**: at 45 seconds, or sooner if nothing has moved for 8 seconds, the core closer to the point wins.
+- **Hold a fixed point**: at 60 seconds, or sooner if nothing has moved for 8 seconds, the core closer to the point wins.
 - **Hold a moving point**: five times a second the closer core scores. Most time closest wins.
 - **Crate**: whoever has the crate nearer their own end when the round stops wins.
 
@@ -67,28 +76,33 @@ Nothing in the rules rewards damage or movement for their own sake.
 
 ### The fight log
 
-Each fight produces three layers of data: a summary, timestamped events (hits, parts lost, flips, the ending), and a motion track of both bots sampled 5 times a second. It reports what happened and leaves the why to the reader.
+Each fight produces three layers of data: a summary, timestamped events (hits, parts lost, flips, the ending), and a motion track of both machines sampled 5 times a second. It reports what happened and leaves the why to the reader.
+
+## The machines
+
+- **Bulwark** (29 parts): a six-wheeled shover with five plough blades on sprung hinges.
+- **Strider** (52 parts): six spoked legs held in a tripod gait by reading each hub angle. Climbs the plinth, which wheels cannot. Slows its gait in low gravity.
+- **Mangonel** (31 parts): three throwing arms. Works out the swing for the range and gravity, leads a moving target, backs off when too close, clubs with the arms once the shot is gone.
+- **Corral** (73 parts): a walled pen of separate bricks with two motor gates. Drives over the crate, shuts the gates, hauls it home.
+- **Span** (34 parts): a 5 m frame on four axles with two heavy weights on arms. With the weights at the tail it reaches its nose over a gap, then swings them over the top to the nose and brings its tail across. If the point is out over a gap it stops astride it.
 
 ## Layout
 
 - `src/challenges.js`: the challenge family and the generator that draws a round.
 - `src/sim.js`: the simulator. All tunable values are in `CONFIG` at the top.
-- `src/bots.js`: twelve hand-written bots. Tread (two tracks, no wheels), Comet (flies on eight thrusters and lands on the objective) and Limpet (grips the crate or the other bot, and clamps itself to the floor), plus: Lawnmower (horizontal bar spinner), Doorstop (wedge, the house bot), Pancake (flipper), Gavel (hammer), Eggbeater (vertical disc spinner), Carousel (full-body spinner), Flea (hops on two pistons, no wheels), Squatter (parks on the centre and jacks itself onto rubber pads) and Slingshot (throws steel balls, then holds the centre).
+- `src/lib.js`: helpers passed to control programs.
+- `src/bots.js`: the five machines and their programs.
 - `src/viewer.js`, `src/page.html`: the replay page.
 - `scripts/build.mjs`: inlines everything into `dist/index.html`.
-- `test/fights.test.mjs`: build checks, repeatability, and physics sanity checks.
+- `test/fights.test.mjs`: build checks, repeatability, physics sanity checks, and one test per machine's signature move.
+- `old/`: the v0.4 bots, kept for reference. They use parts that no longer exist.
 
 ## Known rough edges
 
-- Wheels are spheres in the physics and cylinders on screen.
-- Parts of the same bot do not collide with each other.
-- The physics engine is cannon-es, chosen because it is plain JavaScript and runs anywhere. Rapier is the likely upgrade if joints or fast spinners need more accuracy.
-- Motors are strongest from a standstill and fade to a tenth at top speed, so a spinner hits with the energy stored in its spinning part and then has to spin up again.
-- Parts of the same bot pass through each other, so a hammer can swing through its own deck.
-- Program size is limited to 20,000 characters. Compute per tick is not limited yet.
-- Friction is corrected on top of the engine. Out of the box the engine lets nothing slide: a slab pushed at 3 m/s stopped in a centimetre whatever its material. Friction between a part and the floor now matches friction x weight. Friction between two bots in a hard hit is still only approximate.
-- Across drawn challenges the three bots on the newer parts (Comet, Tread, Limpet) now have the best records and the wheeled wedge is mid-table. More than half the fights are quiet: bots go for the objective and often never touch.
-- Every bot here is still one idea on a small frame. The direction from here is machines made of many small parts, with function assembled from plain mechanism pieces.
-- Pistons deliver well under their rated force, because the physics engine's joints are soft. Hopping works but is slow.
-- Carousel is top-heavy and often leaves the arena on its own.
-- About a third of fights are quiet, with fewer than three hard hits.
+- Fights are bloodless. Across the gauntlet about one part comes off per fight, and thrown balls dent nothing. Joint strength was tuned for the old small bots and needs retuning for many-part machines.
+- About a third of fights end with both machines standing still, most often when the point is somewhere neither can reach and both sensibly wait.
+- Low gravity is where machines still fall off on their own: braking distances are long and tall machines tip.
+- Traction on ice in low gravity is well below what the friction numbers predict. Machines cope by measuring it, but the cause is not understood.
+- Mangonel throws two of its three balls; the third is usually lost before it is thrown.
+- Wheels are spheres in the physics. The engine is cannon-es, chosen because it is plain JavaScript; friction is corrected on top of it.
+- Compute per tick is not limited yet. There are no hidden test rounds yet.

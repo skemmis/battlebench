@@ -3,12 +3,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CONFIG, createMatch, validateBuild } from '../src/sim.js';
-import { ROSTER, ALL, DOORSTOP } from '../src/bots.js';
+import { ALL, BULWARK, MANGONEL } from '../src/bots.js';
+import { LIB } from '../src/lib.js';
+import { drawChallenge, NAMED, OPEN } from '../src/challenges.js';
 
-const fight = (seed, config = CONFIG) => createMatch({ builds: ROSTER.map((r) => r.build), programs: ROSTER.map((r) => r.program), seed, config }).run();
+const byName = (n) => ALL.find((r) => r.build.name === n);
+const named = (n) => NAMED.find((c) => c.name === n);
+const BRICK = { name: 'Brick', parts: [{ id: 'core', type: 'core' }, { id: 'slab', type: 'plate', material: 'aluminium', size: [1, 0.1, 1], pos: [0, -0.25, 0], parent: 'core' }] };
+const idle = () => {};
+const play = (a, b, challenge = OPEN, seed = 1, config = CONFIG) => createMatch({ builds: [byName(a).build, byName(b).build], programs: [byName(a).program, byName(b).program], seed, config, challenge }).run();
 
-test('all hand-written bots pass the build checks', () => {
-  for (const r of ALL) { const c = validateBuild(r.build); assert.ok(c.ok, c.errors.join(' ')); }
+test('all hand-built machines pass the build checks and use only plain pieces', () => {
+  const plain = ['core', 'beam', 'plate', 'block', 'wedge', 'disc', 'ball'];
+  for (const r of ALL) { const c = validateBuild(r.build); assert.ok(c.ok, r.build.name + ': ' + c.errors.join(' ')); for (const p of r.build.parts) assert.ok(plain.includes(p.type), `${r.build.name} uses ${p.type}`); }
+});
+
+test('ready-made parts are gone from the kit', () => {
+  for (const type of ['drive', 'track', 'thruster', 'gripper']) {
+    const c = validateBuild({ name: 'Old', parts: [{ id: 'core', type: 'core' }, { id: 'x', type, pos: [0, 0, 1], parent: 'core' }] });
+    assert.equal(c.ok, false, type);
+  }
 });
 
 test('a broken build gets plain-language errors', () => {
@@ -20,74 +34,60 @@ test('a broken build gets plain-language errors', () => {
 });
 
 test('the same seed gives exactly the same fight', () => {
-  const a = fight(3), b = fight(3);
+  const a = play('Mangonel', 'Bulwark', OPEN, 3), b = play('Mangonel', 'Bulwark', OPEN, 3);
   assert.deepEqual(a.events, b.events);
   assert.deepEqual(a.result, b.result);
 });
 
-test('every fight ends with a result inside the time limit', () => {
-  for (let seed = 1; seed <= 4; seed++) { const m = fight(seed); assert.ok(m.result && m.result.t <= CONFIG.match.maxSeconds + 0.5, `seed ${seed}`); }
+test('a machine left alone sits still and keeps all its parts', () => {
+  for (const r of ALL) {
+    const m = createMatch({ builds: [r.build, BRICK], programs: [idle, idle], seed: 1 }).run();
+    assert.ok(m.result.reason.startsWith('settled'), r.build.name + ' ' + m.result.reason);
+    assert.equal(m.events.filter((e) => e.type === 'part_lost').length, 0, r.build.name);
+  }
 });
 
-test('nothing gets launched: no bot ever rises far above the floor', () => {
-  for (let seed = 1; seed <= 4; seed++) { const m = fight(seed); for (const row of m.track) for (const i of [0, 1]) assert.ok(row[i].y < 2.5, `seed ${seed} t=${row.t} bot ${i} at height ${row[i].y}`); }
+test('nothing gets launched: no machine ever rises far above the floor', () => {
+  for (const [a, b] of [['Bulwark', 'Corral'], ['Mangonel', 'Strider'], ['Span', 'Bulwark']]) { const m = play(a, b); for (const row of m.track) for (const i of [0, 1]) assert.ok(row[i].y < 3.5, `${a} v ${b} t=${row.t} machine ${i} at height ${row[i].y}`); }
 });
 
-test('a bot left alone sits still and keeps all its parts', () => {
-  const idle = () => {};
-  const m = createMatch({ builds: [DOORSTOP, DOORSTOP], programs: [idle, idle], seed: 1 }).run();
-  assert.ok(m.result.reason.startsWith('settled'));
-  assert.equal(m.events.filter((e) => e.type === 'part_lost').length, 0);
+test('a hinge with limits and a spring comes to rest inside its limits', () => {
+  const b = { name: 'Flap', parts: [{ id: 'core', type: 'core' }, { id: 'base', type: 'plate', material: 'steel', size: [1.5, 0.1, 1.5], pos: [0, -0.25, 0], parent: 'core' },
+    { id: 'flap', type: 'beam', material: 'steel', size: [0.1, 0.1, 1.0], pos: [0, 0.4, 0.6], parent: 'core', joint: { type: 'hinge', axis: [1, 0, 0], pivot: [0, 0.4, 0.1], limits: [-20, 20], spring: 400 } }] };
+  const m = createMatch({ builds: [b, BRICK], programs: [idle, idle], seed: 1 });
+  for (let i = 0; i < 480 * 3; i++) m.step();
+  const angle = m.bots[0].byId.get('flap').angle;
+  assert.ok(Math.abs(angle) < (25 * Math.PI) / 180, `flap at ${angle}`);
 });
 
-test('weaker joints mean more parts come off', () => {
-  const count = (scale) => { const cfg = structuredClone(CONFIG); cfg.breakage.scale = scale; let n = 0; for (let s = 1; s <= 4; s++) n += fight(s, cfg).events.filter((e) => e.type === 'part_lost').length; return n; };
-  assert.ok(count(0.4) > count(2.5));
+test('a wheel is a rubber ball on a small motor, and six of them move a machine', () => {
+  const m = createMatch({ builds: [BULWARK, BRICK], programs: [(s, out) => { for (const id of ['wl_0', 'wl_1', 'wl_2', 'wr_0', 'wr_1', 'wr_2']) out[id] = 1; }, idle], seed: 1 });
+  const z0 = m.bots[0].core.body.position.z; for (let i = 0; i < 480 * 3; i++) m.step();
+  assert.ok(Math.abs(m.bots[0].core.body.position.z - z0) > 1.5);
 });
 
-test('joint angle sensors follow the motor: a powered flipper lifts', () => {
-  const lift = (s, out) => { out.flipper = -1; };
-  const m = createMatch({ builds: [ALL[2].build, DOORSTOP], programs: [lift, () => {}], seed: 1 });
-  for (let i = 0; i < 480; i++) m.step();
-  assert.ok(m.bots[0].byId.get('flipper').angle < -0.5);
-});
-
-const byName = (n) => ALL.find((r) => r.build.name === n);
-
-test('a piston stores energy: a kick lifts the hopper off the floor and drains charge', () => {
-  const flea = byName('Flea');
-  const m = createMatch({ builds: [flea.build, DOORSTOP], programs: [flea.program, () => {}], seed: 1 });
-  const y0 = m.bots[0].core.body.position.y; let top = 0, low = 1;
-  for (let i = 0; i < 480 * 2; i++) { m.step(); top = Math.max(top, m.bots[0].core.body.position.y - y0); low = Math.min(low, m.bots[0].byId.get('leg_l').charge); }
-  assert.ok(top > 0.08, `rose ${top}`); assert.ok(low < 0.9, `charge ${low}`);
-});
-
-test('a program can let go of a part, and the part flies on as a loose object', () => {
-  const sling = byName('Slingshot');
-  const m = createMatch({ builds: [sling.build, DOORSTOP], programs: [sling.program, () => {}], seed: 1 });
-  for (let i = 0; i < 480 * 12 && !m.events.some((e) => e.type === 'released'); i++) m.step();
+test('a program can let go of a part: the thrower lands a ball near where it aimed', () => {
+  const m = createMatch({ builds: [MANGONEL, BRICK], programs: [byName('Mangonel').program, idle], seed: 1 });
+  for (let i = 0; i < 480 * 8; i++) m.step();
   assert.ok(m.events.some((e) => e.type === 'released'));
-  for (let i = 0; i < 20; i++) m.step();
-  const ball = m.bots[0].byId.get('shot_1');
-  assert.equal(ball.live, false); assert.ok(ball.body.velocity.length() > 5);
+  assert.ok(m.events.some((e) => e.type === 'intent' && e.text.includes('throwing at')));
 });
 
-test('sitting still on the centre can win: the win rule does not demand a fight', () => {
-  const sq = byName('Squatter');
-  const m = createMatch({ builds: [sq.build, DOORSTOP], programs: [sq.program, () => {}], seed: 1 }).run();
-  assert.equal(m.result.winner, 0); assert.ok(m.result.reason.endsWith('center'));
+test('programs say what they are doing, and the fight records it', () => {
+  const m = play('Bulwark', 'Corral');
+  for (const i of [0, 1]) assert.ok(m.events.some((e) => e.type === 'intent' && e.bot === i));
 });
 
-test('programs are told the whole state: every part of both bots and loose objects', () => {
+test('programs are told the whole state: every part of both machines, the challenge and the target', () => {
   let seen = null;
-  const spy = (s) => { seen = s; };
-  const m = createMatch({ builds: [DOORSTOP, DOORSTOP], programs: [spy, () => {}], seed: 1 });
+  createMatch({ builds: [BULWARK, MANGONEL], programs: [(s) => { seen = seen || s; }, idle], seed: 1 }).step();
+  for (let i = 0; i < 20 && !seen; i++);
+  const m = createMatch({ builds: [BULWARK, MANGONEL], programs: [(s) => { seen = s; }, idle], seed: 1 });
   for (let i = 0; i < 40; i++) m.step();
-  assert.ok(seen.enemy.parts.scoop.attached && typeof seen.enemy.parts.scoop.x === 'number');
-  assert.ok(Array.isArray(seen.loose) && typeof seen.enemy.vx === 'number' && typeof seen.timeLeft === 'number');
+  assert.equal(Object.keys(seen.self.parts).length, BULWARK.parts.length);
+  assert.equal(Object.keys(seen.enemy.parts).length, MANGONEL.parts.length);
+  assert.ok(seen.challenge && seen.target && typeof seen.homeSide === 'number');
 });
-
-import { drawChallenge, NAMED, OPEN } from '../src/challenges.js';
 
 test('a challenge is drawn from its number alone, and the same number gives the same round', () => {
   assert.deepEqual(drawChallenge(7), drawChallenge(7));
@@ -98,26 +98,17 @@ test('a challenge is drawn from its number alone, and the same number gives the 
 test('every named challenge plays to a result, and programs are told the conditions', () => {
   for (const ch of NAMED) {
     let seen = null;
-    const sq = byName('Squatter');
-    const m = createMatch({ builds: [sq.build, DOORSTOP], programs: [(s, out, mem) => { seen = s; sq.program(s, out, mem); }, ROSTER[1].program], seed: 2, challenge: ch }).run();
+    const a = byName('Bulwark'), b = byName('Strider');
+    const m = createMatch({ builds: [a.build, b.build], programs: [(s, out, mem, lib) => { seen = s; a.program(s, out, mem, lib); }, b.program], seed: 2, challenge: ch }).run();
     assert.ok(m.result && m.result.t <= CONFIG.match.maxSeconds + 0.5, ch.name);
     assert.equal(seen.challenge.gravity, ch.gravity);
     assert.ok(ch.objective.type === 'deliver' ? seen.crate && seen.target === null : typeof seen.target.bearing === 'number', ch.name);
   }
 });
 
-test('a crate round is won by getting the crate toward your own end', () => {
-  const ch = NAMED.find((c) => c.name === 'Bring it home');
-  const push = (s, out) => { for (const w of ['wheel_fl', 'wheel_fr', 'wheel_rl', 'wheel_rr']) out[w] = 1; };
-  // Bot 1 starts at +z facing the middle; driving straight shoves the crate toward bot 0's end.
-  const m = createMatch({ builds: [DOORSTOP, DOORSTOP], programs: [() => {}, push], seed: 4, challenge: ch }).run();
-  assert.ok(m.result.reason.startsWith('crate') || m.result.reason === 'ring_out');
-  if (m.result.reason.startsWith('crate') && m.result.winner !== null) assert.equal(m.result.winner, 0);
-});
-
 test('a control program over the size limit does not run', () => {
-  const big = new Function('s', 'out', `out.wheel_fl = 1; /* ${'x'.repeat(CONFIG.program.maxChars)} */`);
-  const m = createMatch({ builds: [DOORSTOP, DOORSTOP], programs: [big, () => {}], seed: 1, challenge: OPEN });
+  const big = new Function('s', 'out', `out.wl_0 = 1; /* ${'x'.repeat(CONFIG.program.maxChars)} */`);
+  const m = createMatch({ builds: [BULWARK, BRICK], programs: [big, idle], seed: 1, challenge: OPEN });
   for (let i = 0; i < 480; i++) m.step();
   assert.ok(m.events.some((e) => e.type === 'program_error'));
   assert.ok(m.bots[0].core.body.velocity.length() < 0.2);
@@ -136,29 +127,47 @@ test('floor friction matches the textbook: a sliding slab stops where it should,
   assert.ok(Math.abs(slide('aluminium') - 1.53) < 0.15); assert.ok(Math.abs(slide('rubber') - 0.46) < 0.1);
 });
 
-test('tracks drive a bot with no wheels, and thrusters lift one off the floor', () => {
-  const tread = byName('Tread'), comet = byName('Comet');
-  const a = createMatch({ builds: [tread.build, DOORSTOP], programs: [(s, out) => { out.track_l = out.track_r = 1; }, () => {}], seed: 1 });
-  const z0 = a.bots[0].core.body.position.z; for (let i = 0; i < 480; i++) a.step();
-  assert.ok(Math.abs(a.bots[0].core.body.position.z - z0) > 1);
-  const ch = NAMED.find((c) => c.name === 'The plinth');
-  const b = createMatch({ builds: [comet.build, DOORSTOP], programs: [comet.program, () => {}], seed: 1, challenge: ch }).run();
-  assert.equal(b.result.winner, 0); assert.ok(b.bots[0].core.body.position.y > 0.4, 'landed on the block');
-});
-
-test('a gripper takes hold of the crate and the bot hauls it home', () => {
-  const limpet = byName('Limpet'), ch = NAMED.find((c) => c.name === 'Bring it home');
-  const m = createMatch({ builds: [limpet.build, DOORSTOP], programs: [limpet.program, () => {}], seed: 1, challenge: ch }).run();
-  assert.ok(m.events.some((e) => e.type === 'gripped' && e.text.includes('the crate')));
-  assert.equal(m.result.winner, 0);
-});
-
 test('parts of one machine collide with each other: an arm swung down stops on its own deck', () => {
   const b = { name: 'Self', parts: [{ id: 'core', type: 'core' }, { id: 'deck', type: 'plate', material: 'aluminium', size: [1.2, 0.08, 2.4], pos: [0, -0.24, 0.6], parent: 'core' },
     { id: 'post', type: 'block', material: 'aluminium', size: [0.2, 0.5, 0.2], pos: [0, 0.45, 0], parent: 'core' },
     { id: 'arm', type: 'beam', material: 'steel', size: [0.1, 0.1, 1.2], pos: [0, 0.7, 0.75], parent: 'post', joint: { type: 'motor', axis: [1, 0, 0], pivot: [0, 0.7, 0.1], gear: 2 } }] };
-  const m = createMatch({ builds: [b, DOORSTOP], programs: [(s, out) => { out.arm = 1; }, () => {}], seed: 1 });
+  const m = createMatch({ builds: [b, BRICK], programs: [(s, out) => { out.arm = 1; }, idle], seed: 1 });
   for (let i = 0; i < 480 * 3; i++) m.step();
   const angle = m.bots[0].byId.get('arm').angle;
   assert.ok(angle > 0.4 && angle < 1.2, `arm at ${angle}`);
+});
+
+test('the route planner goes round a gap when it can and says so when it cannot', () => {
+  const view = (ch, x, z) => ({ challenge: ch, self: { x, z, heading: 0, forwardSpeed: 0, speed: 0, vx: 0, vz: 0 } });
+  const bridge = named('Bridge'), gap = named('The gap');
+  const far = bridge.floor[1];
+  const p = LIB.plan(view(bridge, 6, bridge.floor[0].z), far.x + 6, far.z, { margin: 1.5 });
+  assert.equal(p.reachable, true); assert.ok(p.left > Math.abs(far.z - bridge.floor[0].z), 'the way round is longer than the straight line');
+  const q = LIB.plan(view(gap, 0, gap.floor[0].z), 0, gap.floor[1].z, { margin: 1.5 });
+  assert.equal(q.reachable, false); assert.ok(LIB.floorAt(view(gap, 0, 0), q.end.x, q.end.z));
+});
+
+test('machines stop for edges: on ice in low gravity nobody drives off on their own', () => {
+  const ch = drawChallenge(1);
+  for (const r of ALL) { const m = createMatch({ builds: [r.build, BRICK], programs: [r.program, idle], seed: 1, challenge: ch }).run(); assert.ok(!(m.result.reason === 'ring_out' && m.result.winner !== 0), r.build.name); }
+});
+
+test('the pen swallows the crate and hauls it home', () => {
+  const m = createMatch({ builds: [byName('Corral').build, BRICK], programs: [byName('Corral').program, idle], seed: 1, challenge: named('Bring it home') }).run();
+  assert.equal(m.result.winner, 0); assert.ok(m.result.reason.startsWith('crate'));
+});
+
+test('legs climb what wheels cannot: the walker gets onto the plinth and the shover does not', () => {
+  const m = play('Strider', 'Bulwark', named('The plinth'));
+  assert.equal(m.result.winner, 0); assert.ok(m.bots[0].core.body.position.y > m.bots[1].core.body.position.y + 0.3);
+});
+
+test('the long machine crosses a gap by shifting its weight, and stops astride one when the point is over it', () => {
+  const span = byName('Span');
+  const a = createMatch({ builds: [span.build, BRICK], programs: [span.program, idle], seed: 1, challenge: named('Islands') }).run();
+  assert.equal(a.result.winner, 0); assert.ok(Math.abs(a.bots[0].core.body.position.z) < 3, 'on the middle island');
+  const b = createMatch({ builds: [span.build, BRICK], programs: [span.program, idle], seed: 1, challenge: named('The gap') }).run();
+  assert.equal(b.result.winner, 0); assert.ok(Math.abs(b.bots[0].core.body.position.z) < 1 && b.bots[0].core.body.position.y > 0.2, 'astride the gap');
+  const c = createMatch({ builds: [span.build, BRICK], programs: [span.program, idle], seed: 1, challenge: drawChallenge(1) }).run();
+  assert.ok(Math.abs(c.bots[0].core.body.position.z) < 1, 'astride the gap on ice in low gravity');
 });

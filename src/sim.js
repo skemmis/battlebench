@@ -1,5 +1,6 @@
 import * as CANNON from 'cannon-es';
 import { OPEN, targetAt, floorHeight, edgeDistance } from './challenges.js';
+import { LIB } from './lib.js';
 
 // ───────────────────────────────────────────────────────────────────────────
 // SETTINGS. Every number we expect to tune lives here.
@@ -7,14 +8,14 @@ import { OPEN, targetAt, floorHeight, edgeDistance } from './challenges.js';
 // A bot's frame: +z is forward, +y is up, +x is its left side.
 // ───────────────────────────────────────────────────────────────────────────
 export const CONFIG = {
-  version: 'v0.4',
+  version: 'v0.5',
   physics: { hz: 480, controlHz: 30, gravity: 9.81, solverIterations: 12 },
-  arena: { size: 14, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2 },
+  arena: { size: 30, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2 },
   // A fight ends when a core leaves the arena, when nothing has moved for stalemateSeconds, or at maxSeconds.
   // If no core has left, the core closer to the middle of the arena wins (by at least centerMargin metres).
   // Nothing here rewards damage or movement for their own sake, so sitting still or shedding parts is allowed.
-  match: { maxSeconds: 45, stalemateSeconds: 8, stalemateRadius: 0.35, graceSeconds: 3, centerMargin: 0.5 },
-  budget: { mass: 150, cost: 100, box: [3, 2, 3], maxParts: 24 },
+  match: { maxSeconds: 60, stalemateSeconds: 8, stalemateRadius: 0.35, graceSeconds: 3, centerMargin: 1 },
+  budget: { mass: 500, cost: 300, box: [5, 4, 5], maxParts: 200 },
   // Limits on the control program itself. It may see everything, but it has to be small.
   program: { maxChars: 20000 },
   // A joint's load = impulse x share of the bot it has to drag along x leverage x sharpness.
@@ -29,10 +30,14 @@ export const CONFIG = {
   },
   joints: {
     fixed: { strength: 500, cost: 0 },
-    hinge: { strength: 500, cost: 2 },
+    // A hinge turns freely about "axis". It may set "limits": [low, high] in degrees from its built position,
+    // and "spring": stiffness in N·m per radian pulling it back toward "rest" degrees (default 0).
+    hinge: { strength: 500, cost: 2, maxSpring: 4000, stopStiffness: 6000, stopDamping: 150 },
     // A motor joint may set "gear": n. Speed is divided by n and torque multiplied by n (0.5 to 8).
     // Hinge and motor joints may set "pivot": [x, y, z] in the bot frame; without it they turn about the part's centre.
-    motor: { strength: 1500, cost: 8, maxSpeed: 80, torque: 300, minGear: 0.5, maxGear: 8 },
+    // "power" from 0.02 to 1 picks the size of the motor: torque and cost scale with it. A wheel is a rubber
+    // ball or a disc on a small, geared-down motor. Motor joints may also set "limits" and "spring" like a hinge.
+    motor: { strength: 1500, cost: 8, maxSpeed: 80, torque: 300, minGear: 0.5, maxGear: 8, minPower: 0.02 },
     // A piston slides its part along "axis" by up to "stroke" metres. It stores energy: pushing out is fast and
     // strong but drains its charge (a full stroke uses all of it), pulling back is slow and free, and the charge
     // refills over rechargeSeconds. "gear" trades speed for force as on a motor.
@@ -41,23 +46,12 @@ export const CONFIG = {
   parts: {
     core: { size: [0.4, 0.4, 0.4], mass: 20, cost: 0 },
     beam: { maxSize: [0.3, 0.3, 2.4] },
-    plate: { maxSize: [2.0, 0.15, 2.0] },
+    plate: { maxSize: [2.4, 0.15, 2.4] },
     block: { maxSize: [0.6, 0.6, 0.6] },
     wedge: { maxSize: [2.0, 0.6, 1.0] },
     disc: { maxRadius: 0.6, maxThickness: 0.2 },
     ball: { maxRadius: 0.3 },
-    // Shortcut: a wheel with its motor built in. Axle runs along the part's x axis.
-    drive: { radius: 0.3, width: 0.24, mass: 6, cost: 9, maxSpeed: 12, torque: 60, strength: 320 },
-    // More shortcuts, so that wheels are one way to get about among several.
-    // Track: a tread that drives itself along its own length (its z axis) wherever it touches something solid,
-    // and resists sliding sideways. "size" is [width, height, length]. Set it from -1 to 1.
-    track: { maxSize: [0.35, 0.35, 1.8], density: 160, cost: 11, speed: 4.5, force: 500, grip: 1.1, sideGrip: 0.4, strength: 1.2 },
-    // Thruster: pushes the bot along "dir" (bot frame, default forward). Set it from 0 to 1. It burns charge:
-    // burnSeconds at full power, refilled over rechargeSeconds while it is off.
-    thruster: { size: [0.2, 0.2, 0.3], mass: 4, cost: 11, force: 420, burnSeconds: 2.5, rechargeSeconds: 4, strength: 1 },
-    // Gripper: set it to 1 and it locks onto the next thing it touches: the other bot, a loose part, the crate,
-    // a wall or the floor. Set it to 0 to let go. It also lets go if pulled harder than "hold" newtons.
-    gripper: { size: [0.22, 0.22, 0.22], mass: 3, cost: 9, hold: 3000, slip: 0.2, strength: 1.2 },
+    // There are no ready-made wheels, weapons or grabbers. Everything else is assembled from these.
   },
 };
 
@@ -66,7 +60,7 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const wrap = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
 const r2 = (v) => Math.round(v * 100) / 100;
 const BOX_TYPES = ['beam', 'plate', 'block'];
-const READY_MADE = ['core', 'drive', 'track', 'thruster', 'gripper'];
+const READY_MADE = ['core'];
 
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -87,18 +81,6 @@ export function partSpec(def, cfg = CONFIG) {
     const s = cfg.parts.core.size;
     return { kind: 'box', size: s, half: s.map((x) => x / 2), volume: s[0] * s[1] * s[2], mass: cfg.parts.core.mass, cost: 0, strength: 1.5 };
   }
-  if (t === 'drive') {
-    const d = cfg.parts.drive;
-    return { kind: 'wheel', radius: d.radius, width: d.width, half: [d.width / 2, d.radius, d.radius], volume: 0, mass: d.mass, cost: d.cost, strength: 1 };
-  }
-  if (t === 'track') {
-    const d = cfg.parts.track, sz = def.size, volume = sz[0] * sz[1] * sz[2];
-    return { kind: 'box', size: sz, half: sz.map((x) => x / 2), volume, mass: volume * d.density, cost: d.cost, strength: d.strength };
-  }
-  if (t === 'thruster' || t === 'gripper') {
-    const d = cfg.parts[t], sz = d.size;
-    return { kind: 'box', size: sz, half: sz.map((x) => x / 2), volume: sz[0] * sz[1] * sz[2], mass: d.mass, cost: d.cost, strength: d.strength };
-  }
   const mat = cfg.materials[def.material] || cfg.materials.aluminium;
   let kind, volume, half, extra = {};
   if (BOX_TYPES.includes(t)) {
@@ -116,7 +98,6 @@ export function partSpec(def, cfg = CONFIG) {
 
 function makeShape(spec) {
   if (spec.kind === 'box') return new CANNON.Box(V(spec.half));
-  if (spec.kind === 'wheel') return new CANNON.Sphere(spec.radius);
   if (spec.kind === 'ball') return new CANNON.Sphere(spec.radius);
   if (spec.kind === 'disc') return new CANNON.Cylinder(spec.radius, spec.radius, spec.thickness, 12);
   if (spec.kind === 'wedge') {
@@ -150,7 +131,7 @@ export function validateBuild(build, cfg = CONFIG) {
       errors.push(`${where}: unknown material "${p.material}". Use one of ${Object.keys(cfg.materials).join(', ')}.`); continue;
     }
     const lim = cfg.parts[p.type];
-    if (BOX_TYPES.includes(p.type) || p.type === 'wedge' || p.type === 'track') {
+    if (BOX_TYPES.includes(p.type) || p.type === 'wedge') {
       if (!Array.isArray(p.size) || p.size.length !== 3 || p.size.some((x) => !(x > 0.02))) { errors.push(`${where}: "size" must be three lengths, each above 0.02.`); continue; }
       const a = [...p.size].sort((x, y) => x - y), b = [...lim.maxSize].sort((x, y) => x - y);
       if (a.some((x, i) => x > b[i] + 1e-9)) errors.push(`${where}: size ${JSON.stringify(p.size)} is larger than a ${p.type} may be (${JSON.stringify(lim.maxSize)}).`);
@@ -165,21 +146,27 @@ export function validateBuild(build, cfg = CONFIG) {
     }
     if (p.type !== 'core') {
       if (!Array.isArray(p.pos) || p.pos.length !== 3 || p.pos.some((x) => typeof x !== 'number')) { errors.push(`${where}: "pos" must be three numbers [x, y, z] measured from the core.`); continue; }
-      const jt = p.type === 'drive' ? 'motor' : (p.joint && p.joint.type) || 'fixed';
+      const jt = (p.joint && p.joint.type) || 'fixed';
       if (!cfg.joints[jt]) errors.push(`${where}: unknown joint type "${jt}". Use fixed, hinge, motor or piston.`);
       if (jt === 'piston' && !(p.joint.stroke > 0 && p.joint.stroke <= cfg.joints.piston.maxStroke)) errors.push(`${where}: a piston needs a "stroke" above 0 and at most ${cfg.joints.piston.maxStroke}.`);
-      if (p.type !== 'drive' && (jt === 'hinge' || jt === 'motor' || jt === 'piston')) {
+      if (jt === 'hinge' || jt === 'motor' || jt === 'piston') {
         const ax = p.joint.axis;
         if (!Array.isArray(ax) || ax.length !== 3 || Math.hypot(...ax) < 1e-6) errors.push(`${where}: a ${jt} joint needs an "axis" such as [0, 1, 0].`);
         const pv = p.joint.pivot;
         if (pv !== undefined && (!Array.isArray(pv) || pv.length !== 3 || pv.some((x) => typeof x !== 'number'))) errors.push(`${where}: "pivot" must be three numbers [x, y, z] measured from the core.`);
         const g = p.joint.gear;
         if (g !== undefined && !(g >= cfg.joints.motor.minGear && g <= cfg.joints.motor.maxGear)) errors.push(`${where}: "gear" must be between ${cfg.joints.motor.minGear} and ${cfg.joints.motor.maxGear}.`);
+        const pw = p.joint.power;
+        if (pw !== undefined && !(pw >= cfg.joints.motor.minPower && pw <= 1)) errors.push(`${where}: "power" must be between ${cfg.joints.motor.minPower} and 1.`);
+        const lm = p.joint.limits;
+        if (lm !== undefined && (!Array.isArray(lm) || lm.length !== 2 || !(lm[0] <= 0 && lm[1] >= 0))) errors.push(`${where}: "limits" must be [low, high] in degrees with low at or below 0 and high at or above 0.`);
+        const sp = p.joint.spring;
+        if (sp !== undefined && !(sp > 0 && sp <= cfg.joints.hinge.maxSpring)) errors.push(`${where}: "spring" must be above 0 and at most ${cfg.joints.hinge.maxSpring}.`);
       }
       const b = cfg.budget.box;
       if (Math.abs(p.pos[0]) > b[0] / 2 || Math.abs(p.pos[1]) > b[1] / 2 || Math.abs(p.pos[2]) > b[2] / 2) errors.push(`${where}: its centre is outside the build box of ${JSON.stringify(b)} around the core.`);
     }
-    try { const s = partSpec(p, cfg); mass += s.mass; cost += s.cost + (READY_MADE.includes(p.type) ? 0 : cfg.joints[(p.joint && p.joint.type) || 'fixed']?.cost || 0); } catch (e) { /* reported above */ }
+    try { const s = partSpec(p, cfg); mass += s.mass; cost += s.cost + (p.type === 'core' ? 0 : (cfg.joints[(p.joint && p.joint.type) || 'fixed']?.cost || 0) * (p.joint && p.joint.type === 'motor' ? Math.max(0.25, Number(p.joint.power) || 1) : 1)); } catch (e) { /* reported above */ }
   }
   for (const p of build.parts) {
     if (p.type === 'core' || !p.id) continue;
@@ -190,7 +177,7 @@ export function validateBuild(build, cfg = CONFIG) {
   }
   if (mass > cfg.budget.mass) errors.push(`Over the mass allowance: ${r2(mass)} kg, the limit is ${cfg.budget.mass} kg.`);
   if (cost > cfg.budget.cost) errors.push(`Over the cost allowance: ${r2(cost)}, the limit is ${cfg.budget.cost}.`);
-  if (!build.parts.some((p) => p.type === 'drive' || p.type === 'track' || p.type === 'thruster' || (p.joint && (p.joint.type === 'motor' || p.joint.type === 'piston')))) warnings.push('Nothing in this build is powered, so it cannot move.');
+  if (!build.parts.some((p) => (p.joint && (p.joint.type === 'motor' || p.joint.type === 'piston')))) warnings.push('Nothing in this build is powered, so it cannot move.');
   return { ok: errors.length === 0, errors, warnings, mass: r2(mass), cost: r2(cost) };
 }
 
@@ -235,10 +222,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
   const matFloor = new CANNON.Material('floor');
   const matRubber = new CANNON.Material('rubber');
   const matHard = new CANNON.Material('hard');
-  // Treads get almost no friction from the engine; their drive and sideways grip are applied by hand below.
-  const matTrack = new CANNON.Material('track');
-  world.addContactMaterial(new CANNON.ContactMaterial(matFloor, matTrack, { friction: 0.02, restitution: 0.05 }));
-  world.addContactMaterial(new CANNON.ContactMaterial(matTrack, matHard, { friction: 0.5, restitution: 0.1 }));
+  world.addContactMaterial(new CANNON.ContactMaterial(matRubber, matRubber, { friction: 1.0, restitution: 0.1 }));
   world.addContactMaterial(new CANNON.ContactMaterial(matFloor, matRubber, { friction: cfg.arena.grip * ch.surface.grip, restitution: 0.05 }));
   world.addContactMaterial(new CANNON.ContactMaterial(matFloor, matHard, { friction: cfg.arena.slide * ch.surface.slide, restitution: 0.1 }));
   world.addContactMaterial(new CANNON.ContactMaterial(matHard, matHard, { friction: 0.3, restitution: 0.2 }));
@@ -268,7 +252,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
 
   const m = {
     config: cfg, seed, t: 0, steps: 0, done: false, result: null,
-    events: [], track: [], frames: [], frameFlags: [], frameTimes: [],
+    events: [], track: [], frames: [], frameFlags: [], frameTimes: [], frameSay: [],
     bots: [], parts: [], world, challenge: geo, props, propFrames: [], score: [0, 0],
   };
   const log = (type, bot, text, data = {}) => m.events.push({ t: r2(m.t), type, bot, text, ...data });
@@ -276,8 +260,8 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
   // Spawn: opposite ends, roughly facing each other, with a little seeded variation.
   const spawns = [0, 1].map((i) => {
     const side = i === 0 ? -1 : 1;
-    const sp = ch === OPEN ? { x: 0, z: side * (cfg.arena.size / 2 - 3.5) } : ch.spawn[i];
-    const x = sp.x + (rng() - 0.5) * 3, z = sp.z;
+    const sp = ch === OPEN ? { x: 0, z: side * (cfg.arena.size / 2 - 6) } : ch.spawn[i];
+    const x = sp.x + (rng() - 0.5) * 4, z = sp.z;
     const yaw = Math.atan2(-x, -z) + (rng() - 0.5) * 0.5;
     return { x, z, yaw };
   });
@@ -304,22 +288,25 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const lq = new CANNON.Quaternion();
       if (def.rot) lq.setFromEuler((def.rot[0] * Math.PI) / 180, (def.rot[1] * Math.PI) / 180, (def.rot[2] * Math.PI) / 180, 'XYZ');
       const lp = def.pos ? V(def.pos) : new CANNON.Vec3();
-      const jt = def.type === 'core' ? null : def.type === 'drive' ? 'motor' : (def.joint && def.joint.type) || 'fixed';
-      const axis = def.type === 'drive' ? [1, 0, 0] : (def.joint && def.joint.axis) || [0, 1, 0];
+      const jt = def.type === 'core' ? null : (def.joint && def.joint.type) || 'fixed';
+      const axis = (def.joint && def.joint.axis) || [0, 1, 0];
       const shape = makeShape(spec);
-      const gear = def.type === 'drive' ? 1 : clamp(Number(def.joint && def.joint.gear) || 1, cfg.joints.motor.minGear, cfg.joints.motor.maxGear);
+      const gear = clamp(Number(def.joint && def.joint.gear) || 1, cfg.joints.motor.minGear, cfg.joints.motor.maxGear);
+      const power = clamp(Number(def.joint && def.joint.power) || 1, cfg.joints.motor.minPower, 1);
+      const jd = def.joint || {};
       const pivotLocal = def.joint && def.joint.pivot && jt !== 'fixed' ? lq.inverse().vmult(V(def.joint.pivot).vsub(lp)) : new CANNON.Vec3();
       const p = {
         pivotLocal, angle: 0, lastRaw: 0, ext: 0, target: 0, charge: 1, stroke: jt === 'piston' ? Number(def.joint.stroke) || 0.2 : 0, gear,
         id: def.id, def, spec, bot, index: m.parts.length, shape, mass: spec.mass,
-        jointType: jt, axisLocal: V(axis).unit(), intact: def.type !== 'core', live: true, lostAt: null,
+        jointType: jt, axisLocal: lq.inverse().vmult(V(axis).unit()), intact: def.type !== 'core', live: true, lostAt: null,
         wpos: origin.vadd(q0.vmult(lp)), wquat: q0.mult(lq), wvel: new CANNON.Vec3(), wang: new CANNON.Vec3(),
         parent: null, children: [], anchorLocal: new CANNON.Vec3(), body: null, localPos: null, localQuat: null, subMass: 0,
-        maxSpeed: def.type === 'drive' ? cfg.parts.drive.maxSpeed : cfg.joints.motor.maxSpeed / gear,
-        torque: def.type === 'drive' ? cfg.parts.drive.torque : cfg.joints.motor.torque * gear,
+        maxSpeed: cfg.joints.motor.maxSpeed / gear,
+        torque: cfg.joints.motor.torque * gear * power,
+        limits: (jt === 'hinge' || jt === 'motor') && Array.isArray(jd.limits) ? [(jd.limits[0] * Math.PI) / 180, (jd.limits[1] * Math.PI) / 180] : null,
+        spring: (jt === 'hinge' || jt === 'motor') && jd.spring > 0 ? Math.min(jd.spring, cfg.joints.hinge.maxSpring) : 0, springRest: ((Number(jd.rest) || 0) * Math.PI) / 180,
       };
-      shape.material = def.type === 'track' ? matTrack : def.type === 'drive' || def.material === 'rubber' ? matRubber : matHard;
-      p.dirLocal = lq.inverse().vmult(V(def.dir || [0, 0, 1]).unit()); p.throttle = 0; p.armed = false; p.grip = null; p.tread = 0;
+      shape.material = def.material === 'rubber' ? matRubber : matHard;
       shape.partRef = p;
       bot.parts.push(p); bot.byId.set(p.id, p); m.parts.push(p);
       bot.startMass += p.mass;
@@ -336,7 +323,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       else p.anchorLocal.copy(p.pivotLocal);
       p.rel0 = p.parent.wquat.inverse().mult(p.wquat);
       p.axisParent = p.rel0.vmult(p.axisLocal);
-      const base = p.def.type === 'drive' ? cfg.parts.drive.strength : cfg.joints[p.jointType].strength;
+      const base = cfg.joints[p.jointType].strength;
       p.strength = base * Math.min(p.spec.strength, p.parent.spec.strength);
     }
     // Parts that overlap (or all but touch) as built never collide with each other.
@@ -458,11 +445,9 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
     for (const p of bot.parts) {
       partWorld(p, pos);
       parts[p.id] = { type: p.def.type, attached: p.live, x: pos.x, y: pos.y, z: pos.z };
-      if (!p.live || p.def.type === 'drive') continue;
+      if (!p.live) continue;
       if (p.jointType === 'motor' || p.jointType === 'hinge') joints[p.id] = { angle: p.angle };
       if (p.jointType === 'piston') joints[p.id] = { extension: p.ext, stroke: p.stroke, charge: p.charge };
-      if (p.def.type === 'thruster') joints[p.id] = { charge: p.charge };
-      if (p.def.type === 'gripper') joints[p.id] = { holding: p.grip ? p.grip.what : null };
     }
     return {
       x: b.position.x, y: b.position.y, z: b.position.z, heading: Math.atan2(fwd.x, fwd.z), upright: up.y,
@@ -502,10 +487,13 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
   function control() {
     for (const bot of m.bots) {
       if (!bot.alive) continue;
-      for (const p of bot.parts) if (p.live && p.parent && p.intact && p.def.type !== 'drive' && (p.jointType === 'hinge' || p.jointType === 'motor')) updateAngle(p);
+      for (const p of bot.parts) if (p.live && p.parent && p.intact && (p.jointType === 'hinge' || p.jointType === 'motor')) updateAngle(p);
       const out = {};
-      try { bot.program(sense(bot), out, bot.mem); bot.out = out; }
+      try { bot.program(sense(bot), out, bot.mem, LIB); bot.out = out; }
       catch (e) { if (!bot.programFailed) { bot.programFailed = true; log('program_error', bot.index, `${bot.name}'s control program threw an error: ${e.message}`); } }
+      // A program may say what it is doing: out.say = 'a few words'. It is shown on screen and logged when it changes.
+      const say = typeof out.say === 'string' ? out.say.slice(0, 80) : '';
+      if (say !== bot.say && m.t - (bot.saidAt ?? -9) >= 0.5) { bot.say = say; bot.saidAt = m.t; if (say) log('intent', bot.index, `${bot.name}: ${say}`); }
       for (const c of bot.constraints) {
         const p = c.part;
         if (p.jointType === 'piston' && p.live) { p.target = clamp(Number(out[p.id]) || 0, 0, 1) * p.stroke; continue; }
@@ -520,12 +508,6 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
         const want = eq.targetVelocity - rate;
         const fade = want * rate > 0 ? 1 - Math.min(0.9, Math.abs(rate) / p.maxSpeed) : 1;
         c.setMotorMaxForce(p.torque * fade * dt);
-      }
-      for (const p of bot.parts) {
-        const ty = p.def.type;
-        if (ty === 'thruster') p.throttle = p.live ? clamp(Number(out[p.id]) || 0, 0, 1) : 0;
-        else if (ty === 'gripper') p.armed = p.live && Number(out[p.id]) > 0.5;
-        else if (ty === 'track') p.tread = p.live ? clamp(Number(out[p.id]) || 0, -1, 1) : 0;
       }
       // A program may let go of parts on purpose: out.release = ['id', ...].
       if (Array.isArray(out.release)) {
@@ -544,65 +526,25 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
     }
   }
 
-  // Thrusters, treads and grippers. Run once per physics step, before the engine moves anything.
-  const tv = new CANNON.Vec3(), tr = new CANNON.Vec3(), tf = new CANNON.Vec3(), tl = new CANNON.Vec3(), tw = new CANNON.Vec3();
-  const gripName = (shape, body) => (shape.label ? shape.label : shape.partRef ? (shape.partRef.live ? `${shape.partRef.bot.name}'s ${shape.partRef.id}` : `a loose ${shape.partRef.id}`) : body.mass === 0 ? 'the floor' : 'something');
-  function dropGrip(p, why) {
-    if (!p.grip) return;
-    world.removeConstraint(p.grip.c);
-    if (why) log('let_go', p.bot.index, `${p.bot.name}'s ${p.id} ${why} ${p.grip.what}.`, { part: p.id });
-    p.grip = null;
-  }
-  function driveExtras() {
-    const T = cfg.parts.thruster, K = cfg.parts.track, G = cfg.parts.gripper;
+  // Hinge stops and springs. Run once per physics step, before the engine moves anything.
+  const hAxis = new CANNON.Vec3(), hT = new CANNON.Vec3();
+  function driveHinges() {
+    const H = cfg.joints.hinge;
     for (const bot of m.bots) for (const p of bot.parts) {
-      const ty = p.def.type;
-      if (ty === 'thruster') {
-        if (p.throttle > 0 && p.charge > 0 && p.live) {
-          p.body.quaternion.vmult(p.localQuat.vmult(p.dirLocal), tf); tf.scale(T.force * p.throttle, tf);
-          p.body.quaternion.vmult(p.localPos, tr);
-          p.body.applyForce(tf, tr);
-          p.charge = Math.max(0, p.charge - (p.throttle * dt) / T.burnSeconds); p.firing = true;
-        } else { p.firing = false; if (p.throttle === 0) p.charge = Math.min(1, p.charge + dt / T.rechargeSeconds); }
-      } else if (ty === 'gripper' && p.grip) {
-        const c = p.grip.c;
-        if (!p.armed) dropGrip(p, 'let go of');
-        else if (!p.live || p.body !== c.bodyA || !c.bodyA.world || !c.bodyB.world) dropGrip(p, null);
-        else {
-          c.bodyA.pointToWorldFrame(c.pivotA, tv); c.bodyB.pointToWorldFrame(c.pivotB, tw);
-          if (tv.distanceTo(tw) > G.slip) dropGrip(p, 'was torn off');
-        }
+      if (!p.live || !p.intact || !p.parent || (!p.limits && !p.spring)) continue;
+      updateAngle(p);
+      p.body.quaternion.vmult(p.localQuat.vmult(p.axisLocal), hAxis);
+      const A = p.parent.body, B = p.body;
+      const rate = hAxis.dot(B.angularVelocity) - hAxis.dot(A.angularVelocity);
+      let torque = 0;
+      if (p.spring) torque += -p.spring * (p.angle - p.springRest) - 0.04 * p.spring * rate;
+      if (p.limits) {
+        if (p.angle < p.limits[0]) torque += H.stopStiffness * (p.limits[0] - p.angle) - H.stopDamping * rate;
+        else if (p.angle > p.limits[1]) torque += -H.stopStiffness * (p.angle - p.limits[1]) - H.stopDamping * rate;
       }
-    }
-    // Contacts from the step just finished tell us what each tread and gripper is touching.
-    for (const eq of world.contacts) {
-      for (const flip of [false, true]) {
-        const sh = flip ? eq.sj : eq.si, body = flip ? eq.bj : eq.bi, oshape = flip ? eq.si : eq.sj, other = flip ? eq.bi : eq.bj, r = flip ? eq.rj : eq.ri;
-        const p = sh && sh.partRef;
-        if (!p || !p.live) continue;
-        if (p.def.type === 'track' && other.mass === 0) {
-          const N = Math.abs(eq.multiplier);
-          if (N < 1) continue;
-          // Along the tread: drive toward the wanted belt speed. Across it: resist sliding. Both limited by grip.
-          body.quaternion.vmult(p.localQuat.vmult(new CANNON.Vec3(0, 0, 1)), tf);
-          tf.vsub(eq.ni.scale(tf.dot(eq.ni)), tf);
-          if (tf.lengthSquared() < 1e-6) continue;
-          tf.normalize(); eq.ni.cross(tf, tl);
-          body.angularVelocity.cross(r, tv); tv.vadd(body.velocity, tv);
-          const cap = K.grip * ch.surface.grip * N;
-          const along = clamp(1500 * (p.tread * K.speed - tv.dot(tf)), -Math.min(cap, K.force / 2), Math.min(cap, K.force / 2));
-          // Sideways grip is weaker than drive, as on a real skid-steered vehicle, or it could never turn on the spot.
-          const across = clamp(-1500 * tv.dot(tl), -cap * K.sideGrip, cap * K.sideGrip);
-          tf.scale(along, tf); tf.vadd(tl.scale(across), tf);
-          body.applyForce(tf, r);
-        } else if (p.def.type === 'gripper' && p.armed && !p.grip && !(other.bot === p.bot && other.live)) {
-          const c = new CANNON.LockConstraint(body, other, { maxForce: G.hold * dt });
-          for (const e of c.equations) e.setSpookParams(1e7, 3, dt);
-          world.addConstraint(c);
-          p.grip = { c, what: gripName(oshape, other) };
-          log('gripped', p.bot.index, `${p.bot.name}'s ${p.id} took hold of ${p.grip.what}.`, { part: p.id });
-        }
-      }
+      if (!torque) continue;
+      hAxis.scale(torque, hT);
+      B.torque.vadd(hT, B.torque); A.torque.vsub(hT, A.torque);
     }
   }
 
@@ -697,8 +639,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
     const f = new Float32Array(m.parts.length * 7), flags = new Uint8Array(m.parts.length);
     const pos = new CANNON.Vec3(), q = new CANNON.Quaternion();
     m.parts.forEach((p, i) => { partWorld(p, pos, q); f.set([pos.x, pos.y, pos.z, q.x, q.y, q.z, q.w], i * 7); flags[i] = p.live ? 0 : 1; });
-    m.parts.forEach((p, i) => { if (p.firing || p.grip) flags[i] |= 2; });
-    m.frames.push(f); m.frameFlags.push(flags); m.frameTimes.push(m.t);
+    m.frames.push(f); m.frameFlags.push(flags); m.frameTimes.push(m.t); m.frameSay.push(m.bots.map((b) => b.say || ''));
     const pf = new Float32Array(props.length * 7);
     props.forEach((pr, i) => { const b = pr.body; pf.set([b.position.x, b.position.y, b.position.z, b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w], i * 7); });
     m.propFrames.push(pf);
@@ -709,7 +650,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const b = bot.core.body;
       const up = b.quaternion.vmult(new CANNON.Vec3(0, 1, 0)).y;
       if (!bot.flipped && up < -0.3) { bot.flipped = true; log('flipped', bot.index, `${bot.name} is upside down.`); }
-      else if (bot.flipped && up > 0.5) { bot.flipped = false; log('righted', bot.index, `${bot.name} is back on its wheels.`); }
+      else if (bot.flipped && up > 0.5) { bot.flipped = false; log('righted', bot.index, `${bot.name} is the right way up again.`); }
       const high = b.position.y > bot.restHeight + 0.5;
       if (high && !bot.airborne && b.position.y > 0) log('airborne', bot.index, `${bot.name} was thrown into the air.`);
       bot.airborne = high;
@@ -786,7 +727,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
     for (const bot of m.bots) for (const b of bot.bodies) { b.pv.copy(b.velocity); b.pw.copy(b.angularVelocity); }
     for (const pr of props) { pr.body.pv.copy(pr.body.velocity); pr.body.pw.copy(pr.body.angularVelocity); }
     drivePistons();
-    driveExtras();
+    driveHinges();
     world.step(dt);
     m.steps++; m.t = m.steps * dt;
     stress();

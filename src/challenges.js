@@ -21,39 +21,39 @@ const chRound = (v) => Math.round(v * 100) / 100;
 export const OPEN = {
   name: 'Open floor',
   brief: 'A plain square platform. Hold the centre.',
-  floor: [{ x: 0, z: 0, w: 14, d: 14 }],
+  floor: [{ x: 0, z: 0, w: 30, d: 30 }],
   walls: [],
   surface: { grip: 1, slide: 1 },
   gravity: 1,
-  spawn: [{ x: 0, z: -3.5 }, { x: 0, z: 3.5 }],
+  spawn: [{ x: 0, z: -9 }, { x: 0, z: 9 }],
   objective: { type: 'hold', scoring: 'final', path: { kind: 'fixed', x: 0, z: 0 } },
 };
 
 const LAYOUTS = {
-  open: (r) => { const s = 12 + Math.round(r() * 8) / 2; return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 3.5, reach: s / 2 - 2.5 }; },
-  small: (r) => { const s = 7 + Math.round(r() * 4) / 2; return { text: `a small ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 1.8, reach: s / 2 - 1.8 }; },
+  open: (r) => { const s = 26 + Math.round(r() * 8); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 6, reach: s / 2 - 5 }; },
+  small: (r) => { const s = 14 + Math.round(r() * 4); return { text: `a small ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 3.5, reach: s / 2 - 3.5 }; },
   bridge: (r) => {
-    const w = chRound(2.6 + r() * 1.4), len = chRound(3 + r() * 2), isl = 6;
+    const w = chRound(4.5 + r() * 2.5), len = chRound(6 + r() * 4), isl = 12;
     const z = len / 2 + isl / 2;
-    return { text: `two platforms joined by a bridge ${w} m wide and ${len} m long`, floor: [{ x: 0, z: -z, w: 10, d: isl }, { x: 0, z, w: 10, d: isl }, { x: 0, z: 0, w, d: len }], walls: [], spawnZ: z, reach: Math.min(w / 2 - 0.6, 1.2), narrow: true };
+    return { text: `two platforms joined by a bridge ${w} m wide and ${len} m long`, floor: [{ x: 0, z: -z, w: 20, d: isl }, { x: 0, z, w: 20, d: isl }, { x: 0, z: 0, w, d: len }], walls: [], spawnZ: z, reach: Math.min(w / 2 - 1.2, 2), narrow: true };
   },
   gap: (r) => {
-    const g = chRound(0.5 + r() * 0.9), isl = 7;
+    const g = chRound(1 + r() * 2), isl = 13;
     const z = g / 2 + isl / 2;
-    return { text: `two platforms separated by a ${g} m gap`, floor: [{ x: 0, z: -z, w: 12, d: isl }, { x: 0, z, w: 12, d: isl }], walls: [], spawnZ: z + 0.5, reach: 0, split: true };
+    return { text: `two platforms separated by a ${g} m gap`, floor: [{ x: 0, z: -z, w: 24, d: isl }, { x: 0, z, w: 24, d: isl }], walls: [], spawnZ: z + 1, reach: 0, split: true };
   },
   plinth: (r) => {
-    const w = chRound(3 + r() * 1.5), top = chRound(0.35 + r() * 0.2);
-    return { text: `a square platform with a raised block in the middle, ${w} m across and ${top} m high`, floor: [{ x: 0, z: 0, w: 14, d: 14 }, { x: 0, z: 0, w, d: w, top }], walls: [], spawnZ: 4.5, reach: w / 2 - 0.5, only: ['fixed', 'deliver'], where: 'on top of the block' };
+    const w = chRound(6 + r() * 3), top = chRound(0.4 + r() * 0.5);
+    return { text: `a square platform with a raised block in the middle, ${w} m across and ${top} m high`, floor: [{ x: 0, z: 0, w: 30, d: 30 }, { x: 0, z: 0, w, d: w, top }], walls: [], spawnZ: 10, reach: w / 2 - 1, only: ['fixed', 'deliver'], where: 'on top of the block' };
   },
   islands: (r) => {
-    const g = chRound(0.8 + r() * 0.8), z = 2 + g + 2.5;
-    return { text: `three platforms in a row with ${g} m gaps between them; the middle one is 4 m square`, floor: [{ x: 0, z: -z, w: 12, d: 5 }, { x: 0, z, w: 12, d: 5 }, { x: 0, z: 0, w: 4, d: 4 }], walls: [], spawnZ: z, reach: 1.5, only: ['fixed', 'deliver'], where: 'on the middle platform' };
+    const g = chRound(1.5 + r() * 1.5), z = 4 + g + 5;
+    return { text: `three platforms in a row with ${g} m gaps between them; the middle one is 8 m square`, floor: [{ x: 0, z: -z, w: 24, d: 10 }, { x: 0, z, w: 24, d: 10 }, { x: 0, z: 0, w: 8, d: 8 }], walls: [], spawnZ: z, reach: 3, only: ['fixed', 'deliver'], where: 'on the middle platform' };
   },
   pillars: (r) => {
-    const s = 14, walls = [];
-    for (let i = 0; i < 4; i++) { const a = (i / 4) * Math.PI * 2 + r() * 0.8, d = 2.2 + r() * 2; walls.push({ x: chRound(Math.cos(a) * d), z: chRound(Math.sin(a) * d * 0.6), w: chRound(0.6 + r() * 0.8), d: chRound(0.6 + r() * 0.8), h: 1 }); }
-    return { text: 'a square platform with four solid pillars', floor: [{ x: 0, z: 0, w: s, d: s }], walls, spawnZ: 4.5, reach: 4 };
+    const s = 30, walls = [];
+    for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2 + r() * 0.8, d = 5 + r() * 4; walls.push({ x: chRound(Math.cos(a) * d), z: chRound(Math.sin(a) * d * 0.6), w: chRound(1.2 + r() * 1.8), d: chRound(1.2 + r() * 1.8), h: 2 }); }
+    return { text: 'a square platform with five solid pillars', floor: [{ x: 0, z: 0, w: s, d: s }], walls, spawnZ: 10, reach: 9 };
   },
 };
 const SURFACES = {
@@ -84,16 +84,16 @@ export function drawChallenge(seed, force = {}) {
     objective = { type: 'hold', scoring: 'final', path: { kind: 'fixed', x: 0, z: 0 } };
     text = L.split ? 'The point to hold is in the middle of the gap. The core closer to it at the end wins.' : `Hold the marked point${L.where ? ', which is ' + L.where : ''}. The core closer to it at the end wins.`;
   } else if (objKey === 'orbit') {
-    const radius = chRound(Math.max(1, L.reach * (0.5 + r() * 0.4))), period = Math.round(14 + r() * 12);
+    const radius = chRound(Math.max(2, L.reach * (0.5 + r() * 0.4))), period = Math.round(20 + r() * 15);
     objective = { type: 'hold', scoring: 'time', path: { kind: 'orbit', radius, period, phase: chRound(r() * 6.28) } };
     text = `The marked point circles the centre at ${radius} m, once every ${period} seconds. Whoever spends longer closest to it wins.`;
   } else if (objKey === 'jump') {
-    const every = Math.round(7 + r() * 5), points = [];
-    for (let i = 0; i < 8; i++) points.push(L.narrow ? { x: 0, z: chRound((r() - 0.5) * 2 * (L.floor[2].d / 2 + 2)) } : { x: chRound((r() - 0.5) * 2 * L.reach), z: chRound((r() - 0.5) * 2 * L.reach) });
+    const every = Math.round(9 + r() * 6), points = [];
+    for (let i = 0; i < 8; i++) points.push(L.narrow ? { x: 0, z: chRound((r() - 0.5) * 2 * (L.floor[2].d / 2 + 4)) } : { x: chRound((r() - 0.5) * 2 * L.reach), z: chRound((r() - 0.5) * 2 * L.reach) });
     objective = { type: 'hold', scoring: 'time', path: { kind: 'jump', every, points } };
     text = `The marked point jumps to a new place every ${every} seconds. Whoever spends longer closest to it wins.`;
   } else {
-    const size = chRound(0.5 + r() * 0.4), mass = Math.round(10 + r() * 40);
+    const size = chRound(1 + r() * 0.6), mass = Math.round(40 + r() * 120);
     objective = { type: 'deliver', crate: { size, mass, x: 0, z: 0 } };
     text = `A ${mass} kg crate starts ${L.where || 'in the middle'}. Whoever has it nearer their own end when the round stops wins.`;
   }
@@ -125,10 +125,10 @@ export function onFloor(ch, x, z) {
   for (const s of ch.floor) if (Math.abs(x - s.x) <= s.w / 2 && Math.abs(z - s.z) <= s.d / 2) return true;
   return false;
 }
-// Distance from a point to the nearest drop, looking in 16 directions out to 4 m.
+// Distance from a point to the nearest drop, looking in 16 directions out to 6 m.
 export function edgeDistance(ch, x, z) {
   if (!onFloor(ch, x, z)) return 0;
-  let best = 4;
+  let best = 6;
   for (let i = 0; i < 16; i++) {
     const a = (i / 16) * Math.PI * 2, cx = Math.cos(a), cz = Math.sin(a);
     for (let d = 0.2; d < best; d += 0.2) if (!onFloor(ch, x + cx * d, z + cz * d)) { best = d; break; }

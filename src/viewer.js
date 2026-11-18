@@ -23,13 +23,13 @@ renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(42, 16 / 10, 0.1, 200);
+const camera = new THREE.PerspectiveCamera(42, 16 / 10, 0.1, 400);
 const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 1.5);
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
-sun.position.set(7, 14, 5);
+sun.position.set(14, 28, 10);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 40 });
+sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 24, bottom: -24, near: 1, far: 90 });
 scene.add(hemi, sun);
 
 const arena = new THREE.Group();
@@ -48,8 +48,8 @@ function buildArena() {
     arena.add(slab);
     const x0 = sl.x - sl.w / 2, x1 = sl.x + sl.w / 2, z0 = sl.z - sl.d / 2, z1 = sl.z + sl.d / 2;
     const g = top + 0.005, e = top + 0.01;
-    for (let x = Math.ceil(x0); x <= x1; x++) grid.push(x, g, z0, x, g, z1);
-    for (let z = Math.ceil(z0); z <= z1; z++) grid.push(x0, g, z, x1, g, z);
+    for (let x = Math.ceil(x0 / 2) * 2; x <= x1; x += 2) grid.push(x, g, z0, x, g, z1);
+    for (let z = Math.ceil(z0 / 2) * 2; z <= z1; z += 2) grid.push(x0, g, z, x1, g, z);
     edge.push(x0, e, z0, x1, e, z0, x1, e, z0, x1, e, z1, x1, e, z1, x0, e, z1, x0, e, z1, x0, e, z0);
   }
   const lines = (pts, mat) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); return new THREE.LineSegments(g, mat); };
@@ -64,7 +64,7 @@ function buildArena() {
   // The point to hold: a flat ring on the floor that moves with the objective.
   targetRing = null;
   if (targetAt(ch, 0)) {
-    targetRing = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.6, 40), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true, opacity: 0.9 }));
+    targetRing = new THREE.Mesh(new THREE.RingGeometry(0.8, 1.0, 48), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true, opacity: 0.9 }));
     targetRing.rotation.x = -Math.PI / 2;
     arena.add(targetRing);
   }
@@ -82,7 +82,6 @@ function partMesh(part, color) {
   if (sp.kind === 'box') geo = new THREE.BoxGeometry(sp.half[0] * 2, sp.half[1] * 2, sp.half[2] * 2);
   else if (sp.kind === 'ball') geo = new THREE.SphereGeometry(sp.radius, 20, 14);
   else if (sp.kind === 'disc') geo = new THREE.CylinderGeometry(sp.radius, sp.radius, sp.thickness, 28);
-  else if (sp.kind === 'wheel') { geo = new THREE.CylinderGeometry(sp.radius, sp.radius, sp.width, 22); geo.rotateZ(Math.PI / 2); }
   else if (sp.kind === 'wedge') {
     const [w, h, l] = sp.half;
     const v = [[-w, -h, -l], [w, -h, -l], [w, h, -l], [-w, h, -l], [-w, -h, l], [w, -h, l]];
@@ -94,10 +93,10 @@ function partMesh(part, color) {
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.35, flatShading: sp.kind === 'wedge' });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = true; mesh.receiveShadow = true;
-  if (sp.kind === 'wheel') {
-    // A pale stripe across the hub so you can see the wheel turning.
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(sp.width * 1.04, sp.radius * 1.5, 0.05), new THREE.MeshStandardMaterial({ color: 0xb8c0cc, roughness: 0.6 }));
-    mesh.add(stripe);
+  if (sp.kind === 'ball' && part.jointType === 'motor') {
+    // A pale band round a powered ball so you can see it turning.
+    const band = new THREE.Mesh(new THREE.BoxGeometry(sp.radius * 0.5, sp.radius * 2.03, sp.radius * 0.45), new THREE.MeshStandardMaterial({ color: 0xb8c0cc, roughness: 0.6 }));
+    mesh.add(band);
   }
   return mesh;
 }
@@ -109,9 +108,7 @@ function partColor(part) {
   const team = new THREE.Color(css(part.bot.index === 0 ? '--team-a' : '--team-b'));
   const t = part.def.type, m = part.def.material;
   if (t === 'core') return team;
-  if (t === 'drive' || t === 'track') return new THREE.Color(0x2b2f36);
-  if (t === 'thruster') return new THREE.Color(0x8d99a8);
-  if (t === 'gripper') return new THREE.Color(0xd9b24a);
+  if (m === 'rubber') return new THREE.Color(0x2b2f36);
   const steel = new THREE.Color(0x6f7a88), alu = new THREE.Color(0xc4ccd6), plastic = new THREE.Color(0xe9e2cf);
   const base = m === 'steel' ? steel : m === 'plastic' ? plastic : alu;
   return base.lerp(team, m === 'steel' ? 0.35 : 0.5);
@@ -143,7 +140,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme
 new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
 // ── Camera: orbits the midpoint between the two cores ───────────────────────
-const cam = { az: 0.7, el: 0.62, zoom: 1, target: new THREE.Vector3(), dist: 16 };
+const cam = { az: 0.7, el: 0.55, zoom: 1, target: new THREE.Vector3(), dist: 22 };
 let drag = null;
 canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); canvas.style.cursor = 'grabbing'; });
 canvas.addEventListener('pointermove', (e) => {
@@ -155,8 +152,8 @@ const endDrag = () => { drag = null; canvas.style.cursor = 'grab'; };
 canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
 canvas.addEventListener('wheel', (e) => { e.preventDefault(); cam.zoom = Math.max(0.45, Math.min(2.2, cam.zoom * (e.deltaY > 0 ? 1.08 : 0.93))); }, { passive: false });
 
-const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), grey = new THREE.Color(0x7d848e), spark = new THREE.Color(0xfff2b0), glow = new THREE.Color(0xff7a1a);
-let flashes = [];
+const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), grey = new THREE.Color(0x7d848e), spark = new THREE.Color(0xfff2b0);
+let flashes = [], lastSay = ['', ''];
 function pose(time) {
   const n = match.frames.length;
   const f = Math.max(0, Math.min(n - 1, time * FPS));
@@ -170,8 +167,6 @@ function pose(time) {
     mesh.quaternion.slerpQuaternions(qa, qb, k);
     mesh.material.color.copy(mesh.userData.base);
     if (flags[i] & 1) mesh.material.color.lerp(grey, 0.6);
-    // A thruster that is firing or a gripper that is holding glows.
-    if (flags[i] & 2) mesh.material.color.lerp(glow, 0.85);
     if (match.parts[i].def.type === 'core') cores.push(mesh.position);
   });
   // Light up the two parts that touched in a hard hit, fading over a third of a second.
@@ -191,7 +186,9 @@ function pose(time) {
   const mid = cores[0].clone().add(cores[1]).multiplyScalar(0.5);
   mid.y = Math.max(0, mid.y);
   cam.target.lerp(mid, 0.08);
-  const want = Math.max(9, cores[0].distanceTo(cores[1]) * 1.25 + 7);
+  const want = Math.max(13, cores[0].distanceTo(cores[1]) * 1.2 + 10);
+  const say = match.frameSay[i0] || ['', ''];
+  if (say[0] !== lastSay[0] || say[1] !== lastSay[1]) { lastSay = say; $('says').innerHTML = match.bots.map((b, i) => `<div class="${TEAM[i]}"><b>${esc(b.name)}</b><span>${esc(say[i] || '…')}</span></div>`).join(''); }
   cam.dist += (want - cam.dist) * 0.05;
 }
 function render() {
@@ -226,7 +223,7 @@ function renderLog() {
   $('json').textContent = JSON.stringify(shown, null, 1);
 }
 function renderBots() {
-  $('tab-bots').innerHTML = `<p class="note">A bot is two things: a parts list and a control program. The program reads sensors and sets motors ${cfg.physics.controlHz} times a second. Positions are in metres from the core; +z is forward, +y is up.</p>` + match.bots.map((b, i) => {
+  $('tab-bots').innerHTML = `<p class="note">A machine is two things: a parts list and a control program. Nothing in the kit is ready-made: wheels, legs, throwing arms and gates are all assembled from plain pieces. The program sees the whole fight and sets motors and pistons ${cfg.physics.controlHz} times a second. Positions are in metres from the core; +z is forward, +y is up.</p>` + match.bots.map((b, i) => {
     const c = b.check;
     return `<div class="bot"><div><h3 class="${TEAM[i]}">${esc(b.name)}</h3><p>${esc(b.build.note || '')}</p>
       <div class="meter"><span>mass ${c.mass} / ${cfg.budget.mass} kg</span><span>cost ${c.cost} / ${cfg.budget.cost}</span><span class="${c.ok ? 'ok' : 'bad'}">${c.ok ? 'build passes checks' : esc(c.errors.join(' '))}</span></div></div>
@@ -281,13 +278,35 @@ document.querySelectorAll('.tabs button').forEach((btn) => btn.addEventListener(
   for (const t of ['log', 'bots', 'settings']) $('tab-' + t).hidden = t !== btn.dataset.tab;
 }));
 $('challenge').innerHTML = NAMED.map((c, i) => `<option value="${i}">${esc(c.name)}</option>`).join('') + '<option value="draw">Random round (from seed)</option>';
-$('challenge').value = '9';
+$('challenge').value = '0';
 $('challenge').addEventListener('change', () => { playing = true; runFight(); });
-for (const [id, def] of [['botA', 10], ['botB', 9]]) {
+for (const [id, def] of [['botA', 2], ['botB', 0]]) {
   $(id).innerHTML = ALL.map((r, i) => `<option value="${i}">${esc(r.build.name)}</option>`).join('');
   $(id).value = def;
   $(id).addEventListener('change', () => { playing = true; runFight(); });
 }
+// Curated fights, each picked to show one idea. Choosing a machine, challenge or seed by hand leaves the showcase.
+const SHOWS = [
+  { label: 'Reaching across', a: 'Span', b: 'Bulwark', ch: 'The gap', seed: 1, watch: 'The point is out over a gap. Bulwark works out it cannot get there and holds the edge. Span parks square to the edge, reaches its nose across, swings its weights forward and stops astride the gap.' },
+  { label: 'Island hopping', a: 'Span', b: 'Strider', ch: 'Islands', seed: 1, watch: 'The point is on the middle island. Watch the labels under the view: each machine says what it is trying to do as it does it.' },
+  { label: 'Ranging shots', a: 'Mangonel', b: 'Corral', ch: 'Open floor', seed: 1, watch: 'Mangonel works out the swing speed for the range, aims where Corral will be when the ball lands, backs off when it is too close to throw, and uses its arms as clubs once the balls are gone.' },
+  { label: 'The pen', a: 'Corral', b: 'Bulwark', ch: 'Bring it home', seed: 1, watch: 'Both want the crate. Corral drives its pen over it, shuts the gates and hauls it home. Bulwark has to get behind it and shove.' },
+  { label: 'The climb', a: 'Strider', b: 'Bulwark', ch: 'The plinth', seed: 1, watch: 'The point is on a raised block. Wheels cannot climb it. Legs can.' },
+  { label: 'On ice', a: 'Bulwark', b: 'Corral', ch: 'Ice', seed: 1, watch: 'A quarter of the usual grip. Each machine measures how slowly it is picking up speed and brakes early to match.' },
+  { label: 'Low gravity', a: 'Mangonel', b: 'Span', ch: 'Low gravity', seed: 1, watch: 'A third of normal gravity. The same throw goes three times as far, so Mangonel swings more gently.' },
+];
+let showing = -1;
+function markShow(i) { showing = i; document.querySelectorAll('#shows button').forEach((b, k) => b.setAttribute('aria-pressed', String(k === i))); $('watch').textContent = i >= 0 ? SHOWS[i].watch : ''; }
+function playShow(i) {
+  const sh = SHOWS[i], idx = (n) => ALL.findIndex((r) => r.build.name === n);
+  $('botA').value = idx(sh.a); $('botB').value = idx(sh.b);
+  $('challenge').value = String(NAMED.findIndex((c) => c.name === sh.ch)); $('seed').value = sh.seed;
+  markShow(i); playing = true; runFight();
+}
+$('shows').innerHTML = SHOWS.map((sh, i) => `<button data-i="${i}" aria-pressed="false">${esc(sh.label)}</button>`).join('');
+$('shows').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) playShow(Number(b.dataset.i)); });
+for (const id of ['botA', 'botB', 'challenge', 'seed']) $(id).addEventListener('change', () => markShow(-1));
+$('next').addEventListener('click', () => markShow(-1));
 const knobs = [
   ['k-break', 'o-break', (v) => { cfg.breakage.scale = v; }, (v) => v.toFixed(1) + 'x', () => CONFIG.breakage.scale],
   ['k-grav', 'o-grav', (v) => { cfg.physics.gravity = v; }, (v) => v.toFixed(1), () => CONFIG.physics.gravity],
@@ -322,5 +341,5 @@ function frame(now) {
   }
   requestAnimationFrame(frame);
 }
-runFight();
+playShow(0);
 requestAnimationFrame(frame);

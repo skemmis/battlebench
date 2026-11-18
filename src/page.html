@@ -20,8 +20,19 @@
 [hidden] { display: none !important }
 body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.5 }
 .wrap { max-width: 1320px; margin: 0 auto; padding-block: 20px 32px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 16px }
+.says { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; font-size: 13px }
+.says div { padding: 6px 10px; border-left: 3px solid var(--muted); background: var(--panel, transparent); min-height: 2.6em }
+.says div.a { border-color: var(--team-a) } .says div.b { border-color: var(--team-b) }
+.says b { display: block; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted) }
+li.intent span { color: var(--muted); font-style: italic }
 header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px }
 h1 { font-family: var(--display); font-size: 26px; font-weight: 700; letter-spacing: -0.01em; margin: 0 }
+.shows { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin: 4px 0 6px }
+.shows .lbl { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted) }
+.shows #shows { display: flex; gap: 6px; flex-wrap: wrap }
+.shows button { font-size: 13px; padding: 3px 10px }
+.shows button[aria-pressed="true"] { border-color: var(--accent, currentColor); font-weight: 600 }
+.watch { margin: 0 0 10px; font-size: 14px; color: var(--muted); max-width: 90ch; min-height: 1.4em }
 .tag { font-family: var(--mono); font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px }
 .versus { margin-left: auto; font-family: var(--display); font-weight: 500; font-size: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap }
 .dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; margin-right: 6px }
@@ -78,9 +89,12 @@ details summary { cursor: pointer; font-weight: 500 } details[open] summary { ma
     <h1>BattleBotBench</h1><span class="tag" id="version">prototype</span>
     <div class="versus"><span><i class="dot a"></i><select id="botA" aria-label="First bot"></select></span><span style="color:var(--muted)">against</span><span><i class="dot b"></i><select id="botB" aria-label="Second bot"></select></span><span style="color:var(--muted)">in</span><span><select id="challenge" aria-label="Challenge"></select></span></div>
   </header>
+  <nav class="shows" aria-label="Showcase fights"><span class="lbl">Showcase</span><span id="shows"></span></nav>
+  <p class="watch" id="watch"></p>
   <main>
     <section>
       <div class="stage"><canvas id="view" aria-label="3D replay of the fight"></canvas><div class="verdict" id="verdict"></div><div class="hint">Drag to orbit, scroll to zoom</div></div>
+      <div class="says" id="says" aria-live="off"></div>
       <div class="transport">
         <button id="play" class="primary">Pause</button>
         <div class="track"><div class="ticks" id="ticks"></div><input id="scrub" type="range" min="0" max="1" step="0.001" value="0" aria-label="Fight time"></div>
