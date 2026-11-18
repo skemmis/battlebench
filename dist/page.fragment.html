@@ -411,7 +411,7 @@ const LIB = {
   // How hard the machine can brake, in m/s2: a cautious guess from the round's grip and gravity, lowered to
   // what guard() has measured if the program lends it its memory.
   braking(s, { grip = 1, mem = null } = {}) {
-    const guess = 0.3 * grip * s.challenge.surface.grip * 9.81 * s.challenge.gravity, k = mem && mem._guard;
+    const guess = 0.55 * grip * s.challenge.surface.grip * 9.81 * s.challenge.gravity, k = mem && mem._guard;
     return k && k.n > 8 ? Math.max(guess * 0.15, Math.min(guess, k.a * 0.8)) : guess;
   },
   // Take a wanted drive (-1 to 1) and return one that will not take the machine off the floor: slowed when the
@@ -492,7 +492,9 @@ const CONFIG = {
   program: { maxChars: 20000 },
   // A joint's load = impulse x share of the bot it has to drag along x leverage x sharpness.
   // Sharpness: a hit at speedRef m/s counts 1.5x, faster hits count for more.
-  breakage: { scale: 1, leverLength: 1.0, speedRef: 8, logImpulse: 45 },
+  // A joint's load = impulse of the whole blow x share of the machine the joint drags x leverage x sharpness.
+  // Sharpness is closing speed / speedRef, capped at maxSharp. Blows against the floor count for floorFactor.
+  breakage: { scale: 1, leverLength: 1.0, speedRef: 4, maxSharp: 2.5, floorFactor: 0.4, maxLever: 1.2, window: 0.05, logImpulse: 60 },
   materials: {
     steel: { density: 780, strength: 1.5, costPerVolume: 70 },
     aluminium: { density: 270, strength: 1.0, costPerVolume: 90 },
@@ -688,7 +690,24 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
     const count = new Map();
     const key = (e) => e.bi.id * 100000 + e.bj.id;
     for (const e of result) count.set(key(e), (count.get(key(e)) || 0) + 1);
-    for (const e of frictionResult) { const k = count.get(key(e)) || 1; e.minForce *= dt / k; e.maxForce *= dt / k; }
+    // Grip depends on how hard the two bodies are pressed together, not on how heavy the lighter one is: a wheel
+    // carries the machine above it. Use the pressing force the solver found for this pair on the last step. A
+    // pair that has only just touched has no such figure yet and falls back to the lighter body's weight.
+    const gAbs = Math.abs(world.gravity.y) || 1;
+    for (const e of frictionResult) {
+      const k = count.get(key(e)) || 1, press = pressed.get(key(e));
+      if (press === undefined) { e.minForce *= dt / k; e.maxForce *= dt / k; continue; }
+      const reduced = 1 / ((e.bi.invMass + e.bj.invMass) || 1), mu = e.maxForce / (gAbs * reduced), lim = (mu * press * dt) / k;
+      e.minForce = -lim; e.maxForce = lim;
+    }
+  };
+  // After each step, note how hard each pair of bodies was pressed together (smoothed over a few steps).
+  let pressed = new Map();
+  const notePressure = () => {
+    const now = new Map();
+    for (const e of world.contacts) { const k2 = e.bi.id * 100000 + e.bj.id; now.set(k2, (now.get(k2) || 0) + Math.max(0, e.multiplier || 0)); }
+    for (const [k2, v] of now) { const was = pressed.get(k2); now.set(k2, was === undefined ? v : was * 0.6 + v * 0.4); }
+    pressed = now;
   };
 
   const matFloor = new CANNON.Material('floor');
@@ -1051,11 +1070,12 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
   const cp = new CANNON.Vec3(), pp = new CANNON.Vec3(), hitLog = new Map();
   // Velocity of a contact point as it was just before the step, i.e. before the hit changed it.
   const pointVel = (b, r) => (b.pv ? b.pv.vadd(b.pw.cross(r)) : new CANNON.Vec3());
+  const blows = new Map();
   function stress() {
     const breaks = new Map();
     // One log line per hard hit between two parts. The faster part is named as the one doing the hitting.
     const noteHit = (p, q, sp, sq, J, speed) => {
-      if (!p || !q || J < cfg.breakage.logImpulse || (!p.live && !q.live)) return;
+      if (!p || !q || J < cfg.breakage.logImpulse || speed < 1 || (!p.live && !q.live)) return;
       const [striker, target] = (sp >= sq ? [p, q] : [q, p]);
       const key = [p.index, q.index].sort().join('-');
       if (m.t - (hitLog.get(key) ?? -9) < 0.4) return;
@@ -1074,24 +1094,37 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       while (cur.parent && cur.intact) {
         partWorld(cur, pp);
         const a = cur.body.quaternion.vmult(cur.localQuat.vmult(cur.anchorLocal)); pp.vadd(a, pp);
-        const lever = pp.distanceTo(cp);
+        const lever = Math.min(cfg.breakage.maxLever, pp.distanceTo(cp));
         const share = (bot.liveMass - cur.subMass) / bot.liveMass;
-        const load = J * share * (1 + lever / cfg.breakage.leverLength) * (0.5 + speed / cfg.breakage.speedRef);
+        const load = J * share * (1 + lever / cfg.breakage.leverLength) * Math.min(cfg.breakage.maxSharp, speed / cfg.breakage.speedRef) * (op ? 1 : cfg.breakage.floorFactor);
         const ratio = load / (cur.strength * cfg.breakage.scale);
-        if (ratio > 1 && (!best || ratio > best.ratio)) best = { part: cur, ratio, load };
+        // The joint nearest the blow that cannot take it is the one that goes, so machines lose their outer
+        // pieces first and come apart a piece at a time.
+        if (ratio > 1) { best = { part: cur, ratio, load }; break; }
         cur = cur.parent;
       }
       if (best) { const prev = breaks.get(best.part); if (!prev || prev.ratio < best.ratio) breaks.set(best.part, { ...best, by: op, label }); }
     };
+    // A hit lasts several physics steps. Add up the impulse between two parts over the length of the hit (up to
+    // a twentieth of a second) and judge the joints on the whole blow at the speed the parts met. Parts that are
+    // only resting or pushing on each other meet at no speed, so they load nothing.
     for (const eq of world.contacts) {
-      const J = Math.abs(eq.multiplier) * dt;
-      if (J < 20) continue;
+      const Jstep = Math.abs(eq.multiplier) * dt;
+      if (Jstep < 1) continue;
+      const P = eq.si && eq.si.partRef, Q = eq.sj && eq.sj.partRef;
+      const key = (P ? P.bot.index + ':' + P.index : 'f' + eq.bi.id) + '|' + (Q ? Q.bot.index + ':' + Q.index : 'f' + eq.bj.id);
       const vi = pointVel(eq.bi, eq.ri), vj = pointVel(eq.bj, eq.rj);
-      const speed = Math.abs(vi.vsub(vj).dot(eq.ni));
-      noteHit(eq.si && eq.si.partRef, eq.sj && eq.sj.partRef, vi.length(), vj.length(), J, speed);
+      const closing = Math.abs(vi.vsub(vj).dot(eq.ni));
+      let blow = blows.get(key);
+      if (!blow || m.t - blow.last > 0.02 || m.t - blow.t0 > cfg.breakage.window) { blow = { J: 0, speed: 0, t0: m.t, last: m.t }; blows.set(key, blow); }
+      blow.J += Jstep; blow.speed = Math.max(blow.speed, closing); blow.last = m.t;
+      const J = blow.J, speed = blow.speed;
+      if (J < 20) continue;
+      noteHit(P, Q, vi.length(), vj.length(), J, speed);
       side(eq.bi, eq.si, eq.ri, J, speed, eq.sj);
       side(eq.bj, eq.sj, eq.rj, J, speed, eq.si);
     }
+    if (blows.size > 4000) for (const [k, b] of blows) if (m.t - b.last > 0.1) blows.delete(k);
     if (!breaks.size) return;
     const dirty = new Set();
     for (const [part, info] of breaks) {
@@ -1200,7 +1233,7 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
     for (const pr of props) { pr.body.pv.copy(pr.body.velocity); pr.body.pw.copy(pr.body.angularVelocity); }
     drivePistons();
     driveHinges();
-    world.step(dt);
+    world.step(dt); notePressure();
     m.steps++; m.t = m.steps * dt;
     stress();
     // A broken-off part ignores the bot it came from until the two are clear of each other,
@@ -1227,13 +1260,13 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
 // a wheel is a rubber ball on a small geared-down motor, a leg is spokes on a hub, a thrower is an arm on a hinge.
 // The builds are written with a few small helpers to save typing; what the simulator receives is the plain list.
 
-const wheel = (id, pos, parent, { radius = 0.3, power = 0.14, gear = 6 } = {}) => ({ id, type: 'ball', material: 'rubber', radius, pos, parent, joint: { type: 'motor', axis: [1, 0, 0], gear, power } });
+const wheel = (id, pos, parent, { radius = 0.3, power = 0.14, gear = 6, material = 'rubber' } = {}) => ({ id, type: 'ball', material, radius, pos, parent, joint: { type: 'motor', axis: [1, 0, 0], gear, power } });
 const beam = (id, size, pos, parent, material = 'aluminium', extra = {}) => ({ id, type: 'beam', material, size, pos, parent, ...extra });
 const plate = (id, size, pos, parent, material = 'aluminium', extra = {}) => ({ id, type: 'plate', material, size, pos, parent, ...extra });
 const block = (id, size, pos, parent, material = 'aluminium', extra = {}) => ({ id, type: 'block', material, size, pos, parent, ...extra });
 
 // A ladder frame: two rails, cross members, and wheels down each side. Returns the parts and the wheel ids.
-function ladder({ width = 1.4, length = 2.4, y = -0.25, wheels = 3, wheelOpts = {} } = {}) {
+function ladder({ width = 1.4, length = 2.4, y = -0.25, wheels = 3, wheelOpts = {}, slickEnds = false } = {}) {
   const parts = [{ id: 'core', type: 'core' }], left = [], right = [];
   const hx = width / 2;
   parts.push(beam('spine', [0.16, 0.12, length], [0, y, 0], 'core'));
@@ -1245,14 +1278,17 @@ function ladder({ width = 1.4, length = 2.4, y = -0.25, wheels = 3, wheelOpts = 
   }
   for (let i = 0; i < wheels; i++) {
     const z = wheels === 1 ? 0 : -length / 2 + 0.3 + (i * (length - 0.6)) / (wheels - 1);
-    parts.push(wheel('wl_' + i, [hx + 0.3, y - 0.1, z], 'rail_l', wheelOpts)); left.push('wl_' + i);
-    parts.push(wheel('wr_' + i, [-hx - 0.3, y - 0.1, z], 'rail_r', wheelOpts)); right.push('wr_' + i);
+    // Slick ends: only the middle axle is rubber. Hard plastic end wheels slide sideways, so the machine turns
+    // about its middle instead of fighting its own grip.
+    const opts = slickEnds && i !== (wheels - 1) / 2 ? { ...wheelOpts, material: 'plastic' } : wheelOpts;
+    parts.push(wheel('wl_' + i, [hx + 0.3, y - 0.1, z], 'rail_l', opts)); left.push('wl_' + i);
+    parts.push(wheel('wr_' + i, [-hx - 0.3, y - 0.1, z], 'rail_r', opts)); right.push('wr_' + i);
   }
   return { parts, left, right };
 }
 
 // ── Bulwark ────────────────────────────────────────────────────────────────
-const bulwarkFrame = ladder({ width: 1.5, length: 2.4, wheels: 3 });
+const bulwarkFrame = ladder({ width: 1.5, length: 2.4, wheels: 3, slickEnds: true });
 const BULWARK = {
   name: 'Bulwark',
   note: 'A six-wheeled shover. The plough is five separate blades on sprung hinges, so it rides over bumps and gives a little when it hits something. Side skirts keep things from getting under it.',
@@ -1630,8 +1666,8 @@ const SPAN = {
     ]; }),
     ...[-2.2, -1.1, 0, 1.1, 2.2].map((z, i) => beam('rung_' + i, [1.6, 0.1, 0.12], [0, -0.25, z], z > 0 ? 'spine_f' : 'spine_r')),
     ...SPAN_AXLES.flatMap((z, i) => [
-      wheel('wl_' + i, [1.08, -0.35, z], z > 0 ? 'rail_lf' : 'rail_lr', { power: 0.16 }),
-      wheel('wr_' + i, [-1.08, -0.35, z], z > 0 ? 'rail_rf' : 'rail_rr', { power: 0.16 }),
+      wheel('wl_' + i, [1.08, -0.35, z], z > 0 ? 'rail_lf' : 'rail_lr', { power: 0.16, material: Math.abs(z) > 1 ? 'plastic' : 'rubber' }),
+      wheel('wr_' + i, [-1.08, -0.35, z], z > 0 ? 'rail_rf' : 'rail_rr', { power: 0.16, material: Math.abs(z) > 1 ? 'plastic' : 'rubber' }),
     ]),
     // The weights rest on these when they are down at either end.
     plate('rest_f', [1.3, 0.06, 0.7], [0, -0.14, 1.85], 'spine_f', 'plastic'),
@@ -2046,6 +2082,7 @@ const SHOWS = [
   { label: 'The pen', a: 'Corral', b: 'Bulwark', ch: 'Bring it home', seed: 1, watch: 'Both want the crate. Corral drives its pen over it, shuts the gates and hauls it home. Bulwark has to get behind it and shove.' },
   { label: 'The climb', a: 'Strider', b: 'Bulwark', ch: 'The plinth', seed: 1, watch: 'The point is on a raised block. Wheels cannot climb it. Legs can.' },
   { label: 'On ice', a: 'Bulwark', b: 'Corral', ch: 'Ice', seed: 1, watch: 'A quarter of the usual grip. Each machine measures how slowly it is picking up speed and brakes early to match.' },
+  { label: 'Coming apart', a: 'Strider', b: 'Mangonel', ch: 'Wandering point', seed: 3, watch: 'Hits take pieces off. A joint gives way when the whole blow, at the speed the parts met, is more than it can carry, and the joint nearest the blow goes first.' },
   { label: 'Low gravity', a: 'Mangonel', b: 'Span', ch: 'Low gravity', seed: 1, watch: 'A third of normal gravity. The same throw goes three times as far, so Mangonel swings more gently.' },
 ];
 let showing = -1;

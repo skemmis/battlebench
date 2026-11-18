@@ -3,13 +3,13 @@
 // a wheel is a rubber ball on a small geared-down motor, a leg is spokes on a hub, a thrower is an arm on a hinge.
 // The builds are written with a few small helpers to save typing; what the simulator receives is the plain list.
 
-const wheel = (id, pos, parent, { radius = 0.3, power = 0.14, gear = 6 } = {}) => ({ id, type: 'ball', material: 'rubber', radius, pos, parent, joint: { type: 'motor', axis: [1, 0, 0], gear, power } });
+const wheel = (id, pos, parent, { radius = 0.3, power = 0.14, gear = 6, material = 'rubber' } = {}) => ({ id, type: 'ball', material, radius, pos, parent, joint: { type: 'motor', axis: [1, 0, 0], gear, power } });
 const beam = (id, size, pos, parent, material = 'aluminium', extra = {}) => ({ id, type: 'beam', material, size, pos, parent, ...extra });
 const plate = (id, size, pos, parent, material = 'aluminium', extra = {}) => ({ id, type: 'plate', material, size, pos, parent, ...extra });
 const block = (id, size, pos, parent, material = 'aluminium', extra = {}) => ({ id, type: 'block', material, size, pos, parent, ...extra });
 
 // A ladder frame: two rails, cross members, and wheels down each side. Returns the parts and the wheel ids.
-function ladder({ width = 1.4, length = 2.4, y = -0.25, wheels = 3, wheelOpts = {} } = {}) {
+function ladder({ width = 1.4, length = 2.4, y = -0.25, wheels = 3, wheelOpts = {}, slickEnds = false } = {}) {
   const parts = [{ id: 'core', type: 'core' }], left = [], right = [];
   const hx = width / 2;
   parts.push(beam('spine', [0.16, 0.12, length], [0, y, 0], 'core'));
@@ -21,14 +21,17 @@ function ladder({ width = 1.4, length = 2.4, y = -0.25, wheels = 3, wheelOpts = 
   }
   for (let i = 0; i < wheels; i++) {
     const z = wheels === 1 ? 0 : -length / 2 + 0.3 + (i * (length - 0.6)) / (wheels - 1);
-    parts.push(wheel('wl_' + i, [hx + 0.3, y - 0.1, z], 'rail_l', wheelOpts)); left.push('wl_' + i);
-    parts.push(wheel('wr_' + i, [-hx - 0.3, y - 0.1, z], 'rail_r', wheelOpts)); right.push('wr_' + i);
+    // Slick ends: only the middle axle is rubber. Hard plastic end wheels slide sideways, so the machine turns
+    // about its middle instead of fighting its own grip.
+    const opts = slickEnds && i !== (wheels - 1) / 2 ? { ...wheelOpts, material: 'plastic' } : wheelOpts;
+    parts.push(wheel('wl_' + i, [hx + 0.3, y - 0.1, z], 'rail_l', opts)); left.push('wl_' + i);
+    parts.push(wheel('wr_' + i, [-hx - 0.3, y - 0.1, z], 'rail_r', opts)); right.push('wr_' + i);
   }
   return { parts, left, right };
 }
 
 // ── Bulwark ────────────────────────────────────────────────────────────────
-const bulwarkFrame = ladder({ width: 1.5, length: 2.4, wheels: 3 });
+const bulwarkFrame = ladder({ width: 1.5, length: 2.4, wheels: 3, slickEnds: true });
 export const BULWARK = {
   name: 'Bulwark',
   note: 'A six-wheeled shover. The plough is five separate blades on sprung hinges, so it rides over bumps and gives a little when it hits something. Side skirts keep things from getting under it.',
@@ -406,8 +409,8 @@ export const SPAN = {
     ]; }),
     ...[-2.2, -1.1, 0, 1.1, 2.2].map((z, i) => beam('rung_' + i, [1.6, 0.1, 0.12], [0, -0.25, z], z > 0 ? 'spine_f' : 'spine_r')),
     ...SPAN_AXLES.flatMap((z, i) => [
-      wheel('wl_' + i, [1.08, -0.35, z], z > 0 ? 'rail_lf' : 'rail_lr', { power: 0.16 }),
-      wheel('wr_' + i, [-1.08, -0.35, z], z > 0 ? 'rail_rf' : 'rail_rr', { power: 0.16 }),
+      wheel('wl_' + i, [1.08, -0.35, z], z > 0 ? 'rail_lf' : 'rail_lr', { power: 0.16, material: Math.abs(z) > 1 ? 'plastic' : 'rubber' }),
+      wheel('wr_' + i, [-1.08, -0.35, z], z > 0 ? 'rail_rf' : 'rail_rr', { power: 0.16, material: Math.abs(z) > 1 ? 'plastic' : 'rubber' }),
     ]),
     // The weights rest on these when they are down at either end.
     plate('rest_f', [1.3, 0.06, 0.7], [0, -0.14, 1.85], 'spine_f', 'plastic'),

@@ -20,7 +20,9 @@ export const CONFIG = {
   program: { maxChars: 20000 },
   // A joint's load = impulse x share of the bot it has to drag along x leverage x sharpness.
   // Sharpness: a hit at speedRef m/s counts 1.5x, faster hits count for more.
-  breakage: { scale: 1, leverLength: 1.0, speedRef: 8, logImpulse: 45 },
+  // A joint's load = impulse of the whole blow x share of the machine the joint drags x leverage x sharpness.
+  // Sharpness is closing speed / speedRef, capped at maxSharp. Blows against the floor count for floorFactor.
+  breakage: { scale: 1, leverLength: 1.0, speedRef: 4, maxSharp: 2.5, floorFactor: 0.4, maxLever: 1.2, window: 0.05, logImpulse: 60 },
   materials: {
     steel: { density: 780, strength: 1.5, costPerVolume: 70 },
     aluminium: { density: 270, strength: 1.0, costPerVolume: 90 },
@@ -216,7 +218,24 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
     const count = new Map();
     const key = (e) => e.bi.id * 100000 + e.bj.id;
     for (const e of result) count.set(key(e), (count.get(key(e)) || 0) + 1);
-    for (const e of frictionResult) { const k = count.get(key(e)) || 1; e.minForce *= dt / k; e.maxForce *= dt / k; }
+    // Grip depends on how hard the two bodies are pressed together, not on how heavy the lighter one is: a wheel
+    // carries the machine above it. Use the pressing force the solver found for this pair on the last step. A
+    // pair that has only just touched has no such figure yet and falls back to the lighter body's weight.
+    const gAbs = Math.abs(world.gravity.y) || 1;
+    for (const e of frictionResult) {
+      const k = count.get(key(e)) || 1, press = pressed.get(key(e));
+      if (press === undefined) { e.minForce *= dt / k; e.maxForce *= dt / k; continue; }
+      const reduced = 1 / ((e.bi.invMass + e.bj.invMass) || 1), mu = e.maxForce / (gAbs * reduced), lim = (mu * press * dt) / k;
+      e.minForce = -lim; e.maxForce = lim;
+    }
+  };
+  // After each step, note how hard each pair of bodies was pressed together (smoothed over a few steps).
+  let pressed = new Map();
+  const notePressure = () => {
+    const now = new Map();
+    for (const e of world.contacts) { const k2 = e.bi.id * 100000 + e.bj.id; now.set(k2, (now.get(k2) || 0) + Math.max(0, e.multiplier || 0)); }
+    for (const [k2, v] of now) { const was = pressed.get(k2); now.set(k2, was === undefined ? v : was * 0.6 + v * 0.4); }
+    pressed = now;
   };
 
   const matFloor = new CANNON.Material('floor');
@@ -579,11 +598,12 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
   const cp = new CANNON.Vec3(), pp = new CANNON.Vec3(), hitLog = new Map();
   // Velocity of a contact point as it was just before the step, i.e. before the hit changed it.
   const pointVel = (b, r) => (b.pv ? b.pv.vadd(b.pw.cross(r)) : new CANNON.Vec3());
+  const blows = new Map();
   function stress() {
     const breaks = new Map();
     // One log line per hard hit between two parts. The faster part is named as the one doing the hitting.
     const noteHit = (p, q, sp, sq, J, speed) => {
-      if (!p || !q || J < cfg.breakage.logImpulse || (!p.live && !q.live)) return;
+      if (!p || !q || J < cfg.breakage.logImpulse || speed < 1 || (!p.live && !q.live)) return;
       const [striker, target] = (sp >= sq ? [p, q] : [q, p]);
       const key = [p.index, q.index].sort().join('-');
       if (m.t - (hitLog.get(key) ?? -9) < 0.4) return;
@@ -602,24 +622,37 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       while (cur.parent && cur.intact) {
         partWorld(cur, pp);
         const a = cur.body.quaternion.vmult(cur.localQuat.vmult(cur.anchorLocal)); pp.vadd(a, pp);
-        const lever = pp.distanceTo(cp);
+        const lever = Math.min(cfg.breakage.maxLever, pp.distanceTo(cp));
         const share = (bot.liveMass - cur.subMass) / bot.liveMass;
-        const load = J * share * (1 + lever / cfg.breakage.leverLength) * (0.5 + speed / cfg.breakage.speedRef);
+        const load = J * share * (1 + lever / cfg.breakage.leverLength) * Math.min(cfg.breakage.maxSharp, speed / cfg.breakage.speedRef) * (op ? 1 : cfg.breakage.floorFactor);
         const ratio = load / (cur.strength * cfg.breakage.scale);
-        if (ratio > 1 && (!best || ratio > best.ratio)) best = { part: cur, ratio, load };
+        // The joint nearest the blow that cannot take it is the one that goes, so machines lose their outer
+        // pieces first and come apart a piece at a time.
+        if (ratio > 1) { best = { part: cur, ratio, load }; break; }
         cur = cur.parent;
       }
       if (best) { const prev = breaks.get(best.part); if (!prev || prev.ratio < best.ratio) breaks.set(best.part, { ...best, by: op, label }); }
     };
+    // A hit lasts several physics steps. Add up the impulse between two parts over the length of the hit (up to
+    // a twentieth of a second) and judge the joints on the whole blow at the speed the parts met. Parts that are
+    // only resting or pushing on each other meet at no speed, so they load nothing.
     for (const eq of world.contacts) {
-      const J = Math.abs(eq.multiplier) * dt;
-      if (J < 20) continue;
+      const Jstep = Math.abs(eq.multiplier) * dt;
+      if (Jstep < 1) continue;
+      const P = eq.si && eq.si.partRef, Q = eq.sj && eq.sj.partRef;
+      const key = (P ? P.bot.index + ':' + P.index : 'f' + eq.bi.id) + '|' + (Q ? Q.bot.index + ':' + Q.index : 'f' + eq.bj.id);
       const vi = pointVel(eq.bi, eq.ri), vj = pointVel(eq.bj, eq.rj);
-      const speed = Math.abs(vi.vsub(vj).dot(eq.ni));
-      noteHit(eq.si && eq.si.partRef, eq.sj && eq.sj.partRef, vi.length(), vj.length(), J, speed);
+      const closing = Math.abs(vi.vsub(vj).dot(eq.ni));
+      let blow = blows.get(key);
+      if (!blow || m.t - blow.last > 0.02 || m.t - blow.t0 > cfg.breakage.window) { blow = { J: 0, speed: 0, t0: m.t, last: m.t }; blows.set(key, blow); }
+      blow.J += Jstep; blow.speed = Math.max(blow.speed, closing); blow.last = m.t;
+      const J = blow.J, speed = blow.speed;
+      if (J < 20) continue;
+      noteHit(P, Q, vi.length(), vj.length(), J, speed);
       side(eq.bi, eq.si, eq.ri, J, speed, eq.sj);
       side(eq.bj, eq.sj, eq.rj, J, speed, eq.si);
     }
+    if (blows.size > 4000) for (const [k, b] of blows) if (m.t - b.last > 0.1) blows.delete(k);
     if (!breaks.size) return;
     const dirty = new Set();
     for (const [part, info] of breaks) {
@@ -728,7 +761,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
     for (const pr of props) { pr.body.pv.copy(pr.body.velocity); pr.body.pw.copy(pr.body.angularVelocity); }
     drivePistons();
     driveHinges();
-    world.step(dt);
+    world.step(dt); notePressure();
     m.steps++; m.t = m.steps * dt;
     stress();
     // A broken-off part ignores the bot it came from until the two are clear of each other,

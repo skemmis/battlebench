@@ -48,11 +48,15 @@ A fight is simulated in full first and then replayed, so the same seed always gi
 
 ### When parts come off
 
-There are no hit points. Every hard contact puts a load on the joints between the part that was hit and the core:
+There are no hit points. A hit lasts several physics steps, so the impulse between two parts is added up over the length of the blow (up to a twentieth of a second) and judged as a whole:
 
-    load = impulse × share of the bot the joint has to drag along × leverage × sharpness
+    load = impulse of the blow × share of the machine the joint drags along × leverage × sharpness
 
-Leverage grows with the distance from the joint to the hit, so long arms snap at the root. Sharpness grows with closing speed, so a fast blade does more than a slow shove with the same impulse. If the load is above the joint's strength, the joint breaks and the part, with everything attached to it, becomes loose debris.
+Leverage grows with the distance from the joint to the hit. Sharpness is the speed the parts met at, so parts that only rest or push on each other load nothing. Walking inward from the part that was hit, the first joint that cannot carry the load breaks, so machines lose their outer pieces first. Whatever was hanging off that joint comes away with it and stays in the arena as loose debris.
+
+### Grip
+
+A wheel grips according to how hard it is pressed to the floor, which is mostly the weight of the machine above it. (The physics engine on its own uses the wheel's own weight, which left wheels with about a sixth of the grip they should have.) Braking distances now match the textbook figure, v² / 2μg.
 
 ### Challenges
 
@@ -99,10 +103,8 @@ Each fight produces three layers of data: a summary, timestamped events (hits, p
 
 ## Known rough edges
 
-- Fights are bloodless. Across the gauntlet about one part comes off per fight, and thrown balls dent nothing. Joint strength was tuned for the old small bots and needs retuning for many-part machines.
+- Damage is newly tuned (about six parts lost per fight in a sample). A broken joint takes everything beyond it, so a rail goes with its wheels; builds made of longer chains lose bigger pieces.
 - About a third of fights end with both machines standing still, most often when the point is somewhere neither can reach and both sensibly wait.
 - Low gravity is where machines still fall off on their own: braking distances are long and tall machines tip.
-- Traction on ice in low gravity is well below what the friction numbers predict. Machines cope by measuring it, but the cause is not understood.
-- Mangonel throws two of its three balls; the third is usually lost before it is thrown.
 - Wheels are spheres in the physics. The engine is cannon-es, chosen because it is plain JavaScript; friction is corrected on top of it.
 - Compute per tick is not limited yet. There are no hidden test rounds yet.

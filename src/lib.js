@@ -116,7 +116,7 @@ export const LIB = {
   // How hard the machine can brake, in m/s2: a cautious guess from the round's grip and gravity, lowered to
   // what guard() has measured if the program lends it its memory.
   braking(s, { grip = 1, mem = null } = {}) {
-    const guess = 0.3 * grip * s.challenge.surface.grip * 9.81 * s.challenge.gravity, k = mem && mem._guard;
+    const guess = 0.55 * grip * s.challenge.surface.grip * 9.81 * s.challenge.gravity, k = mem && mem._guard;
     return k && k.n > 8 ? Math.max(guess * 0.15, Math.min(guess, k.a * 0.8)) : guess;
   },
   // Take a wanted drive (-1 to 1) and return one that will not take the machine off the floor: slowed when the
