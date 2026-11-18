@@ -152,3 +152,13 @@ test('a gripper takes hold of the crate and the bot hauls it home', () => {
   assert.ok(m.events.some((e) => e.type === 'gripped' && e.text.includes('the crate')));
   assert.equal(m.result.winner, 0);
 });
+
+test('parts of one machine collide with each other: an arm swung down stops on its own deck', () => {
+  const b = { name: 'Self', parts: [{ id: 'core', type: 'core' }, { id: 'deck', type: 'plate', material: 'aluminium', size: [1.2, 0.08, 2.4], pos: [0, -0.24, 0.6], parent: 'core' },
+    { id: 'post', type: 'block', material: 'aluminium', size: [0.2, 0.5, 0.2], pos: [0, 0.45, 0], parent: 'core' },
+    { id: 'arm', type: 'beam', material: 'steel', size: [0.1, 0.1, 1.2], pos: [0, 0.7, 0.75], parent: 'post', joint: { type: 'motor', axis: [1, 0, 0], pivot: [0, 0.7, 0.1], gear: 2 } }] };
+  const m = createMatch({ builds: [b, DOORSTOP], programs: [(s, out) => { out.arm = 1; }, () => {}], seed: 1 });
+  for (let i = 0; i < 480 * 3; i++) m.step();
+  const angle = m.bots[0].byId.get('arm').angle;
+  assert.ok(angle > 0.4 && angle < 1.2, `arm at ${angle}`);
+});

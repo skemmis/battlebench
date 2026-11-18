@@ -498,6 +498,15 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
   const findContacts = world.narrowphase.getContacts.bind(world.narrowphase);
   world.narrowphase.getContacts = (p1, p2, w, result, old, frictionResult, frictionPool) => {
     findContacts(p1, p2, w, result, old, frictionResult, frictionPool);
+    // Parts of one machine collide with each other, except pairs that were built overlapping or share a joint.
+    const dropped = new Set();
+    const tag = (e) => `${e.bi.id}:${e.bj.id}:${e.ri.x}:${e.ri.y}:${e.ri.z}`;
+    for (let i = result.length - 1; i >= 0; i--) {
+      const e = result[i], p = e.si.partRef, q = e.sj.partRef;
+      if (!p || !q || p.bot !== q.bot || !p.live || !q.live) continue;
+      if (p.parent === q || q.parent === p || p.bot.clash.has(p.index * 100000 + q.index)) { dropped.add(tag(e)); result.splice(i, 1); }
+    }
+    if (dropped.size) for (let i = frictionResult.length - 1; i >= 0; i--) if (dropped.has(tag(frictionResult[i]))) frictionResult.splice(i, 1);
     const count = new Map();
     const key = (e) => e.bi.id * 100000 + e.bj.id;
     for (const e of result) count.set(key(e), (count.get(key(e)) || 0) + 1);
@@ -611,6 +620,14 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       const base = p.def.type === 'drive' ? cfg.parts.drive.strength : cfg.joints[p.jointType].strength;
       p.strength = base * Math.min(p.spec.strength, p.parent.spec.strength);
     }
+    // Parts that overlap (or all but touch) as built never collide with each other.
+    bot.clash = new Set();
+    const reach = (p) => (p.def.rot ? [0, 1, 2].map(() => Math.max(...p.spec.half)) : p.spec.half);
+    for (const p of bot.parts) for (const q of bot.parts) {
+      if (p === q) continue;
+      const a = reach(p), b = reach(q), dp = p.def.pos || [0, 0, 0], dq = q.def.pos || [0, 0, 0];
+      if ([0, 1, 2].every((k) => Math.abs(dp[k] - dq[k]) < a[k] + b[k] + 0.04)) bot.clash.add(p.index * 100000 + q.index);
+    }
     m.bots.push(bot);
     assemble(bot);
     if (!check.ok) log('build_error', i, `${bot.name} has build problems: ${check.errors.join(' ')}`);
@@ -665,7 +682,7 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       body.pv = vel.clone(); body.pw = heavy.wang.clone();
       body.live = g.live; body.bot = bot; body.rootPart = g;
       const other = BOT_BIT[1 - bot.index], own = BOT_BIT[bot.index];
-      if (g.live) { body.collisionFilterGroup = own; body.collisionFilterMask = GROUND | other | DEBRIS; }
+      if (g.live) { body.collisionFilterGroup = own; body.collisionFilterMask = GROUND | other | DEBRIS | own; }
       else {
         body.collisionFilterGroup = DEBRIS; body.collisionFilterMask = GROUND | other | DEBRIS;
         body.rejoinAt = Math.max(...list.map((p) => p.lostAt ?? m.t)) + 0.4;
@@ -684,14 +701,14 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
         p.baseA = A.quaternion.inverse().vmult(pivW.vsub(axisW.scale(p.ext)).vsub(A.position));
         p.axisA = A.quaternion.inverse().vmult(axisW);
         c.pivotA.copy(p.baseA.vadd(p.axisA.scale(p.ext)));
-        c.collideConnected = false; c.part = p;
+        c.collideConnected = true; c.part = p;
         for (const e of c.equations) e.setSpookParams(1e7, 3, dt);
         world.addConstraint(c); bot.constraints.push(c);
         continue;
       }
       const c = new CANNON.HingeConstraint(A, B, {
         pivotA: A.quaternion.inverse().vmult(pivW.vsub(A.position)), pivotB: B.quaternion.inverse().vmult(pivW.vsub(B.position)),
-        axisA: A.quaternion.inverse().vmult(axisW), axisB: B.quaternion.inverse().vmult(axisW), collideConnected: false,
+        axisA: A.quaternion.inverse().vmult(axisW), axisB: B.quaternion.inverse().vmult(axisW), collideConnected: true,
       });
       if (p.jointType === 'motor' && p.live) { c.enableMotor(); c.setMotorMaxForce(p.torque * dt); /* the solver limits impulse per step, so torque x dt */ c.setMotorSpeed(0); }
       c.part = p;
@@ -1117,7 +1134,7 @@ const LAWNMOWER = {
     { id: 'wheel_fr', type: 'drive', pos: [-0.67, -0.2, 0.55], parent: 'deck' },
     { id: 'wheel_rl', type: 'drive', pos: [0.67, -0.2, -0.45], parent: 'deck' },
     { id: 'wheel_rr', type: 'drive', pos: [-0.67, -0.2, -0.45], parent: 'deck' },
-    { id: 'blade', type: 'beam', material: 'steel', size: [1.0, 0.14, 0.26], pos: [0, -0.04, 0.95], parent: 'deck', joint: { type: 'motor', axis: [0, 1, 0] } },
+    { id: 'blade', type: 'beam', material: 'steel', size: [1.0, 0.14, 0.26], pos: [0, -0.04, 1.1], parent: 'deck', joint: { type: 'motor', axis: [0, 1, 0] } },
   ],
 };
 
