@@ -30,6 +30,21 @@ function ladder({ width = 1.4, length = 2.4, y = -0.25, wheels = 3, wheelOpts = 
   return { parts, left, right };
 }
 
+// When the point cannot be reached, or the enemy is as near it as I am, standing still wins nothing. This picks
+// somewhere to go instead: round to the point side of the enemy, then into it, to push it further from the point.
+// Returns null when I am already clearly nearer the point than the enemy (then holding is right), or when there
+// is no way to the enemy.
+function shoveTarget(s, lib, { margin = 1.2, climb = 0.15, lead = 1.2 } = {}) {
+  if (!s.target) return null;
+  const me = s.self, foe = s.enemy, tg = s.target;
+  const mine = Math.hypot(me.x - tg.x, me.z - tg.z), theirs = Math.hypot(foe.x - tg.x, foe.z - tg.z);
+  if (mine < theirs - lead) return null;
+  if (!lib.plan(s, foe.x, foe.z, { margin, climb }).reachable) return null;
+  const ux = tg.x - foe.x, uz = tg.z - foe.z, un = Math.hypot(ux, uz) || 1, mx = me.x - foe.x, mz = me.z - foe.z, mn = Math.hypot(mx, mz) || 1;
+  const onPointSide = (ux * mx + uz * mz) / (un * mn) > 0.5;
+  return onPointSide ? { x: foe.x, z: foe.z, charge: true } : { x: foe.x + (ux / un) * 2.6, z: foe.z + (uz / un) * 2.6, charge: false };
+}
+
 // ── Bulwark ────────────────────────────────────────────────────────────────
 const bulwarkFrame = ladder({ width: 1.5, length: 2.4, wheels: 3, slickEnds: true });
 export const BULWARK = {
@@ -95,11 +110,17 @@ export function bulwarkProgram(s, out, mem, lib) {
     const high = lib.floorAt(s, tg.x, tg.z) && lib.heightAt(s, tg.x, tg.z) > lib.heightAt(s, me.x, me.z) + 0.15;
     out.say = high ? 'cannot climb that, holding the foot of it' : 'no way across, holding the nearest ground';
     const n = go(tg.x, tg.z, { stopAt: 0.4 });
-    if (n.arrived) { mem.planted = true; drive(0, lib.spin(s, lib.clamp(foe.bearing * 1.5, -0.5, 0.5), 1.9)); }
+    mem.idle = me.speed < 0.15 ? (mem.idle || 0) + 1 : 0;
+    if (n.arrived || mem.idle > 45 || mem.hunting) {
+      // Waiting here wins nothing if the enemy is as near as I am. Go and move it.
+      const sh = shoveTarget(s, lib, { margin: 1.4 }); mem.hunting = !!sh;
+      if (sh) { out.say = sh.charge ? 'cannot reach the point, so driving the enemy further from it' : 'cannot reach the point, getting between it and the enemy'; if (sh.charge) charge(sh.x, sh.z); else go(sh.x, sh.z, { margin: 1.4, stopAt: 0.5 }); return; }
+      mem.planted = true; drive(0, lib.spin(s, lib.clamp(foe.bearing * 1.5, -0.5, 0.5), 1.9));
+    }
     return;
   }
   // The enemy is on the point and I am not: hit it where it will be, if there is room to stop afterwards.
-  if (foeToT < 1.8 && toT.distance > foeToT + 0.5 && lib.clear(s, foe.x, foe.z, 0.6)) {
+  if (foeToT < 2.4 && toT.distance > foeToT - 0.7 && lib.clear(s, foe.x, foe.z, 0.6)) {
     const hit = lib.intercept(s, foe, 3.5);
     out.say = 'driving the enemy off the point';
     const g = charge(hit.x, hit.z); if (g.braking) out.say = 'not following it over the edge';
@@ -191,6 +212,11 @@ export function striderProgram(s, out, mem, lib) {
   }
   // Legs go either way round, so either end can lead: no need to turn about to come back.
   const n = lib.nav(s, aim.x, aim.z, { ...SELF, stopAt, reverse: true });
+  mem.idle = me.speed < 0.15 ? (mem.idle || 0) + 1 : 0;
+  if ((!n.reachable && (n.arrived || mem.idle > 45)) || mem.hunting) {
+    const sh = !s.crate && shoveTarget(s, lib, { margin: 1.4, climb: CLIMB }); mem.hunting = !!sh;
+    if (sh) { const h = lib.nav(s, sh.x, sh.z, { ...SELF, margin: 1.4, stopAt: sh.charge ? 0 : 0.5, reverse: true }); out.say = sh.charge ? 'cannot reach the point, so walking the enemy further from it' : 'cannot reach the point, getting between it and the enemy'; walk(h.drive, h.turn); return; }
+  }
   if (n.arrived) { out.say = n.reachable ? 'standing on the point, facing the enemy' : 'no way across, standing at the nearest ground'; walk(0, lib.spin(s, lib.clamp(foe.bearing, -0.4, 0.4), 1.9)); return; }
   out.say = n.braking ? 'stopping short of the edge' : say;
   walk(n.drive, n.turn);
@@ -295,6 +321,11 @@ export function mangonelProgram(s, out, mem, lib) {
     } else { aim = { x: (me.z - c.z) * home < -1.2 ? c.x : c.x + (me.x >= c.x ? 2.6 : -2.6), z: c.z - home * 2.6 }; out.say = 'getting behind the crate'; }
   } else { aim = s.target; if (spent) out.say = near ? 'out of shot, clubbing with the arms' : 'out of shot, going for the point'; }
   const n = lib.nav(s, aim.x, aim.z, { ...SELF, stopAt, reverse: true });
+  mem.idle = me.speed < 0.15 ? (mem.idle || 0) + 1 : 0;
+  if ((!n.reachable && (n.arrived || mem.idle > 45)) || mem.hunting) {
+    const sh = !s.crate && shoveTarget(s, lib, { margin: 1.4 }); mem.hunting = !!sh;
+    if (sh) { const h = lib.nav(s, sh.x, sh.z, { ...SELF, margin: 1.4, stopAt: sh.charge ? 0 : 0.5 }); out.say = sh.charge ? 'cannot reach the point, so pushing the enemy further from it' : 'cannot reach the point, getting between it and the enemy'; drive(h.drive, h.turn); return; }
+  }
   if (n.arrived) { out.say = n.reachable ? 'holding the point' : 'holding the nearest ground to the point'; drive(0, lib.spin(s, lib.clamp(foe.bearing * 1.5, -0.5, 0.5), 1.9)); return; }
   if (n.braking) out.say = 'braking for the edge';
   drive(n.drive, n.turn);
@@ -376,12 +407,17 @@ export function corralProgram(s, out, mem, lib) {
     const left = path.every - (s.t % path.every), next = path.points[(Math.floor(s.t / path.every) + 1) % path.points.length];
     if (plan.left / 3 > left + 0.5) { aim = next; say = 'cannot make this one, heading to the next point'; }
   }
-  if (plan.reachable && aim === tg && foeToT < 2 && g.distance > foeToT + 0.5 && lib.clear(s, foe.x, foe.z, 0.8)) {
+  if (plan.reachable && aim === tg && foeToT < 2.6 && g.distance > foeToT - 0.7 && lib.clear(s, foe.x, foe.z, 0.8)) {
     const hit = lib.intercept(s, foe, 3), hb = lib.to(s, hit.x, hit.z);
     out.say = 'ramming the enemy off the point with the gates shut';
     const c = lib.steer(hb.bearing, 9, {}); drive(safe(c.drive), c.turn); return;
   }
   const n = lib.nav(s, aim.x, aim.z, { ...FWD, stopAt: 0.4, reverse: true });
+  mem.idle = me.speed < 0.15 ? (mem.idle || 0) + 1 : 0;
+  if ((!n.reachable && (n.arrived || mem.idle > 45)) || mem.hunting) {
+    const sh = shoveTarget(s, lib, { margin: 1.8 }); mem.hunting = !!sh;
+    if (sh) { const h = lib.nav(s, sh.x, sh.z, { ...FWD, margin: 1.8, stopAt: sh.charge ? 0 : 0.5 }); out.say = sh.charge ? 'cannot reach the point, so ramming the enemy further from it' : 'cannot reach the point, getting between it and the enemy'; drive(h.drive, h.turn); return; }
+  }
   if (n.arrived) { mem.parked = true; out.say = n.reachable ? 'parked on the point' : 'as near the point as the floor allows'; drive(0, lib.spin(s, lib.clamp(foe.bearing, -0.4, 0.4), 2.6)); return; }
   out.say = n.braking ? 'braking for the edge' : say;
   drive(n.drive, n.turn);
@@ -510,12 +546,17 @@ export function spanProgram(s, out, mem, lib) {
   if (!s.crate) {
     const tg = s.target, foeToT = Math.hypot(foe.x - tg.x, foe.z - tg.z), d = lib.to(s, tg.x, tg.z).distance;
     if (P && P.tooWide !== undefined) say = P.tooWide ? `the ${P.tooWide.toFixed(1)} m gap is too wide for me, holding this side` : 'no way to the point, holding the nearest ground';
-    else if (foeToT < 2 && d > foeToT + 0.5 && lib.clear(s, foe.x, foe.z, 0.8)) {
+    else if (foeToT < 2.6 && d > foeToT - 0.7 && lib.clear(s, foe.x, foe.z, 0.8)) {
       const hit = lib.intercept(s, foe, 3), hb = lib.to(s, hit.x, hit.z), c = lib.steer(hb.bearing, 9, {}), g = lib.guard(s, c.drive, SELF);
       out.say = g.braking ? 'not following it over the edge' : 'shouldering the enemy off the point'; drive(g.drive, c.turn); return;
     }
   }
   const n = lib.nav(s, goal.x, goal.z, { ...SELF, stopAt, reverse: true });
+  mem.idle = me.speed < 0.15 ? (mem.idle || 0) + 1 : 0;
+  if ((!n.reachable && (n.arrived || mem.idle > 45)) || mem.hunting) {
+    const sh = !s.crate && shoveTarget(s, lib, { margin: 1.8 }); mem.hunting = !!sh;
+    if (sh) { const h = lib.nav(s, sh.x, sh.z, { ...SELF, margin: 1.8, stopAt: sh.charge ? 0 : 0.5 }); out.say = sh.charge ? 'cannot reach the point, so shouldering the enemy further from it' : 'cannot reach the point, getting between it and the enemy'; drive(h.drive, h.turn); return; }
+  }
   if (n.arrived) { out.say = n.reachable ? 'holding the point' : say; drive(0, lib.spin(s, lib.clamp(foe.bearing, -0.4, 0.4), 2.7)); return; }
   out.say = n.braking ? 'braking for the edge' : say;
   drive(n.drive, n.turn);

@@ -72,11 +72,11 @@ Sizes, speeds and masses are drawn too, so there are a few hundred kinds of roun
 ### How a round ends
 
 - **Ring-out**: a core that falls off the floor loses, whatever the objective.
-- **Hold a fixed point**: at 60 seconds, or sooner if nothing has moved for 8 seconds, the core closer to the point wins.
+- **Hold a fixed point**: at 60 seconds, or sooner if nothing has moved for 8 seconds, the core closer to the point wins. If they are within 0.4 m of level, the machine that has had less broken off it wins; if that is level too, it is a draw.
 - **Hold a moving point**: five times a second the closer core scores. Most time closest wins.
 - **Crate**: whoever has the crate nearer their own end when the round stops wins.
 
-Nothing in the rules rewards damage or movement for their own sake.
+Damage only counts as a tie-break. A machine that cannot reach the point does better by pushing the enemy further from it than by waiting.
 
 ### The fight log
 

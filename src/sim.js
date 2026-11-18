@@ -12,9 +12,10 @@ export const CONFIG = {
   physics: { hz: 480, controlHz: 30, gravity: 9.81, solverIterations: 12 },
   arena: { size: 30, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2 },
   // A fight ends when a core leaves the arena, when nothing has moved for stalemateSeconds, or at maxSeconds.
-  // If no core has left, the core closer to the middle of the arena wins (by at least centerMargin metres).
+  // If no core has left, the core closer to the point wins (by at least centerMargin metres). If they are level,
+  // the machine that has had less broken off it wins (by at least intactMargin of its mass). Otherwise a draw.
   // Nothing here rewards damage or movement for their own sake, so sitting still or shedding parts is allowed.
-  match: { maxSeconds: 60, stalemateSeconds: 8, stalemateRadius: 0.35, graceSeconds: 3, centerMargin: 1 },
+  match: { maxSeconds: 60, stalemateSeconds: 8, stalemateRadius: 0.35, graceSeconds: 3, centerMargin: 0.4, intactMargin: 0.05 },
   budget: { mass: 500, cost: 300, box: [5, 4, 5], maxParts: 200 },
   // Limits on the control program itself. It may see everything, but it has to be small.
   program: { maxChars: 20000 },
@@ -658,6 +659,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
     for (const [part, info] of breaks) {
       if (!part.intact) continue;
       part.intact = false;
+      part.bot.brokenMass = (part.bot.brokenMass || 0) + part.subMass;
       const lost = [];
       const mark = (p) => { lost.push(p.id); p.lostAt = m.t; for (const c of p.children) if (c.intact) mark(c); };
       mark(part);
@@ -743,6 +745,11 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
     if (settled || over) {
       const why = settled ? `Nothing moved for ${cfg.match.stalemateSeconds} seconds.` : 'Time ran out.';
       const kind = settled ? 'settled' : 'time';
+      if (Math.abs(d[0] - d[1]) < cfg.match.centerMargin) {
+        // Level on the objective: the machine that has had less of itself broken off wins, if the difference is clear.
+        const whole = m.bots.map((b) => 1 - (b.brokenMass || 0) / b.startMass);
+        if (Math.abs(whole[0] - whole[1]) >= cfg.match.intactMargin) { const w = whole[0] > whole[1] ? 0 : 1; return end(w, kind + '_intact', `${why} Both cores are about the same distance from the ${ch === OPEN ? 'centre' : 'point'}. ${n[w]} wins by being more intact: ${Math.round(whole[w] * 100)}% of it is still attached against ${Math.round(whole[1 - w] * 100)}%.`); }
+      }
       if (Math.abs(d[0] - d[1]) < cfg.match.centerMargin) return end(null, kind + '_draw', `${why} Both cores are about the same distance from the ${ch === OPEN ? 'centre' : 'point'}. Draw.`);
       const w = d[0] < d[1] ? 0 : 1;
       return end(w, kind + '_center', `${why} ${n[w]} wins by holding the ${ch === OPEN ? 'centre' : 'point'}: its core is ${d[w].toFixed(1)} m from ${ch === OPEN ? 'the middle' : 'it'} against ${d[1 - w].toFixed(1)} m.`);
