@@ -178,6 +178,117 @@ export function carouselProgram(s, out, mem) {
   out.rotor = 1;
 }
 
+// The next three are not battlebots. They are here to check that the rules leave room for other ideas.
+
+export const FLEA = {
+  name: 'Flea',
+  note: 'No wheels. Two spring-loaded legs kick down and back, so it travels by hopping and tries to come down on top of things.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [0.9, 0.08, 0.9], pos: [0, -0.2, 0], parent: 'core' },
+    { id: 'belly', type: 'block', material: 'steel', size: [0.5, 0.2, 0.5], pos: [0, -0.34, 0.1], parent: 'deck' },
+    { id: 'skid_fl', type: 'ball', material: 'steel', radius: 0.1, pos: [0.4, -0.35, 0.4], parent: 'deck' },
+    { id: 'skid_fr', type: 'ball', material: 'steel', radius: 0.1, pos: [-0.4, -0.35, 0.4], parent: 'deck' },
+    { id: 'skid_rl', type: 'ball', material: 'steel', radius: 0.1, pos: [0.4, -0.35, -0.4], parent: 'deck' },
+    { id: 'skid_rr', type: 'ball', material: 'steel', radius: 0.1, pos: [-0.4, -0.35, -0.4], parent: 'deck' },
+    { id: 'leg_l', type: 'block', material: 'steel', size: [0.2, 0.12, 0.25], pos: [0.3, -0.33, -0.3], parent: 'deck', joint: { type: 'piston', axis: [0, -0.9, -0.44], stroke: 0.06 } },
+    { id: 'sole_l', type: 'block', material: 'rubber', size: [0.2, 0.04, 0.25], pos: [0.3, -0.41, -0.3], parent: 'leg_l' },
+    { id: 'leg_r', type: 'block', material: 'steel', size: [0.2, 0.12, 0.25], pos: [-0.3, -0.33, -0.3], parent: 'deck', joint: { type: 'piston', axis: [0, -0.9, -0.44], stroke: 0.06 } },
+    { id: 'sole_r', type: 'block', material: 'rubber', size: [0.2, 0.04, 0.25], pos: [-0.3, -0.41, -0.3], parent: 'leg_r' },
+  ],
+};
+export function fleaProgram(s, out, mem) {
+  if (mem.rest === undefined) mem.rest = s.self.y;
+  const j = s.self.joints;
+  // Settled on the floor, either way up. Kicking while on its back is how it rolls over again.
+  const grounded = Math.abs(s.self.vy) < 0.3 && s.self.speed < 0.6 && s.self.y < mem.rest + 0.35;
+  const ready = j.leg_l && j.leg_r && j.leg_l.charge > 0.98 && j.leg_r.charge > 0.98;
+  if (grounded && ready && s.t > (mem.kickUntil || 0) + 0.3) {
+    mem.kickUntil = s.t + 0.2;
+    // Facing the target: kick with both legs. Otherwise kick with one, which twists the body round.
+    const want = s.arena.edgeDistance < 2 ? s.arena.centerBearing : s.enemy.bearing;
+    mem.legs = Math.abs(want) < 0.45 ? 'both' : want > 0 ? 'right' : 'left';
+  }
+  const kicking = s.t < (mem.kickUntil || 0);
+  out.leg_l = kicking && mem.legs !== 'right' ? 1 : 0;
+  out.leg_r = kicking && mem.legs !== 'left' ? 1 : 0;
+}
+
+export const SQUATTER = {
+  name: 'Squatter',
+  note: 'Does not fight. It drives to the middle, pushes three rubber pads into the floor to lift its wheels, and dares the other bot to move it.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [1.2, 0.08, 1.2], pos: [0, -0.2, 0], parent: 'core' },
+    { id: 'wheel_fl', type: 'drive', pos: [0.72, -0.2, 0.4], parent: 'deck' },
+    { id: 'wheel_fr', type: 'drive', pos: [-0.72, -0.2, 0.4], parent: 'deck' },
+    { id: 'wheel_rl', type: 'drive', pos: [0.72, -0.2, -0.4], parent: 'deck' },
+    { id: 'wheel_rr', type: 'drive', pos: [-0.72, -0.2, -0.4], parent: 'deck' },
+    { id: 'ramp_front', type: 'wedge', material: 'aluminium', size: [1.2, 0.3, 0.45], pos: [0, -0.33, 0.82], parent: 'deck' },
+    { id: 'ramp_back', type: 'wedge', material: 'aluminium', size: [1.2, 0.3, 0.45], pos: [0, -0.33, -0.82], rot: [0, 180, 0], parent: 'deck' },
+    { id: 'ballast_l', type: 'block', material: 'steel', size: [0.3, 0.18, 0.3], pos: [0.4, -0.07, 0], parent: 'deck' },
+    { id: 'ballast_r', type: 'block', material: 'steel', size: [0.3, 0.18, 0.3], pos: [-0.4, -0.07, 0], parent: 'deck' },
+    { id: 'pad_fl', type: 'block', material: 'rubber', size: [0.3, 0.1, 0.3], pos: [0.3, -0.3, 0.3], parent: 'deck', joint: { type: 'piston', axis: [0, -1, 0], stroke: 0.2, gear: 2 } },
+    { id: 'pad_fr', type: 'block', material: 'rubber', size: [0.3, 0.1, 0.3], pos: [-0.3, -0.3, 0.3], parent: 'deck', joint: { type: 'piston', axis: [0, -1, 0], stroke: 0.2, gear: 2 } },
+    { id: 'pad_rear', type: 'block', material: 'rubber', size: [0.3, 0.1, 0.3], pos: [0, -0.3, -0.35], parent: 'deck', joint: { type: 'piston', axis: [0, -1, 0], stroke: 0.2, gear: 2 } },
+  ],
+};
+export function squatterProgram(s, out, mem) {
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  const d = s.arena.centerDistance;
+  // Dig in once on the spot; pull the pads up and drive back if shoved well away from it.
+  if (d < 0.35) mem.planted = true;
+  if (d > 1.5) mem.planted = false;
+  const pads = mem.planted ? 1 : 0;
+  out.pad_fl = out.pad_fr = out.pad_rear = pads;
+  if (mem.planted) { tank(out, 0, 0); return; }
+  const b = s.arena.centerBearing;
+  // Either end can lead, so reverse in if the middle is behind.
+  const back = Math.abs(b) > Math.PI / 2;
+  const err = back ? (b > 0 ? b - Math.PI : b + Math.PI) : b;
+  tank(out, (back ? -1 : 1) * (Math.abs(err) > 0.7 ? 0.2 : Math.min(1, 0.3 + d * 0.5)), clamp(err * 2.5));
+}
+
+export const SLINGSHOT = {
+  name: 'Slingshot',
+  note: 'Keeps its distance. Three steel balls sit on fast pistons; it lines up, fires one and lets go of it at full stroke. Out of balls, it goes to hold the middle.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [1.1, 0.08, 1.3], pos: [0, -0.2, 0], parent: 'core' },
+    { id: 'wheel_fl', type: 'drive', pos: [0.67, -0.2, 0.45], parent: 'deck' },
+    { id: 'wheel_fr', type: 'drive', pos: [-0.67, -0.2, 0.45], parent: 'deck' },
+    { id: 'wheel_rl', type: 'drive', pos: [0.67, -0.2, -0.45], parent: 'deck' },
+    { id: 'wheel_rr', type: 'drive', pos: [-0.67, -0.2, -0.45], parent: 'deck' },
+    { id: 'shot_1', type: 'ball', material: 'steel', radius: 0.15, pos: [0.35, 0.02, 0.2], parent: 'deck', joint: { type: 'piston', axis: [0, 0.12, 1], stroke: 0.5, gear: 0.5 } },
+    { id: 'shot_2', type: 'ball', material: 'steel', radius: 0.15, pos: [-0.35, 0.02, 0.2], parent: 'deck', joint: { type: 'piston', axis: [0, 0.12, 1], stroke: 0.5, gear: 0.5 } },
+    { id: 'shot_3', type: 'ball', material: 'steel', radius: 0.15, pos: [0, 0.37, 0], parent: 'core', joint: { type: 'piston', axis: [0, 0.12, 1], stroke: 0.5, gear: 0.5 } },
+  ],
+};
+export function slingshotProgram(s, out, mem) {
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  const shots = ['shot_1', 'shot_2', 'shot_3'].filter((id) => s.self.parts[id].attached);
+  out.release = [];
+  for (const id of shots) {
+    const j = s.self.joints[id];
+    out[id] = mem.firing === id ? 1 : 0;
+    if (mem.firing === id && j.extension > j.stroke * 0.9) { out.release.push(id); mem.firing = null; mem.nextShot = s.t + 1.5; }
+  }
+  if (!shots.length) {
+    // Nothing left to throw: go and sit on the centre.
+    const b = s.arena.centerBearing, d = s.arena.centerDistance;
+    tank(out, d < 0.4 ? 0 : Math.abs(b) > 0.7 ? 0.2 : 0.8, d < 0.4 ? 0 : clamp(b * 2.5));
+    return;
+  }
+  const e = s.enemy;
+  let drive = e.distance > 5.5 ? 0.7 : e.distance < 3 ? -0.7 : 0;
+  let turn = clamp(e.bearing * 3);
+  // Cornered: stop keeping range and break out toward the middle.
+  if (s.arena.edgeDistance < 2) mem.escapeUntil = s.t + 1.5;
+  if (s.t < (mem.escapeUntil || 0)) { turn = clamp(s.arena.centerBearing * 2.5); drive = Math.abs(s.arena.centerBearing) > 1 ? 0.3 : 1; }
+  tank(out, drive, turn);
+  if (!mem.firing && s.t > (mem.nextShot || 1) && Math.abs(e.bearing) < 0.08 && e.distance < 7 && Math.abs(s.self.turnRate) < 0.8) mem.firing = shots[0];
+}
+
 export const ALL = [
   { build: LAWNMOWER, program: lawnmowerProgram },
   { build: DOORSTOP, program: doorstopProgram },
@@ -185,6 +296,9 @@ export const ALL = [
   { build: GAVEL, program: gavelProgram },
   { build: EGGBEATER, program: eggbeaterProgram },
   { build: CAROUSEL, program: carouselProgram },
+  { build: FLEA, program: fleaProgram },
+  { build: SQUATTER, program: squatterProgram },
+  { build: SLINGSHOT, program: slingshotProgram },
 ];
 
 export const ROSTER = [

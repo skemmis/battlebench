@@ -119,7 +119,7 @@ details summary { cursor: pointer; font-weight: 500 } details[open] summary { ma
         <div class="knob"><label for="k-break">Joint strength</label><input id="k-break" type="range" min="0.3" max="3" step="0.1" value="1"><output id="o-break">1.0x</output><small>Lower means parts come off more easily.</small></div>
         <div class="knob"><label for="k-grav">Gravity</label><input id="k-grav" type="range" min="2" max="20" step="0.5" value="9.81"><output id="o-grav">9.8</output><small>Metres per second squared. Earth is 9.8.</small></div>
         <div class="knob"><label for="k-grip">Floor grip</label><input id="k-grip" type="range" min="0.1" max="1.6" step="0.05" value="1"><output id="o-grip">1.00</output><small>How well wheels hold the floor. Low values feel like ice.</small></div>
-        <div class="knob"><label for="k-power">Weapon power</label><input id="k-power" type="range" min="0.5" max="3" step="0.1" value="1"><output id="o-power">1.0x</output><small>Speed and torque of motor joints (not wheels). Above 1.3x the fight takes longer to simulate.</small></div>
+        <div class="knob"><label for="k-power">Weapon power</label><input id="k-power" type="range" min="0.5" max="3" step="0.1" value="1"><output id="o-power">1.0x</output><small>Speed and torque of motor joints (not wheels or pistons).</small></div>
         <div class="row"><button id="rerun" class="primary">Rerun this seed</button><button id="reset">Reset</button></div>
         <h2>All settings</h2>
         <pre id="config"></pre>
@@ -139,10 +139,13 @@ import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cann
 // A bot's frame: +z is forward, +y is up, +x is its left side.
 // ───────────────────────────────────────────────────────────────────────────
 const CONFIG = {
-  version: 'v0.1',
-  physics: { hz: 240, controlHz: 30, gravity: 9.81, solverIterations: 12 },
+  version: 'v0.2',
+  physics: { hz: 480, controlHz: 30, gravity: 9.81, solverIterations: 12 },
   arena: { size: 14, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2 },
-  match: { maxSeconds: 60, countOutSeconds: 8, countOutRadius: 0.35, graceSeconds: 3 },
+  // A fight ends when a core leaves the arena, when nothing has moved for stalemateSeconds, or at maxSeconds.
+  // If no core has left, the core closer to the middle of the arena wins (by at least centerMargin metres).
+  // Nothing here rewards damage or movement for their own sake, so sitting still or shedding parts is allowed.
+  match: { maxSeconds: 45, stalemateSeconds: 8, stalemateRadius: 0.35, graceSeconds: 3, centerMargin: 0.5 },
   budget: { mass: 150, cost: 100, box: [3, 2, 3], maxParts: 24 },
   // A joint's load = impulse x share of the bot it has to drag along x leverage x sharpness.
   // Sharpness: a hit at speedRef m/s counts 1.5x, faster hits count for more.
@@ -151,13 +154,19 @@ const CONFIG = {
     steel: { density: 780, strength: 1.5, costPerVolume: 70 },
     aluminium: { density: 270, strength: 1.0, costPerVolume: 90 },
     plastic: { density: 120, strength: 0.55, costPerVolume: 35 },
+    // Grips the floor as well as a wheel does. Everything else slides.
+    rubber: { density: 110, strength: 0.8, costPerVolume: 50 },
   },
   joints: {
     fixed: { strength: 500, cost: 0 },
     hinge: { strength: 500, cost: 2 },
     // A motor joint may set "gear": n. Speed is divided by n and torque multiplied by n (0.5 to 8).
     // Hinge and motor joints may set "pivot": [x, y, z] in the bot frame; without it they turn about the part's centre.
-    motor: { strength: 1500, cost: 8, maxSpeed: 40, torque: 120, minGear: 0.5, maxGear: 8 },
+    motor: { strength: 1500, cost: 8, maxSpeed: 80, torque: 300, minGear: 0.5, maxGear: 8 },
+    // A piston slides its part along "axis" by up to "stroke" metres. It stores energy: pushing out is fast and
+    // strong but drains its charge (a full stroke uses all of it), pulling back is slow and free, and the charge
+    // refills over rechargeSeconds. "gear" trades speed for force as on a motor.
+    piston: { strength: 1500, cost: 10, force: 5000, speed: 8, retractSpeed: 1, maxStroke: 0.6, rechargeSeconds: 2.5, lead: 0.15 },
   },
   parts: {
     core: { size: [0.4, 0.4, 0.4], mass: 20, cost: 0 },
@@ -268,8 +277,9 @@ function validateBuild(build, cfg = CONFIG) {
     if (p.type !== 'core') {
       if (!Array.isArray(p.pos) || p.pos.length !== 3 || p.pos.some((x) => typeof x !== 'number')) { errors.push(`${where}: "pos" must be three numbers [x, y, z] measured from the core.`); continue; }
       const jt = p.type === 'drive' ? 'motor' : (p.joint && p.joint.type) || 'fixed';
-      if (!cfg.joints[jt]) errors.push(`${where}: unknown joint type "${jt}". Use fixed, hinge or motor.`);
-      if (p.type !== 'drive' && (jt === 'hinge' || jt === 'motor')) {
+      if (!cfg.joints[jt]) errors.push(`${where}: unknown joint type "${jt}". Use fixed, hinge, motor or piston.`);
+      if (jt === 'piston' && !(p.joint.stroke > 0 && p.joint.stroke <= cfg.joints.piston.maxStroke)) errors.push(`${where}: a piston needs a "stroke" above 0 and at most ${cfg.joints.piston.maxStroke}.`);
+      if (p.type !== 'drive' && (jt === 'hinge' || jt === 'motor' || jt === 'piston')) {
         const ax = p.joint.axis;
         if (!Array.isArray(ax) || ax.length !== 3 || Math.hypot(...ax) < 1e-6) errors.push(`${where}: a ${jt} joint needs an "axis" such as [0, 1, 0].`);
         const pv = p.joint.pivot;
@@ -291,7 +301,7 @@ function validateBuild(build, cfg = CONFIG) {
   }
   if (mass > cfg.budget.mass) errors.push(`Over the mass allowance: ${r2(mass)} kg, the limit is ${cfg.budget.mass} kg.`);
   if (cost > cfg.budget.cost) errors.push(`Over the cost allowance: ${r2(cost)}, the limit is ${cfg.budget.cost}.`);
-  if (!build.parts.some((p) => p.type === 'drive' || (p.joint && p.joint.type === 'motor'))) warnings.push('Nothing in this build is powered, so it cannot move.');
+  if (!build.parts.some((p) => p.type === 'drive' || (p.joint && (p.joint.type === 'motor' || p.joint.type === 'piston')))) warnings.push('Nothing in this build is powered, so it cannot move.');
   return { ok: errors.length === 0, errors, warnings, mass: r2(mass), cost: r2(cost) };
 }
 
@@ -368,7 +378,7 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       const gear = def.type === 'drive' ? 1 : clamp(Number(def.joint && def.joint.gear) || 1, cfg.joints.motor.minGear, cfg.joints.motor.maxGear);
       const pivotLocal = def.joint && def.joint.pivot && jt !== 'fixed' ? lq.inverse().vmult(V(def.joint.pivot).vsub(lp)) : new CANNON.Vec3();
       const p = {
-        pivotLocal, angle: 0, lastRaw: 0,
+        pivotLocal, angle: 0, lastRaw: 0, ext: 0, target: 0, charge: 1, stroke: jt === 'piston' ? Number(def.joint.stroke) || 0.2 : 0, gear,
         id: def.id, def, spec, bot, index: m.parts.length, shape, mass: spec.mass,
         jointType: jt, axisLocal: V(axis).unit(), intact: def.type !== 'core', live: true, lostAt: null,
         wpos: origin.vadd(q0.vmult(lp)), wquat: q0.mult(lq), wvel: new CANNON.Vec3(), wang: new CANNON.Vec3(),
@@ -376,7 +386,7 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
         maxSpeed: def.type === 'drive' ? cfg.parts.drive.maxSpeed : cfg.joints.motor.maxSpeed / gear,
         torque: def.type === 'drive' ? cfg.parts.drive.torque : cfg.joints.motor.torque * gear,
       };
-      shape.material = def.type === 'drive' ? matRubber : matHard;
+      shape.material = def.type === 'drive' || def.material === 'rubber' ? matRubber : matHard;
       shape.partRef = p;
       bot.parts.push(p); bot.byId.set(p.id, p); m.parts.push(p);
       bot.startMass += p.mass;
@@ -462,12 +472,26 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       const A = p.parent.body, B = p.body;
       const axisW = p.wquat.vmult(p.axisLocal);
       const pivW = p.wpos.vadd(p.wquat.vmult(p.pivotLocal));
+      if (p.jointType === 'piston') {
+        // A lock whose anchor on the parent slides along the axis. Moving the anchor is what pushes the part.
+        const c = new CANNON.LockConstraint(A, B, { maxForce: cfg.joints.piston.force * p.gear * dt });
+        c.pivotB.copy(B.quaternion.inverse().vmult(pivW.vsub(B.position)));
+        p.baseA = A.quaternion.inverse().vmult(pivW.vsub(axisW.scale(p.ext)).vsub(A.position));
+        p.axisA = A.quaternion.inverse().vmult(axisW);
+        c.pivotA.copy(p.baseA.vadd(p.axisA.scale(p.ext)));
+        c.collideConnected = false; c.part = p;
+        for (const e of c.equations) e.setSpookParams(1e7, 3, dt);
+        world.addConstraint(c); bot.constraints.push(c);
+        continue;
+      }
       const c = new CANNON.HingeConstraint(A, B, {
         pivotA: A.quaternion.inverse().vmult(pivW.vsub(A.position)), pivotB: B.quaternion.inverse().vmult(pivW.vsub(B.position)),
         axisA: A.quaternion.inverse().vmult(axisW), axisB: B.quaternion.inverse().vmult(axisW), collideConnected: false,
       });
       if (p.jointType === 'motor' && p.live) { c.enableMotor(); c.setMotorMaxForce(p.torque * dt); /* the solver limits impulse per step, so torque x dt */ c.setMotorSpeed(0); }
       c.part = p;
+      // The library tunes joint stiffness for 60 steps a second unless told the real step.
+      for (const e of c.equations) if (e !== c.motorEquation) e.setSpookParams(1e7, 3, dt);
       world.addConstraint(c); bot.constraints.push(c);
     }
   }
@@ -483,46 +507,101 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
     p.angle += wrap(raw - p.lastRaw); p.lastRaw = raw;
   }
 
-  function sense(bot) {
-    const foe = m.bots[1 - bot.index];
-    const b = bot.core.body, f = foe.core.body;
+  // What a program is told each tick: the whole state of the fight. Positions are in arena coordinates
+  // (the centre is 0, 0; y is height above the floor), in metres. Bearings are relative to the bot's own nose.
+  function describe(bot, heading, origin) {
+    const b = bot.core.body;
     const fwd = b.quaternion.vmult(new CANNON.Vec3(0, 0, 1)), up = b.quaternion.vmult(new CANNON.Vec3(0, 1, 0));
-    const heading = Math.atan2(fwd.x, fwd.z);
-    const dx = f.position.x - b.position.x, dz = f.position.z - b.position.z;
-    const fup = f.quaternion.vmult(new CANNON.Vec3(0, 1, 0));
     const parts = {}, joints = {};
+    const pos = new CANNON.Vec3();
     for (const p of bot.parts) {
-      parts[p.id] = p.live;
-      if (p.live && p.def.type !== 'drive' && (p.jointType === 'motor' || p.jointType === 'hinge')) joints[p.id] = { angle: p.angle };
+      partWorld(p, pos);
+      parts[p.id] = { type: p.def.type, attached: p.live, x: pos.x, y: pos.y, z: pos.z };
+      if (!p.live || p.def.type === 'drive') continue;
+      if (p.jointType === 'motor' || p.jointType === 'hinge') joints[p.id] = { angle: p.angle };
+      if (p.jointType === 'piston') joints[p.id] = { extension: p.ext, stroke: p.stroke, charge: p.charge };
     }
     return {
-      t: m.t,
-      self: {
-        x: b.position.x, y: b.position.y, z: b.position.z, heading, upright: up.y,
-        speed: Math.hypot(b.velocity.x, b.velocity.z), forwardSpeed: b.velocity.x * fwd.x + b.velocity.z * fwd.z,
-        turnRate: b.angularVelocity.y, massLeft: bot.liveMass / bot.startMass, parts, joints,
-      },
-      enemy: { bearing: wrap(Math.atan2(dx, dz) - heading), distance: Math.hypot(dx, dz), height: f.position.y - b.position.y, upright: fup.y, massLeft: foe.liveMass / foe.startMass },
-      arena: {
-        halfSize: half, edgeDistance: half - Math.max(Math.abs(b.position.x), Math.abs(b.position.z)),
-        centerBearing: wrap(Math.atan2(-b.position.x, -b.position.z) - heading), centerDistance: Math.hypot(b.position.x, b.position.z),
-      },
+      x: b.position.x, y: b.position.y, z: b.position.z, heading: Math.atan2(fwd.x, fwd.z), upright: up.y,
+      vx: b.velocity.x, vy: b.velocity.y, vz: b.velocity.z,
+      speed: Math.hypot(b.velocity.x, b.velocity.z), forwardSpeed: b.velocity.x * fwd.x + b.velocity.z * fwd.z,
+      turnRate: b.angularVelocity.y, massLeft: bot.liveMass / bot.startMass,
+      centerDistance: Math.hypot(b.position.x, b.position.z), edgeDistance: half - Math.max(Math.abs(b.position.x), Math.abs(b.position.z)),
+      parts, joints,
+    };
+  }
+  function sense(bot) {
+    const foe = m.bots[1 - bot.index];
+    const self = describe(bot), enemy = describe(foe);
+    const rel = (x, z) => ({ bearing: wrap(Math.atan2(x - self.x, z - self.z) - self.heading), distance: Math.hypot(x - self.x, z - self.z) });
+    Object.assign(enemy, rel(enemy.x, enemy.z), { height: enemy.y - self.y });
+    const loose = [];
+    for (const owner of m.bots) for (const body of owner.bodies) {
+      if (body.live) continue;
+      loose.push({ id: body.rootPart.id, mine: owner === bot, x: body.position.x, y: body.position.y, z: body.position.z, speed: body.velocity.length(), ...rel(body.position.x, body.position.z) });
+    }
+    loose.sort((a, b) => a.distance - b.distance);
+    return {
+      t: m.t, timeLeft: cfg.match.maxSeconds - m.t, self, enemy, loose,
+      arena: { halfSize: half, edgeDistance: self.edgeDistance, centerBearing: wrap(Math.atan2(-self.x, -self.z) - self.heading), centerDistance: self.centerDistance },
     };
   }
 
   function control() {
     for (const bot of m.bots) {
       if (!bot.alive) continue;
-      for (const p of bot.parts) if (p.live && p.parent && p.intact && p.def.type !== 'drive' && p.jointType !== 'fixed') updateAngle(p);
+      for (const p of bot.parts) if (p.live && p.parent && p.intact && p.def.type !== 'drive' && (p.jointType === 'hinge' || p.jointType === 'motor')) updateAngle(p);
       const out = {};
       try { bot.program(sense(bot), out, bot.mem); bot.out = out; }
       catch (e) { if (!bot.programFailed) { bot.programFailed = true; log('program_error', bot.index, `${bot.name}'s control program threw an error: ${e.message}`); } }
       for (const c of bot.constraints) {
         const p = c.part;
+        if (p.jointType === 'piston' && p.live) { p.target = clamp(Number(out[p.id]) || 0, 0, 1) * p.stroke; continue; }
         if (p.jointType !== 'motor' || !p.live) continue;
         const v = clamp(Number(out[p.id]) || 0, -1, 1);
         c.setMotorSpeed(-v * p.maxSpeed);
       }
+      // A program may let go of parts on purpose: out.release = ['id', ...].
+      if (Array.isArray(out.release)) {
+        let any = false;
+        for (const id of out.release) {
+          const p = bot.byId.get(id);
+          if (!p || !p.parent || !p.intact || !p.live) continue;
+          p.intact = false; any = true;
+          const gone = [];
+          const mark = (q) => { gone.push(q.id); q.lostAt = m.t; for (const ch of q.children) if (ch.intact) mark(ch); };
+          mark(p);
+          log('released', bot.index, `${bot.name} let go of ${gone.join(', ')}.`, { parts: gone });
+        }
+        if (any) assemble(bot);
+      }
+    }
+  }
+
+  // Pistons. The joint is a lock whose anchor on the parent slides along the axis; the lock can pull the
+  // part toward the anchor with at most the piston's force. Pushing out moves the anchor fast and spends
+  // charge. Pulling back is slow and free. If the part is blocked the anchor waits for it.
+  const pa = new CANNON.Vec3(), pb = new CANNON.Vec3();
+  function drivePistons() {
+    const pc = cfg.joints.piston;
+    for (const bot of m.bots) for (const c of bot.constraints) {
+      const p = c.part;
+      if (p.jointType !== 'piston') continue;
+      p.charge = Math.min(1, p.charge + dt / pc.rechargeSeconds);
+      const A = c.bodyA, B = c.bodyB;
+      A.pointToWorldFrame(p.baseA, pa); B.pointToWorldFrame(c.pivotB, pb);
+      const actual = pb.vsub(pa).dot(A.quaternion.vmult(p.axisA));
+      const target = p.live ? p.target : p.ext;
+      if (target > p.ext && p.charge > 0) {
+        p.ext = Math.min(target, p.ext + (pc.speed / p.gear) * dt, Math.max(p.ext, actual + pc.lead));
+        // Charge is spent as work: the force the joint is carrying times how far the part moved under it.
+        // Moving through free air costs almost nothing; a full stroke against full resistance uses it all.
+        const axW = A.quaternion.vmult(p.axisA), e = c.equations;
+        const force = Math.abs(e[0].multiplier * axW.x + e[1].multiplier * axW.y + e[2].multiplier * axW.z);
+        p.charge = Math.max(0, p.charge - (force * Math.max(0, actual - (p.lastActual ?? actual))) / (pc.force * p.gear * p.stroke));
+      } else if (target < p.ext) p.ext = Math.max(target, p.ext - pc.retractSpeed * dt);
+      p.lastActual = actual;
+      c.pivotA.copy(p.baseA.vadd(p.axisA.scale(p.ext)));
     }
   }
 
@@ -617,13 +696,12 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
 
   function judge() {
     const out = m.bots.map((bot) => bot.core.body.position.y < -cfg.arena.ringOutDepth);
-    const stuck = m.bots.map((bot) => {
-      if (m.t < cfg.match.graceSeconds + cfg.match.countOutSeconds) return false;
+    const still = m.bots.map((bot) => {
+      if (m.t < cfg.match.graceSeconds + cfg.match.stalemateSeconds) return false;
       const h = bot.history, now = h[h.length - 1];
       let reach = 0;
-      for (let i = h.length - 1; i >= 0 && now[0] - h[i][0] <= cfg.match.countOutSeconds; i--) reach = Math.max(reach, Math.hypot(h[i][1] - now[1], h[i][2] - now[2], h[i][3] - now[3]));
-      if (!bot.warned && reach < cfg.match.countOutRadius && m.t > cfg.match.graceSeconds + cfg.match.countOutSeconds * 0.5) { /* placeholder for a future warning event */ }
-      return reach < cfg.match.countOutRadius;
+      for (let i = h.length - 1; i >= 0 && now[0] - h[i][0] <= cfg.match.stalemateSeconds; i--) reach = Math.max(reach, Math.hypot(h[i][1] - now[1], h[i][2] - now[2], h[i][3] - now[3]));
+      return reach < cfg.match.stalemateRadius;
     });
     const end = (winner, reason, text) => { m.done = true; m.result = { winner, reason, t: r2(m.t), text }; log('end', winner, text); };
     const n = m.bots.map((b) => b.name);
@@ -632,16 +710,14 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       const w = out[0] ? 1 : 0;
       return end(w, 'ring_out', `${n[1 - w]} fell out of the arena. ${n[w]} wins by ring-out.`);
     }
-    if (stuck[0] || stuck[1]) {
-      if (stuck[0] && stuck[1]) return end(null, 'both_stuck', `Neither bot moved for ${cfg.match.countOutSeconds} seconds. Draw.`);
-      const w = stuck[0] ? 1 : 0;
-      return end(w, 'count_out', `${n[1 - w]} did not move for ${cfg.match.countOutSeconds} seconds and was counted out. ${n[w]} wins.`);
-    }
-    if (m.t >= cfg.match.maxSeconds) {
-      const left = m.bots.map((b) => b.liveMass / b.startMass);
-      if (Math.abs(left[0] - left[1]) < 0.02) return end(null, 'time_draw', 'Time ran out with both bots about equally intact. Draw.');
-      const w = left[0] > left[1] ? 0 : 1;
-      return end(w, 'time_decision', `Time ran out. ${n[w]} wins on condition, with ${Math.round(left[w] * 100)}% of its mass still attached against ${Math.round(left[1 - w] * 100)}%.`);
+    const settled = still[0] && still[1];
+    if (settled || m.t >= cfg.match.maxSeconds) {
+      const d = m.bots.map((b) => Math.hypot(b.core.body.position.x, b.core.body.position.z));
+      const why = settled ? `Nothing moved for ${cfg.match.stalemateSeconds} seconds.` : 'Time ran out.';
+      const kind = settled ? 'settled' : 'time';
+      if (Math.abs(d[0] - d[1]) < cfg.match.centerMargin) return end(null, kind + '_draw', `${why} Both cores are about the same distance from the centre. Draw.`);
+      const w = d[0] < d[1] ? 0 : 1;
+      return end(w, kind + '_center', `${why} ${n[w]} wins by holding the centre: its core is ${d[w].toFixed(1)} m from the middle against ${d[1 - w].toFixed(1)} m.`);
     }
   }
 
@@ -653,6 +729,7 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
     if (m.done) return;
     if (m.steps % stepsPerControl === 0) control();
     for (const bot of m.bots) for (const b of bot.bodies) { b.pv.copy(b.velocity); b.pw.copy(b.angularVelocity); }
+    drivePistons();
     world.step(dt);
     m.steps++; m.t = m.steps * dt;
     stress();
@@ -855,6 +932,117 @@ function carouselProgram(s, out, mem) {
   out.rotor = 1;
 }
 
+// The next three are not battlebots. They are here to check that the rules leave room for other ideas.
+
+const FLEA = {
+  name: 'Flea',
+  note: 'No wheels. Two spring-loaded legs kick down and back, so it travels by hopping and tries to come down on top of things.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [0.9, 0.08, 0.9], pos: [0, -0.2, 0], parent: 'core' },
+    { id: 'belly', type: 'block', material: 'steel', size: [0.5, 0.2, 0.5], pos: [0, -0.34, 0.1], parent: 'deck' },
+    { id: 'skid_fl', type: 'ball', material: 'steel', radius: 0.1, pos: [0.4, -0.35, 0.4], parent: 'deck' },
+    { id: 'skid_fr', type: 'ball', material: 'steel', radius: 0.1, pos: [-0.4, -0.35, 0.4], parent: 'deck' },
+    { id: 'skid_rl', type: 'ball', material: 'steel', radius: 0.1, pos: [0.4, -0.35, -0.4], parent: 'deck' },
+    { id: 'skid_rr', type: 'ball', material: 'steel', radius: 0.1, pos: [-0.4, -0.35, -0.4], parent: 'deck' },
+    { id: 'leg_l', type: 'block', material: 'steel', size: [0.2, 0.12, 0.25], pos: [0.3, -0.33, -0.3], parent: 'deck', joint: { type: 'piston', axis: [0, -0.9, -0.44], stroke: 0.06 } },
+    { id: 'sole_l', type: 'block', material: 'rubber', size: [0.2, 0.04, 0.25], pos: [0.3, -0.41, -0.3], parent: 'leg_l' },
+    { id: 'leg_r', type: 'block', material: 'steel', size: [0.2, 0.12, 0.25], pos: [-0.3, -0.33, -0.3], parent: 'deck', joint: { type: 'piston', axis: [0, -0.9, -0.44], stroke: 0.06 } },
+    { id: 'sole_r', type: 'block', material: 'rubber', size: [0.2, 0.04, 0.25], pos: [-0.3, -0.41, -0.3], parent: 'leg_r' },
+  ],
+};
+function fleaProgram(s, out, mem) {
+  if (mem.rest === undefined) mem.rest = s.self.y;
+  const j = s.self.joints;
+  // Settled on the floor, either way up. Kicking while on its back is how it rolls over again.
+  const grounded = Math.abs(s.self.vy) < 0.3 && s.self.speed < 0.6 && s.self.y < mem.rest + 0.35;
+  const ready = j.leg_l && j.leg_r && j.leg_l.charge > 0.98 && j.leg_r.charge > 0.98;
+  if (grounded && ready && s.t > (mem.kickUntil || 0) + 0.3) {
+    mem.kickUntil = s.t + 0.2;
+    // Facing the target: kick with both legs. Otherwise kick with one, which twists the body round.
+    const want = s.arena.edgeDistance < 2 ? s.arena.centerBearing : s.enemy.bearing;
+    mem.legs = Math.abs(want) < 0.45 ? 'both' : want > 0 ? 'right' : 'left';
+  }
+  const kicking = s.t < (mem.kickUntil || 0);
+  out.leg_l = kicking && mem.legs !== 'right' ? 1 : 0;
+  out.leg_r = kicking && mem.legs !== 'left' ? 1 : 0;
+}
+
+const SQUATTER = {
+  name: 'Squatter',
+  note: 'Does not fight. It drives to the middle, pushes three rubber pads into the floor to lift its wheels, and dares the other bot to move it.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [1.2, 0.08, 1.2], pos: [0, -0.2, 0], parent: 'core' },
+    { id: 'wheel_fl', type: 'drive', pos: [0.72, -0.2, 0.4], parent: 'deck' },
+    { id: 'wheel_fr', type: 'drive', pos: [-0.72, -0.2, 0.4], parent: 'deck' },
+    { id: 'wheel_rl', type: 'drive', pos: [0.72, -0.2, -0.4], parent: 'deck' },
+    { id: 'wheel_rr', type: 'drive', pos: [-0.72, -0.2, -0.4], parent: 'deck' },
+    { id: 'ramp_front', type: 'wedge', material: 'aluminium', size: [1.2, 0.3, 0.45], pos: [0, -0.33, 0.82], parent: 'deck' },
+    { id: 'ramp_back', type: 'wedge', material: 'aluminium', size: [1.2, 0.3, 0.45], pos: [0, -0.33, -0.82], rot: [0, 180, 0], parent: 'deck' },
+    { id: 'ballast_l', type: 'block', material: 'steel', size: [0.3, 0.18, 0.3], pos: [0.4, -0.07, 0], parent: 'deck' },
+    { id: 'ballast_r', type: 'block', material: 'steel', size: [0.3, 0.18, 0.3], pos: [-0.4, -0.07, 0], parent: 'deck' },
+    { id: 'pad_fl', type: 'block', material: 'rubber', size: [0.3, 0.1, 0.3], pos: [0.3, -0.3, 0.3], parent: 'deck', joint: { type: 'piston', axis: [0, -1, 0], stroke: 0.2, gear: 2 } },
+    { id: 'pad_fr', type: 'block', material: 'rubber', size: [0.3, 0.1, 0.3], pos: [-0.3, -0.3, 0.3], parent: 'deck', joint: { type: 'piston', axis: [0, -1, 0], stroke: 0.2, gear: 2 } },
+    { id: 'pad_rear', type: 'block', material: 'rubber', size: [0.3, 0.1, 0.3], pos: [0, -0.3, -0.35], parent: 'deck', joint: { type: 'piston', axis: [0, -1, 0], stroke: 0.2, gear: 2 } },
+  ],
+};
+function squatterProgram(s, out, mem) {
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  const d = s.arena.centerDistance;
+  // Dig in once on the spot; pull the pads up and drive back if shoved well away from it.
+  if (d < 0.35) mem.planted = true;
+  if (d > 1.5) mem.planted = false;
+  const pads = mem.planted ? 1 : 0;
+  out.pad_fl = out.pad_fr = out.pad_rear = pads;
+  if (mem.planted) { tank(out, 0, 0); return; }
+  const b = s.arena.centerBearing;
+  // Either end can lead, so reverse in if the middle is behind.
+  const back = Math.abs(b) > Math.PI / 2;
+  const err = back ? (b > 0 ? b - Math.PI : b + Math.PI) : b;
+  tank(out, (back ? -1 : 1) * (Math.abs(err) > 0.7 ? 0.2 : Math.min(1, 0.3 + d * 0.5)), clamp(err * 2.5));
+}
+
+const SLINGSHOT = {
+  name: 'Slingshot',
+  note: 'Keeps its distance. Three steel balls sit on fast pistons; it lines up, fires one and lets go of it at full stroke. Out of balls, it goes to hold the middle.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [1.1, 0.08, 1.3], pos: [0, -0.2, 0], parent: 'core' },
+    { id: 'wheel_fl', type: 'drive', pos: [0.67, -0.2, 0.45], parent: 'deck' },
+    { id: 'wheel_fr', type: 'drive', pos: [-0.67, -0.2, 0.45], parent: 'deck' },
+    { id: 'wheel_rl', type: 'drive', pos: [0.67, -0.2, -0.45], parent: 'deck' },
+    { id: 'wheel_rr', type: 'drive', pos: [-0.67, -0.2, -0.45], parent: 'deck' },
+    { id: 'shot_1', type: 'ball', material: 'steel', radius: 0.15, pos: [0.35, 0.02, 0.2], parent: 'deck', joint: { type: 'piston', axis: [0, 0.12, 1], stroke: 0.5, gear: 0.5 } },
+    { id: 'shot_2', type: 'ball', material: 'steel', radius: 0.15, pos: [-0.35, 0.02, 0.2], parent: 'deck', joint: { type: 'piston', axis: [0, 0.12, 1], stroke: 0.5, gear: 0.5 } },
+    { id: 'shot_3', type: 'ball', material: 'steel', radius: 0.15, pos: [0, 0.37, 0], parent: 'core', joint: { type: 'piston', axis: [0, 0.12, 1], stroke: 0.5, gear: 0.5 } },
+  ],
+};
+function slingshotProgram(s, out, mem) {
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  const shots = ['shot_1', 'shot_2', 'shot_3'].filter((id) => s.self.parts[id].attached);
+  out.release = [];
+  for (const id of shots) {
+    const j = s.self.joints[id];
+    out[id] = mem.firing === id ? 1 : 0;
+    if (mem.firing === id && j.extension > j.stroke * 0.9) { out.release.push(id); mem.firing = null; mem.nextShot = s.t + 1.5; }
+  }
+  if (!shots.length) {
+    // Nothing left to throw: go and sit on the centre.
+    const b = s.arena.centerBearing, d = s.arena.centerDistance;
+    tank(out, d < 0.4 ? 0 : Math.abs(b) > 0.7 ? 0.2 : 0.8, d < 0.4 ? 0 : clamp(b * 2.5));
+    return;
+  }
+  const e = s.enemy;
+  let drive = e.distance > 5.5 ? 0.7 : e.distance < 3 ? -0.7 : 0;
+  let turn = clamp(e.bearing * 3);
+  // Cornered: stop keeping range and break out toward the middle.
+  if (s.arena.edgeDistance < 2) mem.escapeUntil = s.t + 1.5;
+  if (s.t < (mem.escapeUntil || 0)) { turn = clamp(s.arena.centerBearing * 2.5); drive = Math.abs(s.arena.centerBearing) > 1 ? 0.3 : 1; }
+  tank(out, drive, turn);
+  if (!mem.firing && s.t > (mem.nextShot || 1) && Math.abs(e.bearing) < 0.08 && e.distance < 7 && Math.abs(s.self.turnRate) < 0.8) mem.firing = shots[0];
+}
+
 const ALL = [
   { build: LAWNMOWER, program: lawnmowerProgram },
   { build: DOORSTOP, program: doorstopProgram },
@@ -862,6 +1050,9 @@ const ALL = [
   { build: GAVEL, program: gavelProgram },
   { build: EGGBEATER, program: eggbeaterProgram },
   { build: CAROUSEL, program: carouselProgram },
+  { build: FLEA, program: fleaProgram },
+  { build: SQUATTER, program: squatterProgram },
+  { build: SLINGSHOT, program: slingshotProgram },
 ];
 
 const ROSTER = [
@@ -1037,7 +1228,7 @@ function renderLog() {
   $('cond').innerHTML = s.bots.map((b, i) => `<div class="${TEAM[i]}"><b>${esc(b.name)}</b><span>${Math.round(b.massLeft * 100)}% of its mass still attached</span><span>${b.partsLost.length ? 'Lost ' + esc(b.partsLost.join(', ')) : 'No parts lost'}</span><span>${b.hitsTaken} hard hits taken</span></div>`).join('');
   $('events').innerHTML = match.events.map((e, i) => `<li class="${e.type}" data-i="${i}" data-t="${e.t}" tabindex="0"><time>${e.t.toFixed(1)}</time><span><i class="who ${e.bot == null ? '' : TEAM[e.bot]}"></i>${esc(e.text)}</span></li>`).join('');
   const d = duration();
-  $('ticks').innerHTML = match.events.filter((e) => e.type === 'part_lost' || e.type === 'hit' || e.type === 'flipped').map((e) => `<i class="${e.type === 'part_lost' ? 'lost' : ''}" style="left:${(e.t / d) * 100}%"></i>`).join('');
+  $('ticks').innerHTML = match.events.filter((e) => e.type === 'part_lost' || e.type === 'hit' || e.type === 'flipped' || e.type === 'released').map((e) => `<i class="${e.type === 'part_lost' ? 'lost' : ''}" style="left:${(e.t / d) * 100}%"></i>`).join('');
   const data = fightData();
   const shown = { ...data, motionTrack: { ...data.motionTrack, samples: data.motionTrack.samples.slice(0, 3).concat([`… ${data.motionTrack.samples.length - 3} more samples; Copy JSON includes them all`]) } };
   $('json').textContent = JSON.stringify(shown, null, 1);
@@ -1053,20 +1244,28 @@ function renderBots() {
 }
 function renderConfig() { $('config').textContent = JSON.stringify(cfg, null, 1); $('version').textContent = 'prototype ' + cfg.version; }
 
+let runId = 0;
 function runFight() {
   const seed = Math.max(1, Math.floor(Number($('seed').value) || 1));
   $('seed').value = seed;
-  $('result').textContent = 'Simulating the fight.';
-  setTimeout(() => {
-    const pick = [ALL[Number($('botA').value)], ALL[Number($('botB').value)]];
-    match = createMatch({ builds: pick.map((r) => r.build), programs: pick.map((r) => r.program), seed, config: structuredClone(cfg) });
-    match.run();
+  const id = ++runId;
+  const pick = [ALL[Number($('botA').value)], ALL[Number($('botB').value)]];
+  const sim = createMatch({ builds: pick.map((r) => r.build), programs: pick.map((r) => r.program), seed, config: structuredClone(cfg) });
+  // Simulate in short slices so the page stays responsive, then swap the finished fight in.
+  const slice = () => {
+    if (id !== runId) return;
+    const until = performance.now() + 14;
+    while (!sim.done && performance.now() < until) sim.step();
+    if (!sim.done) { $('result').textContent = `Simulating the fight: ${sim.t.toFixed(0)} of up to ${cfg.match.maxSeconds} seconds.`; setTimeout(slice, 0); return; }
+    match = sim;
     buildArena(); buildMeshes(); applyTheme();
     playhead = 0; lastEvent = -1;
     pose(0); cam.target.set(0, 0, 0);
     renderLog(); renderBots(); renderConfig();
     window.__fight = fightData();
-  }, 20);
+  };
+  window.__fight = null;
+  setTimeout(slice, 0);
 }
 
 // ── Controls ───────────────────────────────────────────────────────────────
@@ -1086,7 +1285,7 @@ document.querySelectorAll('.tabs button').forEach((btn) => btn.addEventListener(
   document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b === btn)));
   for (const t of ['log', 'bots', 'settings']) $('tab-' + t).hidden = t !== btn.dataset.tab;
 }));
-for (const [id, def] of [['botA', 2], ['botB', 5]]) {
+for (const [id, def] of [['botA', 8], ['botB', 1]]) {
   $(id).innerHTML = ALL.map((r, i) => `<option value="${i}">${esc(r.build.name)}</option>`).join('');
   $(id).value = def;
   $(id).addEventListener('change', () => { playing = true; runFight(); });
@@ -1096,7 +1295,7 @@ const knobs = [
   ['k-grav', 'o-grav', (v) => { cfg.physics.gravity = v; }, (v) => v.toFixed(1), () => CONFIG.physics.gravity],
   ['k-grip', 'o-grip', (v) => { cfg.arena.grip = v; }, (v) => v.toFixed(2), () => CONFIG.arena.grip],
   // Weapon power scales motor-joint speed and torque together. Fast weapons need finer time steps.
-  ['k-power', 'o-power', (v) => { cfg.joints.motor.maxSpeed = CONFIG.joints.motor.maxSpeed * v; cfg.joints.motor.torque = CONFIG.joints.motor.torque * v * (v > 1 ? 1.25 : 1); cfg.physics.hz = v > 1.3 ? 480 : CONFIG.physics.hz; }, (v) => v.toFixed(1) + 'x', () => 1],
+  ['k-power', 'o-power', (v) => { cfg.joints.motor.maxSpeed = CONFIG.joints.motor.maxSpeed * v; cfg.joints.motor.torque = CONFIG.joints.motor.torque * v * (v > 1 ? 1.25 : 1); }, (v) => v.toFixed(1) + 'x', () => 1],
 ];
 for (const [id, out, set, fmt] of knobs) $(id).addEventListener('input', (e) => { const v = Number(e.target.value); set(v); $(out).textContent = fmt(v); renderConfig(); });
 $('rerun').addEventListener('click', () => { playing = true; runFight(); });

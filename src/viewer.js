@@ -166,7 +166,7 @@ function renderLog() {
   $('cond').innerHTML = s.bots.map((b, i) => `<div class="${TEAM[i]}"><b>${esc(b.name)}</b><span>${Math.round(b.massLeft * 100)}% of its mass still attached</span><span>${b.partsLost.length ? 'Lost ' + esc(b.partsLost.join(', ')) : 'No parts lost'}</span><span>${b.hitsTaken} hard hits taken</span></div>`).join('');
   $('events').innerHTML = match.events.map((e, i) => `<li class="${e.type}" data-i="${i}" data-t="${e.t}" tabindex="0"><time>${e.t.toFixed(1)}</time><span><i class="who ${e.bot == null ? '' : TEAM[e.bot]}"></i>${esc(e.text)}</span></li>`).join('');
   const d = duration();
-  $('ticks').innerHTML = match.events.filter((e) => e.type === 'part_lost' || e.type === 'hit' || e.type === 'flipped').map((e) => `<i class="${e.type === 'part_lost' ? 'lost' : ''}" style="left:${(e.t / d) * 100}%"></i>`).join('');
+  $('ticks').innerHTML = match.events.filter((e) => e.type === 'part_lost' || e.type === 'hit' || e.type === 'flipped' || e.type === 'released').map((e) => `<i class="${e.type === 'part_lost' ? 'lost' : ''}" style="left:${(e.t / d) * 100}%"></i>`).join('');
   const data = fightData();
   const shown = { ...data, motionTrack: { ...data.motionTrack, samples: data.motionTrack.samples.slice(0, 3).concat([`… ${data.motionTrack.samples.length - 3} more samples; Copy JSON includes them all`]) } };
   $('json').textContent = JSON.stringify(shown, null, 1);
@@ -182,20 +182,28 @@ function renderBots() {
 }
 function renderConfig() { $('config').textContent = JSON.stringify(cfg, null, 1); $('version').textContent = 'prototype ' + cfg.version; }
 
+let runId = 0;
 function runFight() {
   const seed = Math.max(1, Math.floor(Number($('seed').value) || 1));
   $('seed').value = seed;
-  $('result').textContent = 'Simulating the fight.';
-  setTimeout(() => {
-    const pick = [ALL[Number($('botA').value)], ALL[Number($('botB').value)]];
-    match = createMatch({ builds: pick.map((r) => r.build), programs: pick.map((r) => r.program), seed, config: structuredClone(cfg) });
-    match.run();
+  const id = ++runId;
+  const pick = [ALL[Number($('botA').value)], ALL[Number($('botB').value)]];
+  const sim = createMatch({ builds: pick.map((r) => r.build), programs: pick.map((r) => r.program), seed, config: structuredClone(cfg) });
+  // Simulate in short slices so the page stays responsive, then swap the finished fight in.
+  const slice = () => {
+    if (id !== runId) return;
+    const until = performance.now() + 14;
+    while (!sim.done && performance.now() < until) sim.step();
+    if (!sim.done) { $('result').textContent = `Simulating the fight: ${sim.t.toFixed(0)} of up to ${cfg.match.maxSeconds} seconds.`; setTimeout(slice, 0); return; }
+    match = sim;
     buildArena(); buildMeshes(); applyTheme();
     playhead = 0; lastEvent = -1;
     pose(0); cam.target.set(0, 0, 0);
     renderLog(); renderBots(); renderConfig();
     window.__fight = fightData();
-  }, 20);
+  };
+  window.__fight = null;
+  setTimeout(slice, 0);
 }
 
 // ── Controls ───────────────────────────────────────────────────────────────
@@ -215,7 +223,7 @@ document.querySelectorAll('.tabs button').forEach((btn) => btn.addEventListener(
   document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b === btn)));
   for (const t of ['log', 'bots', 'settings']) $('tab-' + t).hidden = t !== btn.dataset.tab;
 }));
-for (const [id, def] of [['botA', 2], ['botB', 5]]) {
+for (const [id, def] of [['botA', 8], ['botB', 1]]) {
   $(id).innerHTML = ALL.map((r, i) => `<option value="${i}">${esc(r.build.name)}</option>`).join('');
   $(id).value = def;
   $(id).addEventListener('change', () => { playing = true; runFight(); });
@@ -225,7 +233,7 @@ const knobs = [
   ['k-grav', 'o-grav', (v) => { cfg.physics.gravity = v; }, (v) => v.toFixed(1), () => CONFIG.physics.gravity],
   ['k-grip', 'o-grip', (v) => { cfg.arena.grip = v; }, (v) => v.toFixed(2), () => CONFIG.arena.grip],
   // Weapon power scales motor-joint speed and torque together. Fast weapons need finer time steps.
-  ['k-power', 'o-power', (v) => { cfg.joints.motor.maxSpeed = CONFIG.joints.motor.maxSpeed * v; cfg.joints.motor.torque = CONFIG.joints.motor.torque * v * (v > 1 ? 1.25 : 1); cfg.physics.hz = v > 1.3 ? 480 : CONFIG.physics.hz; }, (v) => v.toFixed(1) + 'x', () => 1],
+  ['k-power', 'o-power', (v) => { cfg.joints.motor.maxSpeed = CONFIG.joints.motor.maxSpeed * v; cfg.joints.motor.torque = CONFIG.joints.motor.torque * v * (v > 1 ? 1.25 : 1); }, (v) => v.toFixed(1) + 'x', () => 1],
 ];
 for (const [id, out, set, fmt] of knobs) $(id).addEventListener('input', (e) => { const v = Number(e.target.value); set(v); $(out).textContent = fmt(v); renderConfig(); });
 $('rerun').addEventListener('click', () => { playing = true; runFight(); });

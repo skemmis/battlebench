@@ -6,10 +6,13 @@ import * as CANNON from 'cannon-es';
 // A bot's frame: +z is forward, +y is up, +x is its left side.
 // ───────────────────────────────────────────────────────────────────────────
 export const CONFIG = {
-  version: 'v0.1',
-  physics: { hz: 240, controlHz: 30, gravity: 9.81, solverIterations: 12 },
+  version: 'v0.2',
+  physics: { hz: 480, controlHz: 30, gravity: 9.81, solverIterations: 12 },
   arena: { size: 14, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2 },
-  match: { maxSeconds: 60, countOutSeconds: 8, countOutRadius: 0.35, graceSeconds: 3 },
+  // A fight ends when a core leaves the arena, when nothing has moved for stalemateSeconds, or at maxSeconds.
+  // If no core has left, the core closer to the middle of the arena wins (by at least centerMargin metres).
+  // Nothing here rewards damage or movement for their own sake, so sitting still or shedding parts is allowed.
+  match: { maxSeconds: 45, stalemateSeconds: 8, stalemateRadius: 0.35, graceSeconds: 3, centerMargin: 0.5 },
   budget: { mass: 150, cost: 100, box: [3, 2, 3], maxParts: 24 },
   // A joint's load = impulse x share of the bot it has to drag along x leverage x sharpness.
   // Sharpness: a hit at speedRef m/s counts 1.5x, faster hits count for more.
@@ -18,13 +21,19 @@ export const CONFIG = {
     steel: { density: 780, strength: 1.5, costPerVolume: 70 },
     aluminium: { density: 270, strength: 1.0, costPerVolume: 90 },
     plastic: { density: 120, strength: 0.55, costPerVolume: 35 },
+    // Grips the floor as well as a wheel does. Everything else slides.
+    rubber: { density: 110, strength: 0.8, costPerVolume: 50 },
   },
   joints: {
     fixed: { strength: 500, cost: 0 },
     hinge: { strength: 500, cost: 2 },
     // A motor joint may set "gear": n. Speed is divided by n and torque multiplied by n (0.5 to 8).
     // Hinge and motor joints may set "pivot": [x, y, z] in the bot frame; without it they turn about the part's centre.
-    motor: { strength: 1500, cost: 8, maxSpeed: 40, torque: 120, minGear: 0.5, maxGear: 8 },
+    motor: { strength: 1500, cost: 8, maxSpeed: 80, torque: 300, minGear: 0.5, maxGear: 8 },
+    // A piston slides its part along "axis" by up to "stroke" metres. It stores energy: pushing out is fast and
+    // strong but drains its charge (a full stroke uses all of it), pulling back is slow and free, and the charge
+    // refills over rechargeSeconds. "gear" trades speed for force as on a motor.
+    piston: { strength: 1500, cost: 10, force: 5000, speed: 8, retractSpeed: 1, maxStroke: 0.6, rechargeSeconds: 2.5, lead: 0.15 },
   },
   parts: {
     core: { size: [0.4, 0.4, 0.4], mass: 20, cost: 0 },
@@ -135,8 +144,9 @@ export function validateBuild(build, cfg = CONFIG) {
     if (p.type !== 'core') {
       if (!Array.isArray(p.pos) || p.pos.length !== 3 || p.pos.some((x) => typeof x !== 'number')) { errors.push(`${where}: "pos" must be three numbers [x, y, z] measured from the core.`); continue; }
       const jt = p.type === 'drive' ? 'motor' : (p.joint && p.joint.type) || 'fixed';
-      if (!cfg.joints[jt]) errors.push(`${where}: unknown joint type "${jt}". Use fixed, hinge or motor.`);
-      if (p.type !== 'drive' && (jt === 'hinge' || jt === 'motor')) {
+      if (!cfg.joints[jt]) errors.push(`${where}: unknown joint type "${jt}". Use fixed, hinge, motor or piston.`);
+      if (jt === 'piston' && !(p.joint.stroke > 0 && p.joint.stroke <= cfg.joints.piston.maxStroke)) errors.push(`${where}: a piston needs a "stroke" above 0 and at most ${cfg.joints.piston.maxStroke}.`);
+      if (p.type !== 'drive' && (jt === 'hinge' || jt === 'motor' || jt === 'piston')) {
         const ax = p.joint.axis;
         if (!Array.isArray(ax) || ax.length !== 3 || Math.hypot(...ax) < 1e-6) errors.push(`${where}: a ${jt} joint needs an "axis" such as [0, 1, 0].`);
         const pv = p.joint.pivot;
@@ -158,7 +168,7 @@ export function validateBuild(build, cfg = CONFIG) {
   }
   if (mass > cfg.budget.mass) errors.push(`Over the mass allowance: ${r2(mass)} kg, the limit is ${cfg.budget.mass} kg.`);
   if (cost > cfg.budget.cost) errors.push(`Over the cost allowance: ${r2(cost)}, the limit is ${cfg.budget.cost}.`);
-  if (!build.parts.some((p) => p.type === 'drive' || (p.joint && p.joint.type === 'motor'))) warnings.push('Nothing in this build is powered, so it cannot move.');
+  if (!build.parts.some((p) => p.type === 'drive' || (p.joint && (p.joint.type === 'motor' || p.joint.type === 'piston')))) warnings.push('Nothing in this build is powered, so it cannot move.');
   return { ok: errors.length === 0, errors, warnings, mass: r2(mass), cost: r2(cost) };
 }
 
@@ -235,7 +245,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       const gear = def.type === 'drive' ? 1 : clamp(Number(def.joint && def.joint.gear) || 1, cfg.joints.motor.minGear, cfg.joints.motor.maxGear);
       const pivotLocal = def.joint && def.joint.pivot && jt !== 'fixed' ? lq.inverse().vmult(V(def.joint.pivot).vsub(lp)) : new CANNON.Vec3();
       const p = {
-        pivotLocal, angle: 0, lastRaw: 0,
+        pivotLocal, angle: 0, lastRaw: 0, ext: 0, target: 0, charge: 1, stroke: jt === 'piston' ? Number(def.joint.stroke) || 0.2 : 0, gear,
         id: def.id, def, spec, bot, index: m.parts.length, shape, mass: spec.mass,
         jointType: jt, axisLocal: V(axis).unit(), intact: def.type !== 'core', live: true, lostAt: null,
         wpos: origin.vadd(q0.vmult(lp)), wquat: q0.mult(lq), wvel: new CANNON.Vec3(), wang: new CANNON.Vec3(),
@@ -243,7 +253,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
         maxSpeed: def.type === 'drive' ? cfg.parts.drive.maxSpeed : cfg.joints.motor.maxSpeed / gear,
         torque: def.type === 'drive' ? cfg.parts.drive.torque : cfg.joints.motor.torque * gear,
       };
-      shape.material = def.type === 'drive' ? matRubber : matHard;
+      shape.material = def.type === 'drive' || def.material === 'rubber' ? matRubber : matHard;
       shape.partRef = p;
       bot.parts.push(p); bot.byId.set(p.id, p); m.parts.push(p);
       bot.startMass += p.mass;
@@ -329,12 +339,26 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       const A = p.parent.body, B = p.body;
       const axisW = p.wquat.vmult(p.axisLocal);
       const pivW = p.wpos.vadd(p.wquat.vmult(p.pivotLocal));
+      if (p.jointType === 'piston') {
+        // A lock whose anchor on the parent slides along the axis. Moving the anchor is what pushes the part.
+        const c = new CANNON.LockConstraint(A, B, { maxForce: cfg.joints.piston.force * p.gear * dt });
+        c.pivotB.copy(B.quaternion.inverse().vmult(pivW.vsub(B.position)));
+        p.baseA = A.quaternion.inverse().vmult(pivW.vsub(axisW.scale(p.ext)).vsub(A.position));
+        p.axisA = A.quaternion.inverse().vmult(axisW);
+        c.pivotA.copy(p.baseA.vadd(p.axisA.scale(p.ext)));
+        c.collideConnected = false; c.part = p;
+        for (const e of c.equations) e.setSpookParams(1e7, 3, dt);
+        world.addConstraint(c); bot.constraints.push(c);
+        continue;
+      }
       const c = new CANNON.HingeConstraint(A, B, {
         pivotA: A.quaternion.inverse().vmult(pivW.vsub(A.position)), pivotB: B.quaternion.inverse().vmult(pivW.vsub(B.position)),
         axisA: A.quaternion.inverse().vmult(axisW), axisB: B.quaternion.inverse().vmult(axisW), collideConnected: false,
       });
       if (p.jointType === 'motor' && p.live) { c.enableMotor(); c.setMotorMaxForce(p.torque * dt); /* the solver limits impulse per step, so torque x dt */ c.setMotorSpeed(0); }
       c.part = p;
+      // The library tunes joint stiffness for 60 steps a second unless told the real step.
+      for (const e of c.equations) if (e !== c.motorEquation) e.setSpookParams(1e7, 3, dt);
       world.addConstraint(c); bot.constraints.push(c);
     }
   }
@@ -350,46 +374,101 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
     p.angle += wrap(raw - p.lastRaw); p.lastRaw = raw;
   }
 
-  function sense(bot) {
-    const foe = m.bots[1 - bot.index];
-    const b = bot.core.body, f = foe.core.body;
+  // What a program is told each tick: the whole state of the fight. Positions are in arena coordinates
+  // (the centre is 0, 0; y is height above the floor), in metres. Bearings are relative to the bot's own nose.
+  function describe(bot, heading, origin) {
+    const b = bot.core.body;
     const fwd = b.quaternion.vmult(new CANNON.Vec3(0, 0, 1)), up = b.quaternion.vmult(new CANNON.Vec3(0, 1, 0));
-    const heading = Math.atan2(fwd.x, fwd.z);
-    const dx = f.position.x - b.position.x, dz = f.position.z - b.position.z;
-    const fup = f.quaternion.vmult(new CANNON.Vec3(0, 1, 0));
     const parts = {}, joints = {};
+    const pos = new CANNON.Vec3();
     for (const p of bot.parts) {
-      parts[p.id] = p.live;
-      if (p.live && p.def.type !== 'drive' && (p.jointType === 'motor' || p.jointType === 'hinge')) joints[p.id] = { angle: p.angle };
+      partWorld(p, pos);
+      parts[p.id] = { type: p.def.type, attached: p.live, x: pos.x, y: pos.y, z: pos.z };
+      if (!p.live || p.def.type === 'drive') continue;
+      if (p.jointType === 'motor' || p.jointType === 'hinge') joints[p.id] = { angle: p.angle };
+      if (p.jointType === 'piston') joints[p.id] = { extension: p.ext, stroke: p.stroke, charge: p.charge };
     }
     return {
-      t: m.t,
-      self: {
-        x: b.position.x, y: b.position.y, z: b.position.z, heading, upright: up.y,
-        speed: Math.hypot(b.velocity.x, b.velocity.z), forwardSpeed: b.velocity.x * fwd.x + b.velocity.z * fwd.z,
-        turnRate: b.angularVelocity.y, massLeft: bot.liveMass / bot.startMass, parts, joints,
-      },
-      enemy: { bearing: wrap(Math.atan2(dx, dz) - heading), distance: Math.hypot(dx, dz), height: f.position.y - b.position.y, upright: fup.y, massLeft: foe.liveMass / foe.startMass },
-      arena: {
-        halfSize: half, edgeDistance: half - Math.max(Math.abs(b.position.x), Math.abs(b.position.z)),
-        centerBearing: wrap(Math.atan2(-b.position.x, -b.position.z) - heading), centerDistance: Math.hypot(b.position.x, b.position.z),
-      },
+      x: b.position.x, y: b.position.y, z: b.position.z, heading: Math.atan2(fwd.x, fwd.z), upright: up.y,
+      vx: b.velocity.x, vy: b.velocity.y, vz: b.velocity.z,
+      speed: Math.hypot(b.velocity.x, b.velocity.z), forwardSpeed: b.velocity.x * fwd.x + b.velocity.z * fwd.z,
+      turnRate: b.angularVelocity.y, massLeft: bot.liveMass / bot.startMass,
+      centerDistance: Math.hypot(b.position.x, b.position.z), edgeDistance: half - Math.max(Math.abs(b.position.x), Math.abs(b.position.z)),
+      parts, joints,
+    };
+  }
+  function sense(bot) {
+    const foe = m.bots[1 - bot.index];
+    const self = describe(bot), enemy = describe(foe);
+    const rel = (x, z) => ({ bearing: wrap(Math.atan2(x - self.x, z - self.z) - self.heading), distance: Math.hypot(x - self.x, z - self.z) });
+    Object.assign(enemy, rel(enemy.x, enemy.z), { height: enemy.y - self.y });
+    const loose = [];
+    for (const owner of m.bots) for (const body of owner.bodies) {
+      if (body.live) continue;
+      loose.push({ id: body.rootPart.id, mine: owner === bot, x: body.position.x, y: body.position.y, z: body.position.z, speed: body.velocity.length(), ...rel(body.position.x, body.position.z) });
+    }
+    loose.sort((a, b) => a.distance - b.distance);
+    return {
+      t: m.t, timeLeft: cfg.match.maxSeconds - m.t, self, enemy, loose,
+      arena: { halfSize: half, edgeDistance: self.edgeDistance, centerBearing: wrap(Math.atan2(-self.x, -self.z) - self.heading), centerDistance: self.centerDistance },
     };
   }
 
   function control() {
     for (const bot of m.bots) {
       if (!bot.alive) continue;
-      for (const p of bot.parts) if (p.live && p.parent && p.intact && p.def.type !== 'drive' && p.jointType !== 'fixed') updateAngle(p);
+      for (const p of bot.parts) if (p.live && p.parent && p.intact && p.def.type !== 'drive' && (p.jointType === 'hinge' || p.jointType === 'motor')) updateAngle(p);
       const out = {};
       try { bot.program(sense(bot), out, bot.mem); bot.out = out; }
       catch (e) { if (!bot.programFailed) { bot.programFailed = true; log('program_error', bot.index, `${bot.name}'s control program threw an error: ${e.message}`); } }
       for (const c of bot.constraints) {
         const p = c.part;
+        if (p.jointType === 'piston' && p.live) { p.target = clamp(Number(out[p.id]) || 0, 0, 1) * p.stroke; continue; }
         if (p.jointType !== 'motor' || !p.live) continue;
         const v = clamp(Number(out[p.id]) || 0, -1, 1);
         c.setMotorSpeed(-v * p.maxSpeed);
       }
+      // A program may let go of parts on purpose: out.release = ['id', ...].
+      if (Array.isArray(out.release)) {
+        let any = false;
+        for (const id of out.release) {
+          const p = bot.byId.get(id);
+          if (!p || !p.parent || !p.intact || !p.live) continue;
+          p.intact = false; any = true;
+          const gone = [];
+          const mark = (q) => { gone.push(q.id); q.lostAt = m.t; for (const ch of q.children) if (ch.intact) mark(ch); };
+          mark(p);
+          log('released', bot.index, `${bot.name} let go of ${gone.join(', ')}.`, { parts: gone });
+        }
+        if (any) assemble(bot);
+      }
+    }
+  }
+
+  // Pistons. The joint is a lock whose anchor on the parent slides along the axis; the lock can pull the
+  // part toward the anchor with at most the piston's force. Pushing out moves the anchor fast and spends
+  // charge. Pulling back is slow and free. If the part is blocked the anchor waits for it.
+  const pa = new CANNON.Vec3(), pb = new CANNON.Vec3();
+  function drivePistons() {
+    const pc = cfg.joints.piston;
+    for (const bot of m.bots) for (const c of bot.constraints) {
+      const p = c.part;
+      if (p.jointType !== 'piston') continue;
+      p.charge = Math.min(1, p.charge + dt / pc.rechargeSeconds);
+      const A = c.bodyA, B = c.bodyB;
+      A.pointToWorldFrame(p.baseA, pa); B.pointToWorldFrame(c.pivotB, pb);
+      const actual = pb.vsub(pa).dot(A.quaternion.vmult(p.axisA));
+      const target = p.live ? p.target : p.ext;
+      if (target > p.ext && p.charge > 0) {
+        p.ext = Math.min(target, p.ext + (pc.speed / p.gear) * dt, Math.max(p.ext, actual + pc.lead));
+        // Charge is spent as work: the force the joint is carrying times how far the part moved under it.
+        // Moving through free air costs almost nothing; a full stroke against full resistance uses it all.
+        const axW = A.quaternion.vmult(p.axisA), e = c.equations;
+        const force = Math.abs(e[0].multiplier * axW.x + e[1].multiplier * axW.y + e[2].multiplier * axW.z);
+        p.charge = Math.max(0, p.charge - (force * Math.max(0, actual - (p.lastActual ?? actual))) / (pc.force * p.gear * p.stroke));
+      } else if (target < p.ext) p.ext = Math.max(target, p.ext - pc.retractSpeed * dt);
+      p.lastActual = actual;
+      c.pivotA.copy(p.baseA.vadd(p.axisA.scale(p.ext)));
     }
   }
 
@@ -484,13 +563,12 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
 
   function judge() {
     const out = m.bots.map((bot) => bot.core.body.position.y < -cfg.arena.ringOutDepth);
-    const stuck = m.bots.map((bot) => {
-      if (m.t < cfg.match.graceSeconds + cfg.match.countOutSeconds) return false;
+    const still = m.bots.map((bot) => {
+      if (m.t < cfg.match.graceSeconds + cfg.match.stalemateSeconds) return false;
       const h = bot.history, now = h[h.length - 1];
       let reach = 0;
-      for (let i = h.length - 1; i >= 0 && now[0] - h[i][0] <= cfg.match.countOutSeconds; i--) reach = Math.max(reach, Math.hypot(h[i][1] - now[1], h[i][2] - now[2], h[i][3] - now[3]));
-      if (!bot.warned && reach < cfg.match.countOutRadius && m.t > cfg.match.graceSeconds + cfg.match.countOutSeconds * 0.5) { /* placeholder for a future warning event */ }
-      return reach < cfg.match.countOutRadius;
+      for (let i = h.length - 1; i >= 0 && now[0] - h[i][0] <= cfg.match.stalemateSeconds; i--) reach = Math.max(reach, Math.hypot(h[i][1] - now[1], h[i][2] - now[2], h[i][3] - now[3]));
+      return reach < cfg.match.stalemateRadius;
     });
     const end = (winner, reason, text) => { m.done = true; m.result = { winner, reason, t: r2(m.t), text }; log('end', winner, text); };
     const n = m.bots.map((b) => b.name);
@@ -499,16 +577,14 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
       const w = out[0] ? 1 : 0;
       return end(w, 'ring_out', `${n[1 - w]} fell out of the arena. ${n[w]} wins by ring-out.`);
     }
-    if (stuck[0] || stuck[1]) {
-      if (stuck[0] && stuck[1]) return end(null, 'both_stuck', `Neither bot moved for ${cfg.match.countOutSeconds} seconds. Draw.`);
-      const w = stuck[0] ? 1 : 0;
-      return end(w, 'count_out', `${n[1 - w]} did not move for ${cfg.match.countOutSeconds} seconds and was counted out. ${n[w]} wins.`);
-    }
-    if (m.t >= cfg.match.maxSeconds) {
-      const left = m.bots.map((b) => b.liveMass / b.startMass);
-      if (Math.abs(left[0] - left[1]) < 0.02) return end(null, 'time_draw', 'Time ran out with both bots about equally intact. Draw.');
-      const w = left[0] > left[1] ? 0 : 1;
-      return end(w, 'time_decision', `Time ran out. ${n[w]} wins on condition, with ${Math.round(left[w] * 100)}% of its mass still attached against ${Math.round(left[1 - w] * 100)}%.`);
+    const settled = still[0] && still[1];
+    if (settled || m.t >= cfg.match.maxSeconds) {
+      const d = m.bots.map((b) => Math.hypot(b.core.body.position.x, b.core.body.position.z));
+      const why = settled ? `Nothing moved for ${cfg.match.stalemateSeconds} seconds.` : 'Time ran out.';
+      const kind = settled ? 'settled' : 'time';
+      if (Math.abs(d[0] - d[1]) < cfg.match.centerMargin) return end(null, kind + '_draw', `${why} Both cores are about the same distance from the centre. Draw.`);
+      const w = d[0] < d[1] ? 0 : 1;
+      return end(w, kind + '_center', `${why} ${n[w]} wins by holding the centre: its core is ${d[w].toFixed(1)} m from the middle against ${d[1 - w].toFixed(1)} m.`);
     }
   }
 
@@ -520,6 +596,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG }) {
     if (m.done) return;
     if (m.steps % stepsPerControl === 0) control();
     for (const bot of m.bots) for (const b of bot.bodies) { b.pv.copy(b.velocity); b.pw.copy(b.angularVelocity); }
+    drivePistons();
     world.step(dt);
     m.steps++; m.t = m.steps * dt;
     stress();
