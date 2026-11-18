@@ -3,7 +3,7 @@
 // objective. The kit and the physics stay fixed; the challenge is what changes from round to round.
 // A challenge is plain data, and a bot's program receives it whole as s.challenge.
 //
-//   floor      slabs with their top at height 0: { x, z, w, d } (centre, width along x, depth along z)
+//   floor      slabs: { x, z, w, d, top } (centre, width along x, depth along z, height of the top, 0 if absent)
 //   walls      solid blocks standing on the floor: { x, z, w, d, h }
 //   surface    multipliers on floor friction: grip (rubber and wheels) and slide (everything else)
 //   gravity    multiplier on normal gravity
@@ -38,9 +38,17 @@ const LAYOUTS = {
     return { text: `two platforms joined by a bridge ${w} m wide and ${len} m long`, floor: [{ x: 0, z: -z, w: 10, d: isl }, { x: 0, z, w: 10, d: isl }, { x: 0, z: 0, w, d: len }], walls: [], spawnZ: z, reach: Math.min(w / 2 - 0.6, 1.2), narrow: true };
   },
   gap: (r) => {
-    const g = chRound(0.5 + r() * 0.5), isl = 7;
+    const g = chRound(0.5 + r() * 0.9), isl = 7;
     const z = g / 2 + isl / 2;
     return { text: `two platforms separated by a ${g} m gap`, floor: [{ x: 0, z: -z, w: 12, d: isl }, { x: 0, z, w: 12, d: isl }], walls: [], spawnZ: z + 0.5, reach: 0, split: true };
+  },
+  plinth: (r) => {
+    const w = chRound(3 + r() * 1.5), top = chRound(0.35 + r() * 0.2);
+    return { text: `a square platform with a raised block in the middle, ${w} m across and ${top} m high`, floor: [{ x: 0, z: 0, w: 14, d: 14 }, { x: 0, z: 0, w, d: w, top }], walls: [], spawnZ: 4.5, reach: w / 2 - 0.5, only: ['fixed', 'deliver'], where: 'on top of the block' };
+  },
+  islands: (r) => {
+    const g = chRound(0.8 + r() * 0.8), z = 2 + g + 2.5;
+    return { text: `three platforms in a row with ${g} m gaps between them; the middle one is 4 m square`, floor: [{ x: 0, z: -z, w: 12, d: 5 }, { x: 0, z, w: 12, d: 5 }, { x: 0, z: 0, w: 4, d: 4 }], walls: [], spawnZ: z, reach: 1.5, only: ['fixed', 'deliver'], where: 'on the middle platform' };
   },
   pillars: (r) => {
     const s = 14, walls = [];
@@ -63,17 +71,18 @@ const GRAVITIES = {
 export function drawChallenge(seed, force = {}) {
   const r = chRng(seed * 7919 + 13);
   const pick = (obj, weights) => { const keys = Object.keys(weights); let t = r() * keys.reduce((n, k) => n + weights[k], 0); for (const k of keys) { t -= weights[k]; if (t <= 0) return k; } return keys[0]; };
-  const layoutKey = force.layout || pick(LAYOUTS, { open: 3, small: 2, bridge: 2, gap: 1.5, pillars: 2 });
+  const layoutKey = force.layout || pick(LAYOUTS, { open: 2.5, small: 1.5, bridge: 2, gap: 1.5, pillars: 1.5, plinth: 2, islands: 2 });
   const surfaceKey = force.surface || pick(SURFACES, { normal: 3, ice: 2, sticky: 1 });
   const gravityKey = force.gravity || pick(GRAVITIES, { normal: 3, low: 1.5, high: 1 });
   let objKey = force.objective || pick({}, { fixed: 2, orbit: 2, jump: 2, deliver: 2 });
   const L = LAYOUTS[layoutKey](r), S = SURFACES[surfaceKey], G = GRAVITIES[gravityKey];
   if (L.split && objKey !== 'fixed') objKey = 'fixed';
+  if (L.only && !L.only.includes(objKey)) objKey = 'fixed';
   if (L.narrow && objKey === 'orbit') objKey = 'jump';
   let objective, text;
   if (objKey === 'fixed') {
     objective = { type: 'hold', scoring: 'final', path: { kind: 'fixed', x: 0, z: 0 } };
-    text = L.split ? 'The point to hold is in the middle of the gap. The core closer to it at the end wins.' : 'Hold the marked point. The core closer to it at the end wins.';
+    text = L.split ? 'The point to hold is in the middle of the gap. The core closer to it at the end wins.' : `Hold the marked point${L.where ? ', which is ' + L.where : ''}. The core closer to it at the end wins.`;
   } else if (objKey === 'orbit') {
     const radius = chRound(Math.max(1, L.reach * (0.5 + r() * 0.4))), period = Math.round(14 + r() * 12);
     objective = { type: 'hold', scoring: 'time', path: { kind: 'orbit', radius, period, phase: chRound(r() * 6.28) } };
@@ -86,7 +95,7 @@ export function drawChallenge(seed, force = {}) {
   } else {
     const size = chRound(0.5 + r() * 0.4), mass = Math.round(10 + r() * 40);
     objective = { type: 'deliver', crate: { size, mass, x: 0, z: 0 } };
-    text = `A ${mass} kg crate starts in the middle. Whoever has it nearer their own end when the round stops wins.`;
+    text = `A ${mass} kg crate starts ${L.where || 'in the middle'}. Whoever has it nearer their own end when the round stops wins.`;
   }
   const spawnZ = chRound(L.spawnZ);
   const brief = [`The arena is ${L.text}.`, S.text, G.text, text].filter(Boolean).join(' ');
@@ -106,6 +115,12 @@ export function targetAt(ch, t) {
   return { x: p.x, z: p.z };
 }
 
+// Height of the floor under a point (0 on the plain floor, more on a raised block).
+export function floorHeight(ch, x, z) {
+  let h = 0;
+  for (const s of ch.floor) if (Math.abs(x - s.x) <= s.w / 2 && Math.abs(z - s.z) <= s.d / 2) h = Math.max(h, s.top || 0);
+  return h;
+}
 export function onFloor(ch, x, z) {
   for (const s of ch.floor) if (Math.abs(x - s.x) <= s.w / 2 && Math.abs(z - s.z) <= s.d / 2) return true;
   return false;
@@ -132,4 +147,7 @@ export const NAMED = [
   { ...drawChallenge(106, { layout: 'pillars', surface: 'normal', gravity: 'normal', objective: 'jump' }), name: 'Pillars' },
   { ...drawChallenge(107, { layout: 'open', surface: 'normal', gravity: 'normal', objective: 'deliver' }), name: 'Bring it home' },
   { ...drawChallenge(108, { layout: 'small', surface: 'ice', gravity: 'normal', objective: 'deliver' }), name: 'Crate on ice' },
+  { ...drawChallenge(109, { layout: 'plinth', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'The plinth' },
+  { ...drawChallenge(110, { layout: 'islands', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Islands' },
+  { ...drawChallenge(111, { layout: 'plinth', surface: 'normal', gravity: 'normal', objective: 'deliver' }), name: 'Crate on the plinth' },
 ];

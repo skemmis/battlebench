@@ -301,6 +301,105 @@ export function slingshotProgram(s, out, mem) {
   if (!mem.firing && s.t > (mem.nextShot || 1) && Math.abs(e.bearing) < 0.08 && e.distance < 7 && Math.abs(s.self.turnRate) < 0.8) mem.firing = shots[0];
 }
 
+// ── Bots built on the other ways of getting about ───────────────────────────
+export const TREAD = {
+  name: 'Tread',
+  note: 'No wheels. Two long tracks carry a low slab. The tracks are long enough to reach across a narrow gap and they do not slide sideways, so it is hard to shove off its line.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [1.0, 0.08, 1.5], pos: [0, -0.1, 0], parent: 'core' },
+    { id: 'track_l', type: 'track', size: [0.28, 0.3, 1.7], pos: [0.62, -0.2, 0], parent: 'deck' },
+    { id: 'track_r', type: 'track', size: [0.28, 0.3, 1.7], pos: [-0.62, -0.2, 0], parent: 'deck' },
+    { id: 'plough', type: 'wedge', material: 'aluminium', size: [1.0, 0.3, 0.5], pos: [0, -0.2, 1.0], parent: 'deck' },
+  ],
+};
+export function treadProgram(s, out, mem) {
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  // Go to the objective and stay on it. If the enemy is nearer the objective, go through the enemy.
+  const g = goal(s);
+  const b = g.distance < 0.5 ? s.enemy.bearing : g.bearing;
+  const drive = g.distance < 0.35 ? 0 : Math.abs(b) > 0.5 ? 0 : Math.min(1, 0.1 + g.distance * 0.5);
+  const turn = clamp(b * 2);
+  out.track_l = clamp(drive - turn); out.track_r = clamp(drive + turn);
+}
+
+export const COMET = {
+  name: 'Comet',
+  note: 'It flies. Four thrusters point down at the corners and each one holds its own corner at a set height, which keeps the whole thing level. Four more push it forward, back and to either side. It can only stay up for a few seconds, so it travels in hops and lands on the objective.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'plastic', size: [1.3, 0.06, 1.3], pos: [0, -0.23, 0], parent: 'core' },
+    { id: 'lift_fl', type: 'thruster', dir: [0, 1, 0], pos: [0.55, -0.1, 0.55], parent: 'deck' },
+    { id: 'lift_fr', type: 'thruster', dir: [0, 1, 0], pos: [-0.55, -0.1, 0.55], parent: 'deck' },
+    { id: 'lift_rl', type: 'thruster', dir: [0, 1, 0], pos: [0.55, -0.1, -0.55], parent: 'deck' },
+    { id: 'lift_rr', type: 'thruster', dir: [0, 1, 0], pos: [-0.55, -0.1, -0.55], parent: 'deck' },
+    { id: 'go_fwd', type: 'thruster', dir: [0, 0, 1], pos: [0, -0.05, -0.45], parent: 'deck' },
+    { id: 'go_back', type: 'thruster', dir: [0, 0, -1], pos: [0, -0.05, 0.45], parent: 'deck' },
+    { id: 'go_left', type: 'thruster', dir: [1, 0, 0], pos: [-0.45, -0.05, 0], parent: 'deck' },
+    { id: 'go_right', type: 'thruster', dir: [-1, 0, 0], pos: [0.45, -0.05, 0], parent: 'deck' },
+  ],
+};
+export function cometProgram(s, out, mem) {
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const lifts = ['lift_fl', 'lift_fr', 'lift_rl', 'lift_rr'];
+  const g = goal(s);
+  const fuel = Math.min(...lifts.map((id) => (s.self.joints[id] ? s.self.joints[id].charge : 0)));
+  if (mem.rest === undefined) { mem.rest = s.self.parts.lift_fl.y; mem.prev = {}; }
+  // Take off with full tanks when there is somewhere to go; come down when they run low or on arrival.
+  if (!mem.flying && fuel > 0.95 && g.distance > 0.7) mem.flying = true;
+  if (mem.flying && (fuel < 0.12 || (g.distance < 0.35 && s.self.speed < 0.6))) mem.flying = false;
+  const height = mem.rest + 0.85;
+  for (const id of lifts) {
+    const y = s.self.parts[id].y, vy = (y - (mem.prev[id] ?? y)) * 30;
+    mem.prev[id] = y;
+    // Each corner looks after its own height. Coming down, it still cushions the landing a little.
+    out[id] = mem.flying ? clamp01(0.37 + 1.2 * (height - y) - 0.45 * vy) : clamp01(y > mem.rest + 0.15 ? -0.3 * vy - 0.1 : 0);
+  }
+  // Which way it faces does not matter. Work out where the objective is in its own frame and how fast it is
+  // drifting each way, then push toward the objective and against the drift.
+  const h = s.self.heading;
+  const vf = s.self.vx * Math.sin(h) + s.self.vz * Math.cos(h), vl = s.self.vx * Math.cos(h) - s.self.vz * Math.sin(h);
+  const reach = Math.min(g.distance, 3.5);
+  const af = mem.flying ? 0.5 * reach * Math.cos(g.bearing) - 0.55 * vf : 0, al = mem.flying ? 0.5 * reach * Math.sin(g.bearing) - 0.55 * vl : 0;
+  out.go_fwd = clamp01(af); out.go_back = clamp01(-af); out.go_left = clamp01(al); out.go_right = clamp01(-al);
+}
+
+export const LIMPET = {
+  name: 'Limpet',
+  note: 'It holds on. A gripper on the nose takes hold of the crate, or of the other bot, and a second one underneath clamps it to the floor once it is where it wants to be.',
+  parts: [
+    { id: 'core', type: 'core' },
+    { id: 'deck', type: 'plate', material: 'aluminium', size: [1.0, 0.08, 1.2], pos: [0, -0.1, 0], parent: 'core' },
+    { id: 'track_l', type: 'track', size: [0.25, 0.3, 1.3], pos: [0.6, -0.2, 0], parent: 'deck' },
+    { id: 'track_r', type: 'track', size: [0.25, 0.3, 1.3], pos: [-0.6, -0.2, 0], parent: 'deck' },
+    { id: 'claw', type: 'gripper', pos: [0, -0.05, 0.75], parent: 'deck' },
+    { id: 'anchor', type: 'gripper', pos: [0, -0.2, -0.2], parent: 'deck', joint: { type: 'piston', axis: [0, -1, 0], stroke: 0.12 } },
+  ],
+};
+export function limpetProgram(s, out, mem) {
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  const j = s.self.joints;
+  const holding = j.claw && j.claw.holding;
+  let b, d, hold = false;
+  if (s.crate) {
+    // Get hold of the crate from any side, then haul it to the home end.
+    out.claw = 1;
+    if (holding) { b = Math.atan2(-s.self.x * 0.2, s.homeSide * 20 - s.self.z) - s.self.heading; while (b > Math.PI) b -= 2 * Math.PI; while (b < -Math.PI) b += 2 * Math.PI; d = Math.abs(s.homeSide * (s.challenge.floor[0].d / 2) - s.self.z); if (s.arena.edgeDistance < 1.8 && s.self.z * s.homeSide > 1.5) hold = true; }
+    else { b = s.crate.bearing; d = s.crate.distance; }
+  } else {
+    const g = goal(s);
+    b = g.bearing; d = g.distance; out.claw = 0;
+    if (d < 0.35) hold = true;
+  }
+  // Clamp to the floor when in place: push the anchor down and switch it on.
+  out.anchor = hold ? 1 : 0;
+  if (hold) { out.track_l = out.track_r = 0; return; }
+  // Either end can lead. With the crate held on the nose, backing up is how it gets hauled home.
+  const back = Math.abs(b) > Math.PI / 2, err = back ? (b > 0 ? b - Math.PI : b + Math.PI) : b;
+  const drive = (back ? -1 : 1) * (Math.abs(err) > 0.6 ? 0 : Math.min(1, 0.3 + d * 0.5)), turn = clamp(err * 2);
+  out.track_l = clamp(drive - turn); out.track_r = clamp(drive + turn);
+}
+
 export const ALL = [
   { build: LAWNMOWER, program: lawnmowerProgram },
   { build: DOORSTOP, program: doorstopProgram },
@@ -311,6 +410,9 @@ export const ALL = [
   { build: FLEA, program: fleaProgram },
   { build: SQUATTER, program: squatterProgram },
   { build: SLINGSHOT, program: slingshotProgram },
+  { build: TREAD, program: treadProgram },
+  { build: COMET, program: cometProgram },
+  { build: LIMPET, program: limpetProgram },
 ];
 
 export const ROSTER = [

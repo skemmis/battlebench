@@ -122,3 +122,33 @@ test('a control program over the size limit does not run', () => {
   assert.ok(m.events.some((e) => e.type === 'program_error'));
   assert.ok(m.bots[0].core.body.velocity.length() < 0.2);
 });
+
+test('floor friction matches the textbook: a sliding slab stops where it should, and rubber stops sooner', () => {
+  const slide = (material) => {
+    const brick = { name: 'Brick', parts: [{ id: 'core', type: 'core' }, { id: 'slab', type: 'plate', material, size: [1, 0.1, 1], pos: [0, -0.25, 0], parent: 'core' }] };
+    const m = createMatch({ builds: [brick, brick], programs: [() => {}, () => {}], seed: 1 });
+    for (let i = 0; i < 240; i++) m.step();
+    const b = m.bots[0].core.body, x0 = b.position.x; b.velocity.set(3, 0, 0);
+    for (let i = 0; i < 480 * 4; i++) m.step();
+    return b.position.x - x0;
+  };
+  // Distance = speed squared / (2 x friction x gravity): 1.53 m at 0.3 and 0.46 m at 1.0.
+  assert.ok(Math.abs(slide('aluminium') - 1.53) < 0.15); assert.ok(Math.abs(slide('rubber') - 0.46) < 0.1);
+});
+
+test('tracks drive a bot with no wheels, and thrusters lift one off the floor', () => {
+  const tread = byName('Tread'), comet = byName('Comet');
+  const a = createMatch({ builds: [tread.build, DOORSTOP], programs: [(s, out) => { out.track_l = out.track_r = 1; }, () => {}], seed: 1 });
+  const z0 = a.bots[0].core.body.position.z; for (let i = 0; i < 480; i++) a.step();
+  assert.ok(Math.abs(a.bots[0].core.body.position.z - z0) > 1);
+  const ch = NAMED.find((c) => c.name === 'The plinth');
+  const b = createMatch({ builds: [comet.build, DOORSTOP], programs: [comet.program, () => {}], seed: 1, challenge: ch }).run();
+  assert.equal(b.result.winner, 0); assert.ok(b.bots[0].core.body.position.y > 0.4, 'landed on the block');
+});
+
+test('a gripper takes hold of the crate and the bot hauls it home', () => {
+  const limpet = byName('Limpet'), ch = NAMED.find((c) => c.name === 'Bring it home');
+  const m = createMatch({ builds: [limpet.build, DOORSTOP], programs: [limpet.program, () => {}], seed: 1, challenge: ch }).run();
+  assert.ok(m.events.some((e) => e.type === 'gripped' && e.text.includes('the crate')));
+  assert.equal(m.result.winner, 0);
+});

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CONFIG, createMatch, partSpec } from './sim.js';
 import { ALL } from './bots.js';
-import { NAMED, drawChallenge, targetAt } from './challenges.js';
+import { NAMED, drawChallenge, targetAt, floorHeight } from './challenges.js';
 
 // The page: runs a whole fight up front, then replays the recording.
 const $ = (id) => document.getElementById(id);
@@ -42,13 +42,15 @@ function buildArena() {
   wallMat = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.1 });
   const grid = [], edge = [];
   for (const sl of ch.floor) {
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(sl.w, t, sl.d), floorMat);
-    slab.position.set(sl.x, -t / 2, sl.z); slab.receiveShadow = true;
+    const top = sl.top || 0;
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(sl.w, t + top, sl.d), floorMat);
+    slab.position.set(sl.x, (top - t) / 2, sl.z); slab.receiveShadow = true; slab.castShadow = top > 0;
     arena.add(slab);
     const x0 = sl.x - sl.w / 2, x1 = sl.x + sl.w / 2, z0 = sl.z - sl.d / 2, z1 = sl.z + sl.d / 2;
-    for (let x = Math.ceil(x0); x <= x1; x++) grid.push(x, 0.005, z0, x, 0.005, z1);
-    for (let z = Math.ceil(z0); z <= z1; z++) grid.push(x0, 0.005, z, x1, 0.005, z);
-    edge.push(x0, 0.01, z0, x1, 0.01, z0, x1, 0.01, z0, x1, 0.01, z1, x1, 0.01, z1, x0, 0.01, z1, x0, 0.01, z1, x0, 0.01, z0);
+    const g = top + 0.005, e = top + 0.01;
+    for (let x = Math.ceil(x0); x <= x1; x++) grid.push(x, g, z0, x, g, z1);
+    for (let z = Math.ceil(z0); z <= z1; z++) grid.push(x0, g, z, x1, g, z);
+    edge.push(x0, e, z0, x1, e, z0, x1, e, z0, x1, e, z1, x1, e, z1, x0, e, z1, x0, e, z1, x0, e, z0);
   }
   const lines = (pts, mat) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); return new THREE.LineSegments(g, mat); };
   gridLines = lines(grid, new THREE.LineBasicMaterial({ transparent: true, opacity: 0.5 }));
@@ -107,7 +109,9 @@ function partColor(part) {
   const team = new THREE.Color(css(part.bot.index === 0 ? '--team-a' : '--team-b'));
   const t = part.def.type, m = part.def.material;
   if (t === 'core') return team;
-  if (t === 'drive') return new THREE.Color(0x2b2f36);
+  if (t === 'drive' || t === 'track') return new THREE.Color(0x2b2f36);
+  if (t === 'thruster') return new THREE.Color(0x8d99a8);
+  if (t === 'gripper') return new THREE.Color(0xd9b24a);
   const steel = new THREE.Color(0x6f7a88), alu = new THREE.Color(0xc4ccd6), plastic = new THREE.Color(0xe9e2cf);
   const base = m === 'steel' ? steel : m === 'plastic' ? plastic : alu;
   return base.lerp(team, m === 'steel' ? 0.35 : 0.5);
@@ -151,7 +155,7 @@ const endDrag = () => { drag = null; canvas.style.cursor = 'grab'; };
 canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
 canvas.addEventListener('wheel', (e) => { e.preventDefault(); cam.zoom = Math.max(0.45, Math.min(2.2, cam.zoom * (e.deltaY > 0 ? 1.08 : 0.93))); }, { passive: false });
 
-const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), grey = new THREE.Color(0x7d848e), spark = new THREE.Color(0xfff2b0);
+const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), grey = new THREE.Color(0x7d848e), spark = new THREE.Color(0xfff2b0), glow = new THREE.Color(0xff7a1a);
 let flashes = [];
 function pose(time) {
   const n = match.frames.length;
@@ -165,7 +169,9 @@ function pose(time) {
     qa.set(A[o + 3], A[o + 4], A[o + 5], A[o + 6]); qb.set(B[o + 3], B[o + 4], B[o + 5], B[o + 6]);
     mesh.quaternion.slerpQuaternions(qa, qb, k);
     mesh.material.color.copy(mesh.userData.base);
-    if (flags[i]) mesh.material.color.lerp(grey, 0.6);
+    if (flags[i] & 1) mesh.material.color.lerp(grey, 0.6);
+    // A thruster that is firing or a gripper that is holding glows.
+    if (flags[i] & 2) mesh.material.color.lerp(glow, 0.85);
     if (match.parts[i].def.type === 'core') cores.push(mesh.position);
   });
   // Light up the two parts that touched in a hard hit, fading over a third of a second.
@@ -174,7 +180,7 @@ function pose(time) {
     if (age < -0.03 || age > 0.35) continue;
     for (const i of fl.parts) meshes[i].material.color.lerp(spark, 0.9 * (1 - Math.max(0, age) / 0.35));
   }
-  if (targetRing) { const tg = targetAt(match.challenge, time); targetRing.position.set(tg.x, 0.02, tg.z); }
+  if (targetRing) { const tg = targetAt(match.challenge, time); targetRing.position.set(tg.x, floorHeight(match.challenge, tg.x, tg.z) + 0.02, tg.z); }
   const PA = match.propFrames[i0], PB = match.propFrames[i1];
   propMeshes.forEach((mesh, i) => {
     const o = i * 7;
@@ -214,7 +220,7 @@ function renderLog() {
   $('cond').innerHTML = s.bots.map((b, i) => `<div class="${TEAM[i]}"><b>${esc(b.name)}</b><span>${Math.round(b.massLeft * 100)}% of its mass still attached</span><span>${b.partsLost.length ? 'Lost ' + esc(b.partsLost.join(', ')) : 'No parts lost'}</span><span>${b.hitsTaken} hard hits taken</span></div>`).join('');
   $('events').innerHTML = match.events.map((e, i) => `<li class="${e.type}" data-i="${i}" data-t="${e.t}" tabindex="0"><time>${e.t.toFixed(1)}</time><span><i class="who ${e.bot == null ? '' : TEAM[e.bot]}"></i>${esc(e.text)}</span></li>`).join('');
   const d = duration();
-  $('ticks').innerHTML = match.events.filter((e) => e.type === 'part_lost' || e.type === 'hit' || e.type === 'flipped' || e.type === 'released').map((e) => `<i class="${e.type === 'part_lost' ? 'lost' : ''}" style="left:${(e.t / d) * 100}%"></i>`).join('');
+  $('ticks').innerHTML = match.events.filter((e) => e.type === 'part_lost' || e.type === 'hit' || e.type === 'flipped' || e.type === 'released' || e.type === 'gripped').map((e) => `<i class="${e.type === 'part_lost' ? 'lost' : ''}" style="left:${(e.t / d) * 100}%"></i>`).join('');
   const data = fightData();
   const shown = { ...data, motionTrack: { ...data.motionTrack, samples: data.motionTrack.samples.slice(0, 3).concat([`… ${data.motionTrack.samples.length - 3} more samples; Copy JSON includes them all`]) } };
   $('json').textContent = JSON.stringify(shown, null, 1);
@@ -275,9 +281,9 @@ document.querySelectorAll('.tabs button').forEach((btn) => btn.addEventListener(
   for (const t of ['log', 'bots', 'settings']) $('tab-' + t).hidden = t !== btn.dataset.tab;
 }));
 $('challenge').innerHTML = NAMED.map((c, i) => `<option value="${i}">${esc(c.name)}</option>`).join('') + '<option value="draw">Random round (from seed)</option>';
-$('challenge').value = '3';
+$('challenge').value = '9';
 $('challenge').addEventListener('change', () => { playing = true; runFight(); });
-for (const [id, def] of [['botA', 8], ['botB', 1]]) {
+for (const [id, def] of [['botA', 10], ['botB', 9]]) {
   $(id).innerHTML = ALL.map((r, i) => `<option value="${i}">${esc(r.build.name)}</option>`).join('');
   $(id).value = def;
   $(id).addEventListener('change', () => { playing = true; runFight(); });
