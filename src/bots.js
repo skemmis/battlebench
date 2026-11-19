@@ -71,7 +71,7 @@ export const BULWARK = {
     plate('deck_m', [1.3, 0.06, 0.75], [0, -0.15, 0], 'spine'),
     plate('deck_r', [1.3, 0.06, 0.75], [0, -0.15, -0.8], 'spine'),
     beam('brow', [1.9, 0.14, 0.14], [0, -0.2, 1.3], 'spine', 'steel'),
-    ...[-2, -1, 0, 1, 2].map((i) => ({ id: 'blade_' + (i + 2), type: 'wedge', material: 'steel', size: [0.36, 0.42, 0.5], pos: [i * 0.38, -0.42, 1.62], parent: 'brow', joint: { type: 'hinge', axis: [1, 0, 0], pivot: [i * 0.38, -0.2, 1.38], limits: [-12, 25], spring: 900 } })),
+    ...[-2, -1, 0, 1, 2].map((i) => ({ id: 'blade_' + (i + 2), type: 'wedge', material: 'steel', size: [0.36, 0.34, 0.5], pos: [i * 0.38, -0.27, 1.62], parent: 'brow', joint: { type: 'hinge', axis: [1, 0, 0], pivot: [i * 0.38, -0.2, 1.38], limits: [-45, 45], spring: 350 } })),
     ...['l', 'r'].flatMap((side) => { const sx = side === 'l' ? 1 : -1; return [0, 1, 2].map((i) => plate(`skirt_${side}${i}`, [0.05, 0.3, 0.7], [sx * 1.32, -0.3, -0.8 + i * 0.8], 'rail_' + side, 'plastic')); }),
     block('ballast', [0.5, 0.25, 0.5], [0, -0.02, -0.75], 'deck_r', 'steel'),
   ],
@@ -122,7 +122,7 @@ export function bulwarkProgram(s, out, mem, lib) {
   }
   if (!plan.reachable) {
     // Cannot get onto it. Hold the nearest place I can reach, and say why.
-    const high = lib.floorAt(s, tg.x, tg.z) && lib.heightAt(s, tg.x, tg.z) > lib.heightAt(s, me.x, me.z) + 0.15;
+    const high = lib.floorAt(s, tg.x, tg.z) && lib.stepAt(s, tg.x, tg.z) > lib.stepAt(s, me.x, me.z) + 0.15;
     out.say = high ? 'cannot climb that, holding the foot of it' : 'no way across, holding the nearest ground';
     const n = go(tg.x, tg.z, { stopAt: 0.4 });
     mem.idle = me.speed < 0.15 ? (mem.idle || 0) + 1 : 0;
@@ -215,7 +215,7 @@ export function striderProgram(s, out, mem, lib) {
     } else { const side = me.x >= c.x ? 1 : -1, past = (me.z - c.z) * home < -1.6; aim = { x: past ? c.x : c.x + side * 3, z: c.z - home * 3 }; say = 'getting behind the crate'; }
   } else {
     const tg = s.target; aim = tg;
-    const up = lib.heightAt(s, tg.x, tg.z) - lib.heightAt(s, me.x, me.z);
+    const up = lib.stepAt(s, tg.x, tg.z) - lib.stepAt(s, me.x, me.z);
     say = up > 0.15 ? 'climbing up to the point' : 'walking to the point';
     const foeToT = Math.hypot(foe.x - tg.x, foe.z - tg.z), d = lib.to(s, tg.x, tg.z).distance;
     const path = s.challenge.objective.path;
@@ -510,7 +510,7 @@ export function spanProgram(s, out, mem, lib) {
         if (far === null) { if (!on) far = k; } else if (on && k > Math.max(0, far)) { near = k; break; }
       }
       if (over && near !== null) stop = near;
-      const level = near !== null && lib.heightAt(s, goal.x - d.x * (near + 0.3), goal.z - d.z * (near + 0.3)) === lib.heightAt(s, goal.x - d.x * (far - 0.3), goal.z - d.z * (far - 0.3));
+      const level = near !== null && lib.stepAt(s, goal.x - d.x * (near + 0.3), goal.z - d.z * (near + 0.3)) === lib.stepAt(s, goal.x - d.x * (far - 0.3), goal.z - d.z * (far - 0.3));
       if (near !== null && near - far <= 2.6 && level) {
         const edge = { x: goal.x - d.x * near, z: goal.z - d.z * near };
         mem.plan = { d, gap: near - far, edge, stop, stage: { x: edge.x - d.x * 3.4, z: edge.z - d.z * 3.4 }, heading: Math.atan2(d.x, d.z) };

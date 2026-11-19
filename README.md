@@ -42,7 +42,7 @@ Parts of one machine collide with each other unless they were built touching, so
 
 The program sees everything: both machines' position, speed and heading, every part with its position and whether it is still attached, joint angles, loose parts, the challenge, the target or crate, and the score. It is limited in size (20,000 characters), not in what it can see.
 
-`src/lib.js` is a small helper library passed to every program: bearings and interception, a map of the floor, a route planner that goes round gaps and walls and says when there is no way, and a guard that keeps a machine from driving off an edge. The guard works out braking distance from the round's grip and gravity, and feeds power to the wheels no faster than the ground is passing so they keep their grip. The driving helper also notices when a machine is asking to move and is not moving, and backs it off for another try. Strategy stays in the program.
+`src/lib.js` is a small helper library passed to every program: bearings and interception, a map of the floor, a route planner that goes round gaps and walls and says when there is no way, and a guard that keeps a machine from driving off an edge. The guard works out braking distance from the round's grip and gravity, and feeds power to the wheels no faster than the ground is passing so they keep their grip. The planner refuses slopes steeper than a set grade, less on a slippery surface. The driving helper also notices when a machine is asking to move and is not moving, and backs it off for another try. Strategy stays in the program.
 
 A fight is simulated in full first and then replayed, so the same seed always gives the same fight.
 
@@ -58,6 +58,10 @@ Leverage grows with the distance from the joint to the hit. Sharpness is the spe
 
 A wheel grips according to how hard it is pressed to the floor, which is mostly the weight of the machine above it. (The physics engine on its own uses the wheel's own weight, which left wheels with about a sixth of the grip they should have.) Braking distances now match the textbook figure, v² / 2μg.
 
+### Loose pieces
+
+A piece that breaks off loses its spin quickly, and a motor with no power still resists turning, so broken-off wheels and rails come to rest near where they fell instead of rolling off the floor.
+
 ### Shoving
 
 Two machines of the same weight and grip pushing head on is a deadlock, and it should be. Two things break it. A rubber tyre that is spinning or skidding has 0.6 of the grip of one that is rolling, so a machine that feeds its power in beats one that floors it. And a slow push loads no joints while a blow at speed does, so the machines here back off for a run-up instead of leaning.
@@ -67,7 +71,7 @@ Two machines of the same weight and grip pushing head on is a deadlock, and it s
 A challenge is plain data (`src/challenges.js`), and a program receives it whole as `s.challenge`, with the same conditions in words as `s.challenge.brief`. `drawChallenge(n)` draws round `n` from the family:
 
 - **Floor**: an open square, a small square, two platforms joined by a bridge, two platforms with a gap between them, a square with solid pillars, a square with a raised block in the middle, three islands in a row, or a square crossed by two low ridges that legs step over and wheels have to go round.
-- **Ground**: rough in three rounds out of four, flat in the rest. Rough ground has blocks 0.12 to 0.42 m high scattered over the floor, always with one wide block between each start and the middle, so flat open floor is the exception and a machine has to find or make a way through.
+- **Ground**: flat in about one round in five; otherwise real topography, given as a grid of heights with a post every metre (`s.challenge.terrain`). The kinds are rolling ground, steep hills, a broad hill with the point on top, a ring of high ground with passes through it, and a long ridge with a saddle. The ground is always flat at the starting places and along edges. The physics uses the same grid, so the height a program reads is the height the machine meets.
 - **Surface**: normal, ice, or sticky.
 - **Gravity**: normal, a third, or half again as strong.
 - **Objective**: hold a fixed point, hold a point that circles, hold a point that jumps, or get a crate toward your own end.
@@ -111,6 +115,8 @@ Each fight produces three layers of data: a summary, timestamped events (hits, p
 - Damage is newly tuned (about six parts lost per fight in a sample). A broken joint takes everything beyond it, so a rail goes with its wheels; builds made of longer chains lose bigger pieces.
 - About a third of fights end with both machines standing still, most often when the point is somewhere neither can reach and both sensibly wait.
 - Low gravity is where machines still fall off on their own: braking distances are long and tall machines tip.
-- The wheeled machines here sit low and cannot drive up even a 0.1 m step, so on rough ground they go round every block. A wheeled design with bigger wheels and clearance underneath would do better and has not been built yet.
+- The machines here were designed for flat floors. Bulwark's plough had to be lifted clear of the ground to get onto a slope at all, low frames beach on rounded rises, and the planner uses one slope limit for every machine. None has been redesigned for hills yet.
+- Hills make fights about twice as slow to simulate. The ground is a thin surface, so a fast enough shot could pass through a hillside.
+- A fight replays exactly in one JavaScript engine, but the page in a browser and the scripts in Node can come out differently for the same seed.
 - Wheels are spheres in the physics. The engine is cannon-es, chosen because it is plain JavaScript; friction is corrected on top of it.
 - Compute per tick is not limited yet. There are no hidden test rounds yet.

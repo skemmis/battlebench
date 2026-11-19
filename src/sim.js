@@ -23,7 +23,7 @@ export const CONFIG = {
   // Sharpness: a hit at speedRef m/s counts 1.5x, faster hits count for more.
   // A joint's load = impulse of the whole blow x share of the machine the joint drags x leverage x sharpness.
   // Sharpness is closing speed / speedRef, capped at maxSharp. Blows against the floor count for floorFactor.
-  breakage: { scale: 1, leverLength: 1.0, speedRef: 4, maxSharp: 2.5, floorFactor: 0.4, maxLever: 1.2, window: 0.05, logImpulse: 60 },
+  breakage: { scale: 1, leverLength: 1.0, speedRef: 4, maxSharp: 2.5, floorFactor: 0.4, maxLever: 1.2, window: 0.05, looseSpinLoss: 0.7, deadMotorDrag: 0.3, logImpulse: 60 },
   materials: {
     steel: { density: 780, strength: 1.5, costPerVolume: 70 },
     aluminium: { density: 270, strength: 1.0, costPerVolume: 90 },
@@ -268,6 +268,22 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
   // Every shape carries its own material: the engine only looks up a pair's friction when both shapes have one.
   for (const sl of slabs) { const top = sl.top || 0; const sh = new CANNON.Box(new CANNON.Vec3(sl.w / 2, (cfg.arena.thickness + top) / 2, sl.d / 2)); sh.material = matFloor; floor.addShape(sh, new CANNON.Vec3(sl.x, (top - cfg.arena.thickness) / 2, sl.z)); }
   for (const wl of ch.walls) { const sh = new CANNON.Box(new CANNON.Vec3(wl.w / 2, wl.h / 2, wl.d / 2)); sh.label = 'a wall'; sh.material = matFloor; floor.addShape(sh, new CANNON.Vec3(wl.x, wl.h / 2, wl.z)); }
+  // Topography: one height field per base slab, cut from the challenge's grid of heights. The slab stays
+  // underneath, so flat ground is the slab and the height field only rises out of it.
+  if (ch.terrain) {
+    const t = ch.terrain;
+    for (const sl of slabs) {
+      if (sl.top) continue;
+      const i0 = Math.max(0, Math.ceil((sl.x - sl.w / 2 - t.x0) / t.cell)), i1 = Math.min(t.nx - 1, Math.floor((sl.x + sl.w / 2 - t.x0) / t.cell));
+      const j0 = Math.max(0, Math.ceil((sl.z - sl.d / 2 - t.z0) / t.cell)), j1 = Math.min(t.nz - 1, Math.floor((sl.z + sl.d / 2 - t.z0) / t.cell));
+      if (i1 - i0 < 2 || j1 - j0 < 2) continue;
+      const data = []; let any = false;
+      for (let i = i0; i <= i1; i++) { const col = []; for (let j = j1; j >= j0; j--) { const h = t.heights[j * t.nx + i]; if (h > 0.05) any = true; const k = Math.min(1, h / 0.3); col.push(h - 0.05 * (1 - k * k * (3 - 2 * k))); } data.push(col); }
+      if (!any) continue;
+      const sh = new CANNON.Heightfield(data, { elementSize: t.cell }); sh.material = matFloor;
+      floor.addShape(sh, new CANNON.Vec3(t.x0 + i0 * t.cell, 0, t.z0 + j1 * t.cell), new CANNON.Quaternion().setFromEuler(-Math.PI / 2, 0, 0));
+    }
+  }
   world.addBody(floor);
   // Loose objects that belong to the arena, not to a bot.
   const props = [];
@@ -314,7 +330,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const y = (def.pos ? def.pos[1] : 0) - (def.rot ? Math.max(...specs[k].half) : specs[k].half[1]);
       lowest = Math.min(lowest, y);
     });
-    const origin = new CANNON.Vec3(sp.x, -lowest + 0.02, sp.z);
+    const origin = new CANNON.Vec3(sp.x, -lowest + 0.02 + floorHeight(geo, sp.x, sp.z), sp.z);
     build.parts.forEach((def, k) => {
       const spec = specs[k];
       const lq = new CANNON.Quaternion();
@@ -409,7 +425,8 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       let heavy = list[0];
       for (const p of list) { M += p.mass; com.vadd(p.wpos.scale(p.mass), com); vel.vadd(p.wvel.scale(p.mass), vel); if (p.mass > heavy.mass) heavy = p; }
       com.scale(1 / M, com); vel.scale(1 / M, vel);
-      const body = new CANNON.Body({ mass: M, angularDamping: 0.02, linearDamping: 0.01 });
+      // Loose pieces lose their spin quickly, which stands in for rolling resistance: a broken-off wheel comes to rest instead of rolling away.
+      const body = new CANNON.Body({ mass: M, angularDamping: g.live ? 0.02 : cfg.breakage.looseSpinLoss, linearDamping: 0.01 });
       body.position.copy(com); body.quaternion.copy(g.wquat);
       const qi = g.wquat.inverse();
       for (const p of list) {
@@ -448,7 +465,8 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
         pivotA: A.quaternion.inverse().vmult(pivW.vsub(A.position)), pivotB: B.quaternion.inverse().vmult(pivW.vsub(B.position)),
         axisA: A.quaternion.inverse().vmult(axisW), axisB: B.quaternion.inverse().vmult(axisW), collideConnected: true,
       });
-      if (p.jointType === 'motor' && p.live) { c.enableMotor(); c.setMotorMaxForce(p.torque * dt); /* the solver limits impulse per step, so torque x dt */ c.setMotorSpeed(0); }
+      // A motor with no power still resists being turned, so wheels on a broken-off piece drag instead of freewheeling.
+      if (p.jointType === 'motor') { c.enableMotor(); c.setMotorMaxForce(p.torque * dt * (p.live ? 1 : cfg.breakage.deadMotorDrag)); /* the solver limits impulse per step, so torque x dt */ c.setMotorSpeed(0); }
       c.part = p;
       // The library tunes joint stiffness for 60 steps a second unless told the real step.
       for (const e of c.equations) if (e !== c.motorEquation) e.setSpookParams(1e7, 3, dt);
@@ -698,7 +716,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const up = b.quaternion.vmult(new CANNON.Vec3(0, 1, 0)).y;
       if (!bot.flipped && up < -0.3) { bot.flipped = true; log('flipped', bot.index, `${bot.name} is upside down.`); }
       else if (bot.flipped && up > 0.5) { bot.flipped = false; log('righted', bot.index, `${bot.name} is the right way up again.`); }
-      const high = b.position.y > bot.restHeight + 0.5;
+      const high = b.position.y - floorHeight(geo, b.position.x, b.position.z) > bot.restHeight + 0.5;
       if (high && !bot.airborne && b.position.y > 0) log('airborne', bot.index, `${bot.name} was thrown into the air.`);
       bot.airborne = high;
     }

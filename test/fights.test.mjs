@@ -172,3 +172,43 @@ test('the long machine crosses a gap by shifting its weight, and stops astride o
   const c = createMatch({ builds: [span.build, BRICK], programs: [span.program, idle], seed: 1, challenge: drawChallenge(1, { layout: 'gap', surface: 'ice', gravity: 'low', objective: 'fixed' }) }).run();
   assert.ok(Math.abs(c.bots[0].core.body.position.z) < 1, 'astride the gap on ice in low gravity');
 });
+
+test('most rounds have real topography, and the height a program reads is the height the physics has', () => {
+  const kinds = new Set();
+  for (let n = 1; n <= 40; n++) kinds.add(drawChallenge(n).keys.ground);
+  for (const k of ['flat', 'rolling', 'hills', 'mound']) assert.ok(kinds.has(k), `no ${k} round in the first 40`);
+  const ch = named('King of the hill'), t = ch.terrain;
+  assert.ok(t.max > 1, 'the hill is over a metre high');
+  assert.equal(t.heights.length, t.nx * t.nz);
+  // Flat at the starting places and along the edges.
+  const s = { challenge: ch };
+  for (const sp of ch.spawn) assert.equal(LIB.hillAt(s, sp.x, sp.z), 0);
+  assert.equal(LIB.hillAt(s, 15.5, 0), 0);
+  // A block dropped on the hilltop comes to rest at the height the grid gives.
+  const m = createMatch({ builds: [BRICK, BRICK], programs: [idle, idle], challenge: { ...ch, spawn: [{ x: 0, z: 0 }, { x: 0, z: 10 }] } });
+  while (m.t < 3) m.step();
+  const at = m.bots[0].core.body.position, y = at.y, flat = m.bots[1].core.body.position.y, want = LIB.hillAt(s, at.x, at.z);
+  assert.ok(want > 0.5 && Math.abs(y - flat - want) < 0.15, `rests ${(y - flat).toFixed(2)} m up at (${at.x.toFixed(1)}, ${at.z.toFixed(1)}), grid says ${want.toFixed(2)}`);
+});
+
+test('wheels and legs both climb the hill to the point', () => {
+  for (const name of ['Bulwark', 'Strider', 'Corral']) {
+    const m = createMatch({ builds: [byName(name).build, BRICK], programs: [byName(name).program, idle], challenge: named('King of the hill') });
+    while (!m.done && m.t < 30) m.step();
+    const b = m.bots[0].core.body.position;
+    assert.ok(Math.hypot(b.x, b.z) < 1.5, `${name} ended ${Math.hypot(b.x, b.z).toFixed(1)} m from the hilltop`);
+  }
+});
+
+test('broken-off wheels come to rest instead of rolling away', () => {
+  // Joints made so weak that the machine sheds its wheels as soon as it drives.
+  const config = structuredClone(CONFIG); config.breakage.scale = 0.004; config.match.stalemateSeconds = 99;
+  const m = createMatch({ builds: [byName('Bulwark').build, BRICK], programs: [byName('Bulwark').program, idle], config });
+  while (!m.done && m.t < 12) m.step();
+  const loose = m.bots[0].bodies.filter((b) => !b.live);
+  assert.ok(loose.length >= 3, `only ${loose.length} pieces came off`);
+  for (const b of loose) {
+    assert.ok(b.position.y > -1, `${b.rootPart.id} left the floor`);
+    assert.ok(b.velocity.length() < 0.3, `${b.rootPart.id} is still moving at ${b.velocity.length().toFixed(2)} m/s`);
+  }
+});

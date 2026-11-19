@@ -34,13 +34,13 @@ scene.add(hemi, sun);
 
 const arena = new THREE.Group();
 scene.add(arena);
-let floorMat, wallMat, gridLines, edgeLine, targetRing, propMeshes = [];
+let floorMat, wallMat, gridLines, edgeLine, contourLines, targetRing, propMeshes = [];
 function buildArena() {
   arena.clear();
   const ch = match.challenge, t = cfg.arena.thickness;
   floorMat = new THREE.MeshStandardMaterial({ roughness: ch.surface.grip < 0.5 ? 0.25 : 0.9, metalness: 0.05 });
   wallMat = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.1 });
-  const grid = [], edge = [];
+  const grid = [], edge = []; let contourPts = [];
   for (const sl of ch.floor) {
     const top = sl.top || 0;
     const slab = new THREE.Mesh(new THREE.BoxGeometry(sl.w, t + top, sl.d), floorMat);
@@ -48,14 +48,39 @@ function buildArena() {
     arena.add(slab);
     const x0 = sl.x - sl.w / 2, x1 = sl.x + sl.w / 2, z0 = sl.z - sl.d / 2, z1 = sl.z + sl.d / 2;
     const g = top + 0.005, e = top + 0.01;
-    for (let x = Math.ceil(x0 / 2) * 2; x <= x1; x += 2) grid.push(x, g, z0, x, g, z1);
-    for (let z = Math.ceil(z0 / 2) * 2; z <= z1; z += 2) grid.push(x0, g, z, x1, g, z);
+    // Grid lines follow the ground, so hills read as hills.
+    const hill = ch.terrain && !top, yy = (x, z) => (hill ? floorHeight(ch, x, z) : top) + 0.012;
+    for (let x = Math.ceil(x0 / 2) * 2; x <= x1; x += 2) { if (!hill) { grid.push(x, g, z0, x, g, z1); continue; } for (let z = z0; z < z1; z += 0.5) { const zb = Math.min(z1, z + 0.5); if (yy(x, z) + yy(x, zb) < 0.05) grid.push(x, g, z, x, g, zb); } }
+    for (let z = Math.ceil(z0 / 2) * 2; z <= z1; z += 2) { if (!hill) { grid.push(x0, g, z, x1, g, z); continue; } for (let x = x0; x < x1; x += 0.5) { const xb = Math.min(x1, x + 0.5); if (yy(x, z) + yy(xb, z) < 0.05) grid.push(x, g, z, xb, g, z); } }
     edge.push(x0, e, z0, x1, e, z0, x1, e, z0, x1, e, z1, x1, e, z1, x0, e, z1, x0, e, z1, x0, e, z0);
+  }
+  // Topography: a surface over the grid of heights, shaded by height, drawn only where the ground rises.
+  if (ch.terrain) {
+    const t = ch.terrain, pos = [], col = [], idx = [];
+    const lo = new THREE.Color(css('--floor')), hi = new THREE.Color(css('--hill'));
+    for (let iz = 0; iz < t.nz; iz++) for (let ix = 0; ix < t.nx; ix++) { const h = t.heights[iz * t.nx + ix]; pos.push(t.x0 + ix * t.cell, h + 0.004, t.z0 + iz * t.cell); const c = lo.clone().lerp(hi, Math.min(1, h / Math.max(1.2, t.max))); col.push(c.r, c.g, c.b); }
+    for (let iz = 0; iz < t.nz - 1; iz++) for (let ix = 0; ix < t.nx - 1; ix++) { const a = iz * t.nx + ix, b = a + 1, c = a + t.nx, d = c + 1; if (Math.max(t.heights[a], t.heights[b], t.heights[c], t.heights[d]) < 0.01) continue; idx.push(a, c, b, b, c, d); }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+    const land = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 }));
+    land.receiveShadow = true; land.castShadow = true; arena.add(land);
+    // Contour lines every quarter metre, cut from the same triangles the physics uses.
+    const cont = [], P = (i) => [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]];
+    for (let k = 0; k < idx.length; k += 3) {
+      const tri = [P(idx[k]), P(idx[k + 1]), P(idx[k + 2])], lo2 = Math.min(tri[0][1], tri[1][1], tri[2][1]), hi2 = Math.max(tri[0][1], tri[1][1], tri[2][1]);
+      for (let lv = Math.ceil(lo2 / 0.25) * 0.25 + 0.001; lv < hi2; lv += 0.25) {
+        const cut = [];
+        for (let e = 0; e < 3; e++) { const a = tri[e], b = tri[(e + 1) % 3]; if ((a[1] - lv) * (b[1] - lv) < 0) { const f = (lv - a[1]) / (b[1] - a[1]); cut.push(a[0] + (b[0] - a[0]) * f, lv + 0.015, a[2] + (b[2] - a[2]) * f); } }
+        if (cut.length === 6) cont.push(...cut);
+      }
+    }
+    contourPts = cont;
   }
   const lines = (pts, mat) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); return new THREE.LineSegments(g, mat); };
   gridLines = lines(grid, new THREE.LineBasicMaterial({ transparent: true, opacity: 0.5 }));
   edgeLine = lines(edge, new THREE.LineBasicMaterial());
   arena.add(gridLines, edgeLine);
+  if (contourPts.length) { contourLines = lines(contourPts, new THREE.LineBasicMaterial({ transparent: true, opacity: 0.75 })); arena.add(contourLines); } else contourLines = null;
   for (const wl of ch.walls) {
     const wall = new THREE.Mesh(new THREE.BoxGeometry(wl.w, wl.h, wl.d), wallMat);
     wall.position.set(wl.x, wl.h / 2, wl.z); wall.castShadow = true; wall.receiveShadow = true;
@@ -129,7 +154,7 @@ function applyTheme() {
     if (match && match.challenge.surface.grip < 0.5) floorMat.color.lerp(new THREE.Color(0x9fd0ee), 0.45);
     if (match && match.challenge.surface.slide > 1.5) floorMat.color.lerp(new THREE.Color(0x8a6f3c), 0.35);
     wallMat.color.set(css('--grid'));
-    gridLines.material.color.set(css('--grid'));
+    gridLines.material.color.set(css('--grid')); if (contourLines) contourLines.material.color.set(css('--contour'));
     edgeLine.material.color.set(css('--warn'));
     if (targetRing) targetRing.material.color.set(css('--warn'));
     propMeshes.forEach((mesh) => mesh.material.color.set(0xc9a35c));
@@ -293,7 +318,9 @@ const SHOWS = [
   { label: 'The pen', a: 'Corral', b: 'Bulwark', ch: 'Bring it home', seed: 1, watch: 'Both want the crate. Corral drives its pen over it, shuts the gates and hauls it home. Bulwark has to get behind it and shove.' },
   { label: 'The climb', a: 'Strider', b: 'Bulwark', ch: 'The plinth', seed: 1, watch: 'The point is on a raised block. Wheels cannot climb it. Legs can.' },
   { label: 'Over the ridges', a: 'Strider', b: 'Bulwark', ch: 'Ridges', seed: 1, watch: 'Two low ridges cross the floor, each with one opening. Strider steps straight over them. Wheels have to find a way round or risk bashing over, and then the two contest the point.' },
-  { label: 'Rough ground', a: 'Strider', b: 'Bulwark', ch: 'Rough ground', seed: 1, watch: 'Most rounds now have blocks of different heights scattered over the floor, so there is no straight run to the point. Each machine maps the blocks and plans a route it can fit through, and backs off and tries again if its nose jams.' },
+  { label: 'King of the hill', a: 'Strider', b: 'Bulwark', ch: 'King of the hill', seed: 1, watch: 'The point is on top of a broad hill. Both machines have to climb to it and then hold the top against each other.' },
+  { label: 'The ridge', a: 'Strider', b: 'Corral', ch: 'The ridge', seed: 1, watch: 'A long ridge lies between the two starts, too steep to drive straight up, with a low saddle somewhere along it. Each machine reads the heights and plans a way it can climb.' },
+  { label: 'Hill country', a: 'Mangonel', b: 'Span', ch: 'Hill country', seed: 1, watch: 'Steep hills and a point that jumps. The planner goes round slopes a machine cannot hold, so the quickest way is rarely straight.' },
   { label: 'Run-up', a: 'Bulwark', b: 'Corral', ch: 'Open floor', seed: 1, watch: 'Two heavy machines of the same weight cannot push each other. So Bulwark does not lean on Corral: it backs off for a run-up and hits again at speed, and it is Bulwark that comes off worse.' },
   { label: 'On ice', a: 'Bulwark', b: 'Corral', ch: 'Ice', seed: 1, watch: 'A quarter of the usual grip. Each machine measures how slowly it is picking up speed and brakes early to match.' },
   { label: 'Coming apart', a: 'Strider', b: 'Mangonel', ch: 'Wandering point', seed: 3, watch: 'Hits take pieces off. A joint gives way when the whole blow, at the speed the parts met, is more than it can carry, and the joint nearest the blow goes first.' },

@@ -5,17 +5,17 @@
 /* Layout: a workbench. The arena is the bench top on the left; the clipboard (log, builds, settings) hangs on the right. */
 :root {
   --bg: #e9ecf1; --surface: #f7f8fa; --raised: #ffffff; --ink: #18202c; --muted: #5b6676; --line: #cfd5de;
-  --team-a: #d9530b; --team-b: #1763c6; --warn: #b4290f; --stage: #dfe4ec; --floor: #aeb7c4; --grid: #8d98a8; --pit: #c9d0db;
+  --team-a: #d9530b; --team-b: #1763c6; --warn: #b4290f; --stage: #dfe4ec; --floor: #aeb7c4; --hill: #7c9468; --contour: #4a6040; --grid: #8d98a8; --pit: #c9d0db;
   --display: 'Space Grotesk', 'Avenir Next', system-ui, sans-serif;
   --body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #12161d; --surface: #1a2029; --raised: #222a35; --ink: #e8ecf2; --muted: #98a3b3; --line: #323c4a;
-  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --grid: #566273; --pit: #07090c; color-scheme: dark } }
+  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --hill: #6d8759; --contour: #b4cc9c; --grid: #566273; --pit: #07090c; color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #12161d; --surface: #1a2029; --raised: #222a35; --ink: #e8ecf2; --muted: #98a3b3; --line: #323c4a;
-  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --grid: #566273; --pit: #07090c; color-scheme: dark }
+  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --hill: #6d8759; --contour: #b4cc9c; --grid: #566273; --pit: #07090c; color-scheme: dark }
 * { box-sizing: border-box }
 [hidden] { display: none !important }
 body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.5 }
@@ -146,6 +146,8 @@ import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cann
 //
 //   floor      slabs: { x, z, w, d, top } (centre, width along x, depth along z, height of the top, 0 if absent)
 //   walls      solid blocks standing on the floor: { x, z, w, d, h }
+//   terrain    topography on the base floor, or null: { cell, x0, z0, nx, nz, max, heights } where heights[iz * nx + ix]
+//              is the height of the ground at (x0 + ix * cell, z0 + iz * cell)
 //   surface    multipliers on floor friction: grip (rubber and wheels) and slide (everything else)
 //   gravity    multiplier on normal gravity
 //   spawn      where each bot's core starts; bot 0's home end is -z, bot 1's is +z
@@ -216,6 +218,59 @@ const GRAVITIES = {
 };
 
 // Draw one challenge from the family. The same seed always gives the same challenge.
+const GROUNDS = {
+  rolling: 'The ground rolls: low rounded rises and dips all over the floor.',
+  hills: 'There are hills on the floor, some too steep to drive straight up.',
+  mound: 'The middle of the floor is a broad hill.',
+  basin: 'A ring of high ground surrounds the middle, with passes through it.',
+  ridge: 'A long ridge runs across the floor between the two starting places, with a low saddle somewhere along it.',
+};
+// Topography as a grid of heights with posts every metre. It is built from smooth rounded bumps and is flat
+// at the starting places, along every edge and around anything standing on the floor.
+function drawTerrain(L, kind, r, spawnZ, crate) {
+  const base = L.floor.filter((f) => !f.top && Math.min(f.w, f.d) >= 9);
+  if (!base.length) return null;
+  const bumps = [], add = (x, z, h, rx, rz = rx, rot = 0) => bumps.push({ x, z, h, rx, rz, c: Math.cos(rot), s: Math.sin(rot) });
+  const scatter = (f, n, h0, h1, r0, r1) => { for (let i = 0; i < n; i++) add(f.x + (r() - 0.5) * (f.w - 4), f.z + (r() - 0.5) * (f.d - 4), h0 + r() * (h1 - h0), r0 + r() * (r1 - r0), r0 + r() * (r1 - r0), r() * 3.14); };
+  for (const f of base) {
+    const area = f.w * f.d, half = Math.min(f.w, f.d) / 2, mid = Math.abs(f.x) < f.w / 2 - 3 && Math.abs(f.z) < f.d / 2 - 3;
+    if (kind === 'rolling') scatter(f, Math.round(area / 35), 0.3, 0.8, 3, 5.5);
+    else if (kind === 'hills' || !mid) scatter(f, Math.round(area / 110) + 2, 0.9, 1.9, 3.2, 5.5);
+    else if (kind === 'mound') { add(0, 0, 1.2 + r() * 0.8, Math.min(8, half * 0.6)); scatter(f, Math.round(area / 150), 0.4, 1, 3, 5); }
+    else if (kind === 'basin') {
+      const ring = Math.min(8, half * 0.55), n = 10, gap = Math.floor(r() * n), gap2 = (gap + 4 + Math.floor(r() * 3)) % n;
+      for (let i = 0; i < n; i++) if (i !== gap && i !== gap2) add(Math.cos((i / n) * 6.283) * ring, Math.sin((i / n) * 6.283) * ring, 1.1 + r() * 0.7, 3 + r() * 0.8);
+    } else if (kind === 'ridge') {
+      const zr = (r() - 0.5) * 3, h = 1.2 + r() * 0.7;
+      add(f.x, zr, h, f.w * 0.5, 2.6 + r() * 1.2);
+      add(f.x + (r() - 0.5) * (f.w - 10), zr, -h * (0.6 + r() * 0.25), 2.5 + r() * 1, 4);
+      scatter(f, Math.round(area / 200), 0.4, 0.9, 3, 5);
+    }
+  }
+  const ease = (v) => { v = Math.max(0, Math.min(1, v)); return v * v * (3 - 2 * v); };
+  const away = (o, x, z, h) => Math.hypot(Math.max(0, Math.abs(x - o.x) - o.w / 2), Math.max(0, Math.abs(z - o.z) - (h ? o.d : o.d) / 2));
+  const height = (x, z) => {
+    let inside = -1;
+    for (const f of base) inside = Math.max(inside, Math.min(f.w / 2 - Math.abs(x - f.x), f.d / 2 - Math.abs(z - f.z)));
+    if (inside <= 1) return 0;
+    let h = 0;
+    for (const b of bumps) { const dx = x - b.x, dz = z - b.z, u = (dx * b.c + dz * b.s) / b.rx, v = (-dx * b.s + dz * b.c) / b.rz, q = Math.hypot(u, v); if (q < 1) h += b.h * 0.5 * (1 + Math.cos(Math.PI * q)); }
+    let k = ease((inside - 1) / 2.5) * ease((Math.hypot(x, Math.abs(z) - spawnZ) - 2) / 2.5);
+    for (const o of L.floor) if (o.top) k *= ease((away(o, x, z) - 1) / 2);
+    for (const o of L.walls) k *= ease((away(o, x, z) - 1) / 2);
+    if (crate) k *= ease((Math.hypot(x, z) - 1.5) / 2);
+    return Math.max(0, h) * k;
+  };
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const f of base) { x0 = Math.min(x0, f.x - f.w / 2); x1 = Math.max(x1, f.x + f.w / 2); z0 = Math.min(z0, f.z - f.d / 2); z1 = Math.max(z1, f.z + f.d / 2); }
+  x0 = Math.floor(x0); z0 = Math.floor(z0);
+  const nx = Math.ceil(x1) - x0 + 1, nz = Math.ceil(z1) - z0 + 1, heights = [];
+  let max = 0;
+  for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) { const h = chRound(height(x0 + ix, z0 + iz)); heights.push(h); max = Math.max(max, h); }
+  if (max < 0.2) return null;
+  return { cell: 1, x0, z0, nx, nz, max, heights };
+}
+
 function drawChallenge(seed, force = {}) {
   const r = chRng(seed * 7919 + 13);
   const pick = (obj, weights) => { const keys = Object.keys(weights); let t = r() * keys.reduce((n, k) => n + weights[k], 0); for (const k of keys) { t -= weights[k]; if (t <= 0) return k; } return keys[0]; };
@@ -246,34 +301,19 @@ function drawChallenge(seed, force = {}) {
     text = `A ${mass} kg crate starts ${L.where || 'in the middle'}. Whoever has it nearer their own end when the round stops wins.`;
   }
   const spawnZ = chRound(L.spawnZ);
-  // Ground. Most rounds are rough: low blocks scattered over the floor. Legs step over them; wheels have to go
-  // round, or risk bashing over the lower ones. Drawn last, so it does not change what the rest of a round is.
-  const groundKey = force.ground || (force.layout ? 'flat' : pick({}, { rough: 3, flat: 1 }));
-  let floor = L.floor, groundText = '';
-  if (groundKey === 'rough') {
-    const blocks = [], base = L.floor.filter((f) => !f.top && Math.min(f.w, f.d) >= 9);
-    // One wide block goes squarely between each starting place and the middle, so the straight line is never free.
-    if (!L.split && !L.narrow && spawnZ > 7) for (const sgn of [-1, 1]) { const zz = chRound(sgn * spawnZ * (0.45 + r() * 0.15)); if (!L.floor.some((o) => o.top && Math.abs(zz - o.z) < o.d / 2 + 1.5 && Math.abs(o.x) < o.w / 2 + 2)) blocks.push({ x: chRound((r() - 0.5) * 1.5), z: zz, w: chRound(2.6 + r() * 1.4), d: chRound(0.8 + r() * 0.6), top: chRound(0.28 + r() * 0.14), on: null }); }
-    for (const f of base) {
-      const want = Math.min(22, Math.round((f.w * f.d) / 45));
-      for (let tries = 0; tries < want * 6 && blocks.filter((b) => b.on === f).length < want; tries++) {
-        const w = chRound(1 + r() * 1.6), d = chRound(1 + r() * 1.6), top = chRound(0.12 + r() * 0.3);
-        const x = chRound(f.x + (r() - 0.5) * (f.w - w - 2)), z = chRound(f.z + (r() - 0.5) * (f.d - d - 2));
-        if (Math.hypot(x, Math.abs(z) - spawnZ) < 4.5) continue;                      // leave the starting places clear
-        if (Math.hypot(x, z) < 2.5 + Math.max(w, d) / 2) continue;                    // and the middle
-        if (L.floor.some((o) => o.top && Math.abs(x - o.x) < (w + o.w) / 2 + 1 && Math.abs(z - o.z) < (d + o.d) / 2 + 1)) continue;
-        if (L.walls.some((o) => Math.abs(x - o.x) < (w + o.w) / 2 + 1 && Math.abs(z - o.z) < (d + o.d) / 2 + 1)) continue;
-        if (blocks.some((o) => Math.abs(x - o.x) < (w + o.w) / 2 + 3.4 && Math.abs(z - o.z) < (d + o.d) / 2 + 3.4)) continue;
-        blocks.push({ x, z, w, d, top, on: f });
-      }
-    }
-    floor = [...L.floor, ...blocks.map(({ x, z, w, d, top }) => ({ x, z, w, d, top }))];
-    if (blocks.length) groundText = `The ground is rough: ${blocks.length} low blocks, from ${Math.min(...blocks.map((b) => b.top))} to ${Math.max(...blocks.map((b) => b.top))} m high, are scattered over it.`;
+  // Ground. Most rounds have real topography: hills, ridges, basins or rolling ground, as a grid of heights.
+  // Drawn last, so it does not change what the rest of a round is.
+  const groundKey = force.ground || (force.layout ? 'flat' : pick({}, { rolling: 2, hills: 2, mound: 2, basin: 1, ridge: 1, flat: 2 }));
+  let terrain = null, groundText = '';
+  if (groundKey !== 'flat') {
+    terrain = drawTerrain(L, groundKey, r, spawnZ, objKey === 'deliver');
+    if (terrain) groundText = `${GROUNDS[groundKey]} The highest ground is ${terrain.max} m above the flat. The heights are in the terrain grid, one every ${terrain.cell} m.`;
   }
+  const floor = L.floor;
   const brief = [`The arena is ${L.text}.`, groundText, S.text, G.text, text].filter(Boolean).join(' ');
   return {
     name: `Round ${seed}`, brief, keys: { layout: layoutKey, ground: groundKey, surface: surfaceKey, gravity: gravityKey, objective: objKey },
-    floor, walls: L.walls, surface: { grip: S.grip, slide: S.slide }, gravity: G.g,
+    floor, walls: L.walls, terrain, surface: { grip: S.grip, slide: S.slide }, gravity: G.g,
     spawn: [{ x: 0, z: -spawnZ }, { x: 0, z: spawnZ }], objective,
   };
 }
@@ -287,12 +327,22 @@ function targetAt(ch, t) {
   return { x: p.x, z: p.z };
 }
 
-// Height of the floor under a point (0 on the plain floor, more on a raised block).
-function floorHeight(ch, x, z) {
+// Height of a flat-topped slab under a point (0 on the base floor, more on a raised block), without the terrain.
+function slabHeight(ch, x, z) {
   let h = 0;
   for (const s of ch.floor) if (Math.abs(x - s.x) <= s.w / 2 && Math.abs(z - s.z) <= s.d / 2) h = Math.max(h, s.top || 0);
   return h;
 }
+// Height of the terrain at a point, read off the grid of heights between its four nearest posts.
+function terrainHeight(ch, x, z) {
+  const t = ch.terrain; if (!t) return 0;
+  const fx = (x - t.x0) / t.cell, fz = (z - t.z0) / t.cell, ix = Math.floor(fx), iz = Math.floor(fz);
+  if (ix < 0 || iz < 0 || ix >= t.nx - 1 || iz >= t.nz - 1) return 0;
+  const u = fx - ix, v = fz - iz, H = t.heights, k = iz * t.nx + ix;
+  return H[k] * (1 - u) * (1 - v) + H[k + 1] * u * (1 - v) + H[k + t.nx] * (1 - u) * v + H[k + t.nx + 1] * u * v;
+}
+// Height of the ground under a point: the slab plus any terrain on it.
+function floorHeight(ch, x, z) { return slabHeight(ch, x, z) + terrainHeight(ch, x, z); }
 function onFloor(ch, x, z) {
   for (const s of ch.floor) if (Math.abs(x - s.x) <= s.w / 2 && Math.abs(z - s.z) <= s.d / 2) return true;
   return false;
@@ -321,8 +371,12 @@ const NAMED = [
   { ...drawChallenge(108, { layout: 'small', surface: 'ice', gravity: 'normal', objective: 'deliver' }), name: 'Crate on ice' },
   { ...drawChallenge(109, { layout: 'plinth', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'The plinth' },
   { ...drawChallenge(113, { layout: 'ridges', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Ridges' },
-  { ...drawChallenge(121, { layout: 'open', ground: 'rough', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Rough ground' },
-  { ...drawChallenge(122, { layout: 'open', ground: 'rough', surface: 'normal', gravity: 'normal', objective: 'jump' }), name: 'Rough ground, jumping point' },
+  { ...drawChallenge(121, { layout: 'open', ground: 'rolling', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Rolling ground' },
+  { ...drawChallenge(122, { layout: 'open', ground: 'mound', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'King of the hill' },
+  { ...drawChallenge(123, { layout: 'open', ground: 'hills', surface: 'normal', gravity: 'normal', objective: 'jump' }), name: 'Hill country' },
+  { ...drawChallenge(124, { layout: 'open', ground: 'basin', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'The basin' },
+  { ...drawChallenge(125, { layout: 'open', ground: 'ridge', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'The ridge' },
+  { ...drawChallenge(126, { layout: 'open', ground: 'hills', surface: 'ice', gravity: 'normal', objective: 'fixed' }), name: 'Icy hills' },
   { ...drawChallenge(110, { layout: 'islands', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Islands' },
   { ...drawChallenge(111, { layout: 'plinth', surface: 'normal', gravity: 'normal', objective: 'deliver' }), name: 'Crate on the plinth' },
 ];
@@ -349,13 +403,25 @@ const LIB = {
   },
   // Is there floor under this point, and how high is it?
   floorAt(s, x, z) { for (const f of s.challenge.floor) if (Math.abs(x - f.x) <= f.w / 2 && Math.abs(z - f.z) <= f.d / 2) return true; return false; },
-  heightAt(s, x, z) { let h = 0; for (const f of s.challenge.floor) if (Math.abs(x - f.x) <= f.w / 2 && Math.abs(z - f.z) <= f.d / 2) h = Math.max(h, f.top || 0); return h; },
+  // How high the ground is at a point: the slab plus any hills on it.
+  heightAt(s, x, z) { return LIB.stepAt(s, x, z) + LIB.hillAt(s, x, z); },
+  hillAt(s, x, z) {
+    const t = s.challenge.terrain; if (!t) return 0;
+    const fx = (x - t.x0) / t.cell, fz = (z - t.z0) / t.cell, ix = Math.floor(fx), iz = Math.floor(fz);
+    if (ix < 0 || iz < 0 || ix >= t.nx - 1 || iz >= t.nz - 1) return 0;
+    const u = fx - ix, v = fz - iz, H = t.heights, k = iz * t.nx + ix;
+    return H[k] * (1 - u) * (1 - v) + H[k + 1] * u * (1 - v) + H[k + t.nx] * (1 - u) * v + H[k + t.nx + 1] * u * v;
+  },
+  // The slope of the ground along a world direction at a point: rise over run, uphill positive.
+  gradeAt(s, x, z, dx, dz) { const n = Math.hypot(dx, dz) || 1, e = 0.5; return (LIB.hillAt(s, x + (dx / n) * e, z + (dz / n) * e) - LIB.hillAt(s, x - (dx / n) * e, z - (dz / n) * e)) / (2 * e); },
+  // How high a flat-topped slab stands at a point, ignoring hills: steps are what a machine has to climb in one go.
+  stepAt(s, x, z) { let h = 0; for (const f of s.challenge.floor) if (Math.abs(x - f.x) <= f.w / 2 && Math.abs(z - f.z) <= f.d / 2) h = Math.max(h, f.top || 0); return h; },
   inWall(s, x, z, margin = 0) { for (const w of s.challenge.walls) if (Math.abs(x - w.x) <= w.w / 2 + margin && Math.abs(z - w.z) <= w.d / 2 + margin) return true; return false; },
   // How far the floor runs from a point along a world direction before a drop, a wall or a step up, up to max.
   // "climb" is the highest step up the machine can take in its stride.
   run(s, x, z, dx, dz, max = 6, margin = 0.8, climb = 0.15) {
-    const h0 = LIB.heightAt(s, x, z), n = Math.hypot(dx, dz) || 1;
-    for (let d = 0.25; d <= max; d += 0.25) { const px = x + (dx / n) * d, pz = z + (dz / n) * d; if (!LIB.floorAt(s, px, pz) || LIB.inWall(s, px, pz, margin) || LIB.heightAt(s, px, pz) > h0 + climb) return d - 0.25; }
+    const h0 = LIB.stepAt(s, x, z), n = Math.hypot(dx, dz) || 1;
+    for (let d = 0.25; d <= max; d += 0.25) { const px = x + (dx / n) * d, pz = z + (dz / n) * d; if (!LIB.floorAt(s, px, pz) || LIB.inWall(s, px, pz, margin) || LIB.stepAt(s, px, pz) > h0 + climb) return d - 0.25; }
     return max;
   },
   // How far the floor runs ahead of the machine along a bearing relative to its nose.
@@ -386,10 +452,10 @@ const LIB = {
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (const f of ch.floor) { x0 = Math.min(x0, f.x - f.w / 2); x1 = Math.max(x1, f.x + f.w / 2); z0 = Math.min(z0, f.z - f.d / 2); z1 = Math.max(z1, f.z + f.d / 2); }
     const nx = Math.ceil((x1 - x0) / C), nz = Math.ceil((z1 - z0) / C), n = nx * nz;
-    const h = new Float32Array(n), edge = new Float32Array(n).fill(99), queue = [];
+    const h = new Float32Array(n), y = new Float32Array(n), edge = new Float32Array(n).fill(99), queue = [];
     for (let i = 0; i < n; i++) {
       const x = x0 + ((i % nx) + 0.5) * C, z = z0 + (Math.floor(i / nx) + 0.5) * C;
-      if (!LIB.floorAt(s, x, z) || LIB.inWall(s, x, z)) { h[i] = -1; edge[i] = 0; queue.push(i); } else h[i] = LIB.heightAt(s, x, z);
+      if (!LIB.floorAt(s, x, z) || LIB.inWall(s, x, z)) { h[i] = -1; edge[i] = 0; queue.push(i); } else { h[i] = LIB.stepAt(s, x, z); y[i] = LIB.hillAt(s, x, z); }
     }
     // Squares on the rim of the map border the void too.
     for (let i = 0; i < n; i++) if (h[i] >= 0) { const cx = i % nx, cz = Math.floor(i / nx); if (cx === 0 || cz === 0 || cx === nx - 1 || cz === nz - 1) { edge[i] = C / 2; queue.push(i); } }
@@ -401,7 +467,7 @@ const LIB = {
         if (d < edge[j]) { edge[j] = d; queue.push(j); }
       }
     }
-    g = { x0, z0, nx, nz, C, h, edge, steps: new Map(), cell: (x, z) => { const cx = Math.floor((x - x0) / C), cz = Math.floor((z - z0) / C); return cx < 0 || cz < 0 || cx >= nx || cz >= nz ? -1 : cz * nx + cx; }, pos: (i) => ({ x: x0 + ((i % nx) + 0.5) * C, z: z0 + (Math.floor(i / nx) + 0.5) * C }) };
+    g = { x0, z0, nx, nz, C, h, y, edge, steps: new Map(), cell: (x, z) => { const cx = Math.floor((x - x0) / C), cz = Math.floor((z - z0) / C); return cx < 0 || cz < 0 || cx >= nx || cz >= nz ? -1 : cz * nx + cx; }, pos: (i) => ({ x: x0 + ((i % nx) + 0.5) * C, z: z0 + (Math.floor(i / nx) + 0.5) * C }) };
     LIB_GRIDS.set(s.challenge, g);
     return g;
   },
@@ -424,7 +490,10 @@ const LIB = {
   // Plan a way across the floor to (x, z), keeping "margin" metres from drops and walls and taking no step up
   // higher than "climb". Returns the next point to steer for, the place the plan ends, and whether that is the
   // goal itself. If the goal cannot be reached, the plan ends at the nearest place that can.
-  plan(s, x, z, { margin = 1.5, climb = 0.15 } = {}) {
+  // "grade" is the steepest slope it will take uphill (rise over run); it is cut down on a slippery surface,
+  // where wheels cannot hold a steep slope.
+  plan(s, x, z, { margin = 1.5, climb = 0.15, grade = 0.5 } = {}) {
+    grade = Math.min(grade, 0.75 * s.challenge.surface.grip);
     const g = LIB.grid(s), start = g.cell(s.self.x, s.self.z);
     if (start < 0 || g.h[start] < 0) return { x, z, end: { x, z }, reachable: false, off: true, left: 0 };
     // Keep clear of steps too high to climb as well, by the same margin.
@@ -438,6 +507,7 @@ const LIB = {
         const ax = cx + dx, az = cz + dz; if ((!dx && !dz) || ax < 0 || az < 0 || ax >= g.nx || az >= g.nz) continue;
         const j = az * g.nx + ax;
         if (from[j] !== -2 || g.h[j] < 0 || g.h[j] - g.h[i] > climb) continue;
+        if (g.y[j] - g.y[i] > grade * g.C * (dx && dz ? 1.41 : 1) && g.y[j] > g.y[start] - 0.3) continue;
         // Keep the margin, except that a machine already inside it may move toward open floor.
         if (g.edge[j] < margin && !(g.edge[i] < margin && g.edge[j] > g.edge[i])) continue;
         if (step[j] < side && !(step[i] < side && step[j] > step[i])) continue;
@@ -447,11 +517,11 @@ const LIB = {
       }
     }
     // A goal on the floor but inside the margin counts as reached from the nearest safe spot beside it.
-    const reachable = bestD < 0.6 || (LIB.floorAt(s, x, z) && !LIB.inWall(s, x, z) && bestD <= margin + 0.8 && Math.abs(LIB.heightAt(s, x, z) - g.h[best]) <= climb), end = bestD < 0.6 ? { x, z } : g.pos(best);
+    const reachable = bestD < 0.6 || (LIB.floorAt(s, x, z) && !LIB.inWall(s, x, z) && bestD <= margin + 0.8 && Math.abs(LIB.stepAt(s, x, z) - g.h[best]) <= climb), end = bestD < 0.6 ? { x, z } : g.pos(best);
     // Walk the plan back from its end and steer for the furthest point on it that is in a straight clear line.
     const chain = []; for (let i = best; i !== -1 && i !== -2; i = from[i]) chain.push(i);
     // A straight run to a point on the plan must also keep its distance from steps too high to climb.
-    const wide = (p) => { const d = Math.hypot(p.x - s.self.x, p.z - s.self.z); for (let t = 1; t < d; t += 0.4) { const c = g.cell(s.self.x + ((p.x - s.self.x) * t) / d, s.self.z + ((p.z - s.self.z) * t) / d); if (c >= 0 && step[c] < side && step[c] < step[start]) return false; } return true; };
+    const wide = (p) => { const d = Math.hypot(p.x - s.self.x, p.z - s.self.z); for (let t = 1; t < d; t += 0.4) { const c = g.cell(s.self.x + ((p.x - s.self.x) * t) / d, s.self.z + ((p.z - s.self.z) * t) / d); if (c >= 0 && step[c] < side && step[c] < step[start]) return false; } if (s.challenge.terrain) for (let t = 0.5; t < d; t += 0.5) { const f0 = (t - 0.5) / d, f1 = t / d; if (LIB.hillAt(s, s.self.x + (p.x - s.self.x) * f1, s.self.z + (p.z - s.self.z) * f1) - LIB.hillAt(s, s.self.x + (p.x - s.self.x) * f0, s.self.z + (p.z - s.self.z) * f0) > grade * 0.5) return false; } return true; };
     let way = end, left = 0;
     for (let k = 0; k < chain.length; k++) {
       const p = k === 0 ? end : g.pos(chain[k]);
@@ -496,8 +566,8 @@ const LIB = {
   // Drive to (x, z) and stay on the floor. Plans a way round gaps and walls, slows for corners and on arrival,
   // and brakes in time for an edge, allowing for how slippery the floor is and how long the machine is.
   // Returns { drive, turn, arrived, reachable, braking, left } where left is the distance still to go.
-  nav(s, x, z, { margin = 1.5, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null, feed = true } = {}) {
-    const me = s.self, p = LIB.plan(s, x, z, { margin, climb });
+  nav(s, x, z, { margin = 1.5, grade = 0.5, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null, feed = true } = {}) {
+    const me = s.self, p = LIB.plan(s, x, z, { margin, climb, grade });
     const w = LIB.to(s, p.x, p.z), endD = Math.hypot(p.end.x - me.x, p.end.z - me.z), last = Math.hypot(p.x - p.end.x, p.z - p.end.z) < 0.3;
     // Once arrived, stay arrived until well off the spot, so the machine does not fidget.
     const held = mem && mem._at && Math.hypot(mem._at.x - p.end.x, mem._at.z - p.end.z) < 0.5 && endD < stopAt * 3 + 0.3;
@@ -551,7 +621,7 @@ const CONFIG = {
   // Sharpness: a hit at speedRef m/s counts 1.5x, faster hits count for more.
   // A joint's load = impulse of the whole blow x share of the machine the joint drags x leverage x sharpness.
   // Sharpness is closing speed / speedRef, capped at maxSharp. Blows against the floor count for floorFactor.
-  breakage: { scale: 1, leverLength: 1.0, speedRef: 4, maxSharp: 2.5, floorFactor: 0.4, maxLever: 1.2, window: 0.05, logImpulse: 60 },
+  breakage: { scale: 1, leverLength: 1.0, speedRef: 4, maxSharp: 2.5, floorFactor: 0.4, maxLever: 1.2, window: 0.05, looseSpinLoss: 0.7, deadMotorDrag: 0.3, logImpulse: 60 },
   materials: {
     steel: { density: 780, strength: 1.5, costPerVolume: 70 },
     aluminium: { density: 270, strength: 1.0, costPerVolume: 90 },
@@ -796,6 +866,22 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
   // Every shape carries its own material: the engine only looks up a pair's friction when both shapes have one.
   for (const sl of slabs) { const top = sl.top || 0; const sh = new CANNON.Box(new CANNON.Vec3(sl.w / 2, (cfg.arena.thickness + top) / 2, sl.d / 2)); sh.material = matFloor; floor.addShape(sh, new CANNON.Vec3(sl.x, (top - cfg.arena.thickness) / 2, sl.z)); }
   for (const wl of ch.walls) { const sh = new CANNON.Box(new CANNON.Vec3(wl.w / 2, wl.h / 2, wl.d / 2)); sh.label = 'a wall'; sh.material = matFloor; floor.addShape(sh, new CANNON.Vec3(wl.x, wl.h / 2, wl.z)); }
+  // Topography: one height field per base slab, cut from the challenge's grid of heights. The slab stays
+  // underneath, so flat ground is the slab and the height field only rises out of it.
+  if (ch.terrain) {
+    const t = ch.terrain;
+    for (const sl of slabs) {
+      if (sl.top) continue;
+      const i0 = Math.max(0, Math.ceil((sl.x - sl.w / 2 - t.x0) / t.cell)), i1 = Math.min(t.nx - 1, Math.floor((sl.x + sl.w / 2 - t.x0) / t.cell));
+      const j0 = Math.max(0, Math.ceil((sl.z - sl.d / 2 - t.z0) / t.cell)), j1 = Math.min(t.nz - 1, Math.floor((sl.z + sl.d / 2 - t.z0) / t.cell));
+      if (i1 - i0 < 2 || j1 - j0 < 2) continue;
+      const data = []; let any = false;
+      for (let i = i0; i <= i1; i++) { const col = []; for (let j = j1; j >= j0; j--) { const h = t.heights[j * t.nx + i]; if (h > 0.05) any = true; const k = Math.min(1, h / 0.3); col.push(h - 0.05 * (1 - k * k * (3 - 2 * k))); } data.push(col); }
+      if (!any) continue;
+      const sh = new CANNON.Heightfield(data, { elementSize: t.cell }); sh.material = matFloor;
+      floor.addShape(sh, new CANNON.Vec3(t.x0 + i0 * t.cell, 0, t.z0 + j1 * t.cell), new CANNON.Quaternion().setFromEuler(-Math.PI / 2, 0, 0));
+    }
+  }
   world.addBody(floor);
   // Loose objects that belong to the arena, not to a bot.
   const props = [];
@@ -937,7 +1023,8 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       let heavy = list[0];
       for (const p of list) { M += p.mass; com.vadd(p.wpos.scale(p.mass), com); vel.vadd(p.wvel.scale(p.mass), vel); if (p.mass > heavy.mass) heavy = p; }
       com.scale(1 / M, com); vel.scale(1 / M, vel);
-      const body = new CANNON.Body({ mass: M, angularDamping: 0.02, linearDamping: 0.01 });
+      // Loose pieces lose their spin quickly, which stands in for rolling resistance: a broken-off wheel comes to rest instead of rolling away.
+      const body = new CANNON.Body({ mass: M, angularDamping: g.live ? 0.02 : cfg.breakage.looseSpinLoss, linearDamping: 0.01 });
       body.position.copy(com); body.quaternion.copy(g.wquat);
       const qi = g.wquat.inverse();
       for (const p of list) {
@@ -976,7 +1063,8 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
         pivotA: A.quaternion.inverse().vmult(pivW.vsub(A.position)), pivotB: B.quaternion.inverse().vmult(pivW.vsub(B.position)),
         axisA: A.quaternion.inverse().vmult(axisW), axisB: B.quaternion.inverse().vmult(axisW), collideConnected: true,
       });
-      if (p.jointType === 'motor' && p.live) { c.enableMotor(); c.setMotorMaxForce(p.torque * dt); /* the solver limits impulse per step, so torque x dt */ c.setMotorSpeed(0); }
+      // A motor with no power still resists being turned, so wheels on a broken-off piece drag instead of freewheeling.
+      if (p.jointType === 'motor') { c.enableMotor(); c.setMotorMaxForce(p.torque * dt * (p.live ? 1 : cfg.breakage.deadMotorDrag)); /* the solver limits impulse per step, so torque x dt */ c.setMotorSpeed(0); }
       c.part = p;
       // The library tunes joint stiffness for 60 steps a second unless told the real step.
       for (const e of c.equations) if (e !== c.motorEquation) e.setSpookParams(1e7, 3, dt);
@@ -1403,7 +1491,7 @@ const BULWARK = {
     plate('deck_m', [1.3, 0.06, 0.75], [0, -0.15, 0], 'spine'),
     plate('deck_r', [1.3, 0.06, 0.75], [0, -0.15, -0.8], 'spine'),
     beam('brow', [1.9, 0.14, 0.14], [0, -0.2, 1.3], 'spine', 'steel'),
-    ...[-2, -1, 0, 1, 2].map((i) => ({ id: 'blade_' + (i + 2), type: 'wedge', material: 'steel', size: [0.36, 0.42, 0.5], pos: [i * 0.38, -0.42, 1.62], parent: 'brow', joint: { type: 'hinge', axis: [1, 0, 0], pivot: [i * 0.38, -0.2, 1.38], limits: [-12, 25], spring: 900 } })),
+    ...[-2, -1, 0, 1, 2].map((i) => ({ id: 'blade_' + (i + 2), type: 'wedge', material: 'steel', size: [0.36, 0.34, 0.5], pos: [i * 0.38, -0.27, 1.62], parent: 'brow', joint: { type: 'hinge', axis: [1, 0, 0], pivot: [i * 0.38, -0.2, 1.38], limits: [-45, 45], spring: 350 } })),
     ...['l', 'r'].flatMap((side) => { const sx = side === 'l' ? 1 : -1; return [0, 1, 2].map((i) => plate(`skirt_${side}${i}`, [0.05, 0.3, 0.7], [sx * 1.32, -0.3, -0.8 + i * 0.8], 'rail_' + side, 'plastic')); }),
     block('ballast', [0.5, 0.25, 0.5], [0, -0.02, -0.75], 'deck_r', 'steel'),
   ],
@@ -1454,7 +1542,7 @@ function bulwarkProgram(s, out, mem, lib) {
   }
   if (!plan.reachable) {
     // Cannot get onto it. Hold the nearest place I can reach, and say why.
-    const high = lib.floorAt(s, tg.x, tg.z) && lib.heightAt(s, tg.x, tg.z) > lib.heightAt(s, me.x, me.z) + 0.15;
+    const high = lib.floorAt(s, tg.x, tg.z) && lib.stepAt(s, tg.x, tg.z) > lib.stepAt(s, me.x, me.z) + 0.15;
     out.say = high ? 'cannot climb that, holding the foot of it' : 'no way across, holding the nearest ground';
     const n = go(tg.x, tg.z, { stopAt: 0.4 });
     mem.idle = me.speed < 0.15 ? (mem.idle || 0) + 1 : 0;
@@ -1547,7 +1635,7 @@ function striderProgram(s, out, mem, lib) {
     } else { const side = me.x >= c.x ? 1 : -1, past = (me.z - c.z) * home < -1.6; aim = { x: past ? c.x : c.x + side * 3, z: c.z - home * 3 }; say = 'getting behind the crate'; }
   } else {
     const tg = s.target; aim = tg;
-    const up = lib.heightAt(s, tg.x, tg.z) - lib.heightAt(s, me.x, me.z);
+    const up = lib.stepAt(s, tg.x, tg.z) - lib.stepAt(s, me.x, me.z);
     say = up > 0.15 ? 'climbing up to the point' : 'walking to the point';
     const foeToT = Math.hypot(foe.x - tg.x, foe.z - tg.z), d = lib.to(s, tg.x, tg.z).distance;
     const path = s.challenge.objective.path;
@@ -1842,7 +1930,7 @@ function spanProgram(s, out, mem, lib) {
         if (far === null) { if (!on) far = k; } else if (on && k > Math.max(0, far)) { near = k; break; }
       }
       if (over && near !== null) stop = near;
-      const level = near !== null && lib.heightAt(s, goal.x - d.x * (near + 0.3), goal.z - d.z * (near + 0.3)) === lib.heightAt(s, goal.x - d.x * (far - 0.3), goal.z - d.z * (far - 0.3));
+      const level = near !== null && lib.stepAt(s, goal.x - d.x * (near + 0.3), goal.z - d.z * (near + 0.3)) === lib.stepAt(s, goal.x - d.x * (far - 0.3), goal.z - d.z * (far - 0.3));
       if (near !== null && near - far <= 2.6 && level) {
         const edge = { x: goal.x - d.x * near, z: goal.z - d.z * near };
         mem.plan = { d, gap: near - far, edge, stop, stage: { x: edge.x - d.x * 3.4, z: edge.z - d.z * 3.4 }, heading: Math.atan2(d.x, d.z) };
@@ -1953,13 +2041,13 @@ scene.add(hemi, sun);
 
 const arena = new THREE.Group();
 scene.add(arena);
-let floorMat, wallMat, gridLines, edgeLine, targetRing, propMeshes = [];
+let floorMat, wallMat, gridLines, edgeLine, contourLines, targetRing, propMeshes = [];
 function buildArena() {
   arena.clear();
   const ch = match.challenge, t = cfg.arena.thickness;
   floorMat = new THREE.MeshStandardMaterial({ roughness: ch.surface.grip < 0.5 ? 0.25 : 0.9, metalness: 0.05 });
   wallMat = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.1 });
-  const grid = [], edge = [];
+  const grid = [], edge = []; let contourPts = [];
   for (const sl of ch.floor) {
     const top = sl.top || 0;
     const slab = new THREE.Mesh(new THREE.BoxGeometry(sl.w, t + top, sl.d), floorMat);
@@ -1967,14 +2055,39 @@ function buildArena() {
     arena.add(slab);
     const x0 = sl.x - sl.w / 2, x1 = sl.x + sl.w / 2, z0 = sl.z - sl.d / 2, z1 = sl.z + sl.d / 2;
     const g = top + 0.005, e = top + 0.01;
-    for (let x = Math.ceil(x0 / 2) * 2; x <= x1; x += 2) grid.push(x, g, z0, x, g, z1);
-    for (let z = Math.ceil(z0 / 2) * 2; z <= z1; z += 2) grid.push(x0, g, z, x1, g, z);
+    // Grid lines follow the ground, so hills read as hills.
+    const hill = ch.terrain && !top, yy = (x, z) => (hill ? floorHeight(ch, x, z) : top) + 0.012;
+    for (let x = Math.ceil(x0 / 2) * 2; x <= x1; x += 2) { if (!hill) { grid.push(x, g, z0, x, g, z1); continue; } for (let z = z0; z < z1; z += 0.5) { const zb = Math.min(z1, z + 0.5); if (yy(x, z) + yy(x, zb) < 0.05) grid.push(x, g, z, x, g, zb); } }
+    for (let z = Math.ceil(z0 / 2) * 2; z <= z1; z += 2) { if (!hill) { grid.push(x0, g, z, x1, g, z); continue; } for (let x = x0; x < x1; x += 0.5) { const xb = Math.min(x1, x + 0.5); if (yy(x, z) + yy(xb, z) < 0.05) grid.push(x, g, z, xb, g, z); } }
     edge.push(x0, e, z0, x1, e, z0, x1, e, z0, x1, e, z1, x1, e, z1, x0, e, z1, x0, e, z1, x0, e, z0);
+  }
+  // Topography: a surface over the grid of heights, shaded by height, drawn only where the ground rises.
+  if (ch.terrain) {
+    const t = ch.terrain, pos = [], col = [], idx = [];
+    const lo = new THREE.Color(css('--floor')), hi = new THREE.Color(css('--hill'));
+    for (let iz = 0; iz < t.nz; iz++) for (let ix = 0; ix < t.nx; ix++) { const h = t.heights[iz * t.nx + ix]; pos.push(t.x0 + ix * t.cell, h + 0.004, t.z0 + iz * t.cell); const c = lo.clone().lerp(hi, Math.min(1, h / Math.max(1.2, t.max))); col.push(c.r, c.g, c.b); }
+    for (let iz = 0; iz < t.nz - 1; iz++) for (let ix = 0; ix < t.nx - 1; ix++) { const a = iz * t.nx + ix, b = a + 1, c = a + t.nx, d = c + 1; if (Math.max(t.heights[a], t.heights[b], t.heights[c], t.heights[d]) < 0.01) continue; idx.push(a, c, b, b, c, d); }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+    const land = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 }));
+    land.receiveShadow = true; land.castShadow = true; arena.add(land);
+    // Contour lines every quarter metre, cut from the same triangles the physics uses.
+    const cont = [], P = (i) => [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]];
+    for (let k = 0; k < idx.length; k += 3) {
+      const tri = [P(idx[k]), P(idx[k + 1]), P(idx[k + 2])], lo2 = Math.min(tri[0][1], tri[1][1], tri[2][1]), hi2 = Math.max(tri[0][1], tri[1][1], tri[2][1]);
+      for (let lv = Math.ceil(lo2 / 0.25) * 0.25 + 0.001; lv < hi2; lv += 0.25) {
+        const cut = [];
+        for (let e = 0; e < 3; e++) { const a = tri[e], b = tri[(e + 1) % 3]; if ((a[1] - lv) * (b[1] - lv) < 0) { const f = (lv - a[1]) / (b[1] - a[1]); cut.push(a[0] + (b[0] - a[0]) * f, lv + 0.015, a[2] + (b[2] - a[2]) * f); } }
+        if (cut.length === 6) cont.push(...cut);
+      }
+    }
+    contourPts = cont;
   }
   const lines = (pts, mat) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); return new THREE.LineSegments(g, mat); };
   gridLines = lines(grid, new THREE.LineBasicMaterial({ transparent: true, opacity: 0.5 }));
   edgeLine = lines(edge, new THREE.LineBasicMaterial());
   arena.add(gridLines, edgeLine);
+  if (contourPts.length) { contourLines = lines(contourPts, new THREE.LineBasicMaterial({ transparent: true, opacity: 0.75 })); arena.add(contourLines); } else contourLines = null;
   for (const wl of ch.walls) {
     const wall = new THREE.Mesh(new THREE.BoxGeometry(wl.w, wl.h, wl.d), wallMat);
     wall.position.set(wl.x, wl.h / 2, wl.z); wall.castShadow = true; wall.receiveShadow = true;
@@ -2048,7 +2161,7 @@ function applyTheme() {
     if (match && match.challenge.surface.grip < 0.5) floorMat.color.lerp(new THREE.Color(0x9fd0ee), 0.45);
     if (match && match.challenge.surface.slide > 1.5) floorMat.color.lerp(new THREE.Color(0x8a6f3c), 0.35);
     wallMat.color.set(css('--grid'));
-    gridLines.material.color.set(css('--grid'));
+    gridLines.material.color.set(css('--grid')); if (contourLines) contourLines.material.color.set(css('--contour'));
     edgeLine.material.color.set(css('--warn'));
     if (targetRing) targetRing.material.color.set(css('--warn'));
     propMeshes.forEach((mesh) => mesh.material.color.set(0xc9a35c));
@@ -2212,7 +2325,9 @@ const SHOWS = [
   { label: 'The pen', a: 'Corral', b: 'Bulwark', ch: 'Bring it home', seed: 1, watch: 'Both want the crate. Corral drives its pen over it, shuts the gates and hauls it home. Bulwark has to get behind it and shove.' },
   { label: 'The climb', a: 'Strider', b: 'Bulwark', ch: 'The plinth', seed: 1, watch: 'The point is on a raised block. Wheels cannot climb it. Legs can.' },
   { label: 'Over the ridges', a: 'Strider', b: 'Bulwark', ch: 'Ridges', seed: 1, watch: 'Two low ridges cross the floor, each with one opening. Strider steps straight over them. Wheels have to find a way round or risk bashing over, and then the two contest the point.' },
-  { label: 'Rough ground', a: 'Strider', b: 'Bulwark', ch: 'Rough ground', seed: 1, watch: 'Most rounds now have blocks of different heights scattered over the floor, so there is no straight run to the point. Each machine maps the blocks and plans a route it can fit through, and backs off and tries again if its nose jams.' },
+  { label: 'King of the hill', a: 'Strider', b: 'Bulwark', ch: 'King of the hill', seed: 1, watch: 'The point is on top of a broad hill. Both machines have to climb to it and then hold the top against each other.' },
+  { label: 'The ridge', a: 'Strider', b: 'Corral', ch: 'The ridge', seed: 1, watch: 'A long ridge lies between the two starts, too steep to drive straight up, with a low saddle somewhere along it. Each machine reads the heights and plans a way it can climb.' },
+  { label: 'Hill country', a: 'Mangonel', b: 'Span', ch: 'Hill country', seed: 1, watch: 'Steep hills and a point that jumps. The planner goes round slopes a machine cannot hold, so the quickest way is rarely straight.' },
   { label: 'Run-up', a: 'Bulwark', b: 'Corral', ch: 'Open floor', seed: 1, watch: 'Two heavy machines of the same weight cannot push each other. So Bulwark does not lean on Corral: it backs off for a run-up and hits again at speed, and it is Bulwark that comes off worse.' },
   { label: 'On ice', a: 'Bulwark', b: 'Corral', ch: 'Ice', seed: 1, watch: 'A quarter of the usual grip. Each machine measures how slowly it is picking up speed and brakes early to match.' },
   { label: 'Coming apart', a: 'Strider', b: 'Mangonel', ch: 'Wandering point', seed: 3, watch: 'Hits take pieces off. A joint gives way when the whole blow, at the speed the parts met, is more than it can carry, and the joint nearest the blow goes first.' },
