@@ -37,8 +37,9 @@ export const LIB = {
   // How far the floor runs from a point along a world direction before a drop, a wall or a step up, up to max.
   // "climb" is the highest step up the machine can take in its stride.
   run(s, x, z, dx, dz, max = 6, margin = 0.8, climb = 0.15) {
-    const h0 = LIB.stepAt(s, x, z), n = Math.hypot(dx, dz) || 1;
-    for (let d = 0.25; d <= max; d += 0.25) { const px = x + (dx / n) * d, pz = z + (dz / n) * d; if (!LIB.floorAt(s, px, pz) || LIB.inWall(s, px, pz, margin) || LIB.stepAt(s, px, pz) > h0 + climb) return d - 0.25; }
+    let h0 = LIB.stepAt(s, x, z); const n = Math.hypot(dx, dz) || 1;
+    // Each step up is judged from the ledge before it, so a staircase of small steps is a way through.
+    for (let d = 0.25; d <= max; d += 0.25) { const px = x + (dx / n) * d, pz = z + (dz / n) * d; if (!LIB.floorAt(s, px, pz) || LIB.inWall(s, px, pz, margin)) return d - 0.25; const h = LIB.stepAt(s, px, pz); if (h > h0 + climb) return d - 0.25; h0 = h; }
     return max;
   },
   // How far the floor runs ahead of the machine along a bearing relative to its nose.
@@ -88,18 +89,25 @@ export const LIB = {
     LIB_GRIDS.set(s.challenge, g);
     return g;
   },
-  // How far each square is from the nearest step up that is too high to take from ground at height h0.
+  // How far each square is from the foot of the nearest step up that is too high to take ("limit" metres or more
+  // above the square next to it).
   stepClear(g, limit) {
     const key = Math.round(limit * 100);
     let d = g.steps.get(key); if (d) return d;
     const n = g.nx * g.nz, queue = []; d = new Float32Array(n).fill(99);
-    for (let i = 0; i < n; i++) if (g.h[i] > limit) { d[i] = 0; queue.push(i); }
+    for (let i = 0; i < n; i++) {
+      if (g.h[i] < 0) continue;
+      const cx = i % g.nx, cz = Math.floor(i / g.nx);
+      let foot = false;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ax = cx + dx, az = cz + dz; if (ax < 0 || az < 0 || ax >= g.nx || az >= g.nz) continue; if (g.h[az * g.nx + ax] - g.h[i] > limit) foot = true; }
+      if (foot) { d[i] = g.C / 2; queue.push(i); }
+    }
     for (let q = 0; q < queue.length; q++) {
       const i = queue[q], cx = i % g.nx, cz = Math.floor(i / g.nx);
       for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
         const ax = cx + dx, az = cz + dz; if ((!dx && !dz) || ax < 0 || az < 0 || ax >= g.nx || az >= g.nz) continue;
         const j = az * g.nx + ax, v = d[i] + g.C * (dx && dz ? 1.41 : 1);
-        if (v < d[j] && v < 4) { d[j] = v; queue.push(j); }
+        if (g.h[j] >= 0 && Math.abs(g.h[j] - g.h[i]) <= limit && v < d[j] && v < 4) { d[j] = v; queue.push(j); }
       }
     }
     g.steps.set(key, d); return d;
@@ -109,12 +117,13 @@ export const LIB = {
   // goal itself. If the goal cannot be reached, the plan ends at the nearest place that can.
   // "grade" is the steepest slope it will take uphill (rise over run); it is cut down on a slippery surface,
   // where wheels cannot hold a steep slope.
-  plan(s, x, z, { margin = 1.5, climb = 0.15, grade = 0.5 } = {}) {
+  plan(s, x, z, { margin = 1.5, climb = 0.15, grade = 0.5, side = Math.min(margin, 1.5) } = {}) {
     grade = Math.min(grade, 0.75 * s.challenge.surface.grip);
     const g = LIB.grid(s), start = g.cell(s.self.x, s.self.z);
     if (start < 0 || g.h[start] < 0) return { x, z, end: { x, z }, reachable: false, off: true, left: 0 };
     // Keep clear of steps too high to climb as well, by the same margin.
-    const step = LIB.stepClear(g, g.h[start] + climb), side = Math.min(margin, 1.5);
+    // Keep clear of the foot of steps too high to climb as well, by "side" metres.
+    const step = LIB.stepClear(g, climb);
     const from = new Int32Array(g.nx * g.nz).fill(-2), queue = [start];
     from[start] = -1;
     let best = start, bestD = Math.hypot(x - s.self.x, z - s.self.z);
@@ -183,8 +192,8 @@ export const LIB = {
   // Drive to (x, z) and stay on the floor. Plans a way round gaps and walls, slows for corners and on arrival,
   // and brakes in time for an edge, allowing for how slippery the floor is and how long the machine is.
   // Returns { drive, turn, arrived, reachable, braking, left } where left is the distance still to go.
-  nav(s, x, z, { margin = 1.5, grade = 0.5, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null, feed = true } = {}) {
-    const me = s.self, p = LIB.plan(s, x, z, { margin, climb, grade });
+  nav(s, x, z, { margin = 1.5, grade = 0.5, side, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null, feed = true } = {}) {
+    const me = s.self, p = LIB.plan(s, x, z, side === undefined ? { margin, climb, grade } : { margin, climb, grade, side });
     const w = LIB.to(s, p.x, p.z), endD = Math.hypot(p.end.x - me.x, p.end.z - me.z), last = Math.hypot(p.x - p.end.x, p.z - p.end.z) < 0.3;
     // Once arrived, stay arrived until well off the spot, so the machine does not fidget.
     const held = mem && mem._at && Math.hypot(mem._at.x - p.end.x, mem._at.z - p.end.z) < 0.5 && endD < stopAt * 3 + 0.3;

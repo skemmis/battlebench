@@ -34,20 +34,24 @@ scene.add(hemi, sun);
 
 const arena = new THREE.Group();
 scene.add(arena);
-let floorMat, wallMat, gridLines, edgeLine, contourLines, targetRing, propMeshes = [];
+let floorMat, wallMat, gridLines, edgeLine, contourLines, rockMats = new Map(), targetRing, propMeshes = [];
 function buildArena() {
   arena.clear();
   const ch = match.challenge, t = cfg.arena.thickness;
   floorMat = new THREE.MeshStandardMaterial({ roughness: ch.surface.grip < 0.5 ? 0.25 : 0.9, metalness: 0.05 });
   wallMat = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.1 });
-  const grid = [], edge = []; let contourPts = [];
+  const grid = [], edge = []; let contourPts = []; rockMats = new Map();
   for (const sl of ch.floor) {
     const top = sl.top || 0;
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(sl.w, t + top, sl.d), floorMat);
+    // Rock ledges are shaded by height, so the lie of the ground reads at a glance.
+    let mat = floorMat;
+    if (sl.rock) { mat = rockMats.get(top); if (!mat) { mat = new THREE.MeshStandardMaterial({ roughness: floorMat.roughness, metalness: 0.03 }); rockMats.set(top, mat); } }
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(sl.w, t + top, sl.d), mat);
     slab.position.set(sl.x, (top - t) / 2, sl.z); slab.receiveShadow = true; slab.castShadow = top > 0;
     arena.add(slab);
     const x0 = sl.x - sl.w / 2, x1 = sl.x + sl.w / 2, z0 = sl.z - sl.d / 2, z1 = sl.z + sl.d / 2;
     const g = top + 0.005, e = top + 0.01;
+    if (sl.rock) { grid.push(x0, g, z0, x1, g, z0, x1, g, z0, x1, g, z1, x1, g, z1, x0, g, z1, x0, g, z1, x0, g, z0); continue; }
     // Grid lines follow the ground, so hills read as hills.
     const hill = ch.terrain && !top, yy = (x, z) => (hill ? floorHeight(ch, x, z) : top) + 0.012;
     for (let x = Math.ceil(x0 / 2) * 2; x <= x1; x += 2) { if (!hill) { grid.push(x, g, z0, x, g, z1); continue; } for (let z = z0; z < z1; z += 0.5) { const zb = Math.min(z1, z + 0.5); if (yy(x, z) + yy(x, zb) < 0.05) grid.push(x, g, z, x, g, zb); } }
@@ -153,6 +157,8 @@ function applyTheme() {
     floorMat.color.set(css('--floor'));
     if (match && match.challenge.surface.grip < 0.5) floorMat.color.lerp(new THREE.Color(0x9fd0ee), 0.45);
     if (match && match.challenge.surface.slide > 1.5) floorMat.color.lerp(new THREE.Color(0x8a6f3c), 0.35);
+    const peak = Math.max(1, ...rockMats.keys()), rock = new THREE.Color(css('--rock'));
+    for (const [top, m] of rockMats) { m.color.copy(floorMat.color).lerp(rock, 0.25 + 0.75 * (top / peak)); if (Math.round(top * 20) % 2) m.color.multiplyScalar(0.94); }
     wallMat.color.set(css('--grid'));
     gridLines.material.color.set(css('--grid')); if (contourLines) contourLines.material.color.set(css('--contour'));
     edgeLine.material.color.set(css('--warn'));
@@ -312,19 +318,14 @@ for (const [id, def] of [['botA', 2], ['botB', 0]]) {
 }
 // Curated fights, each picked to show one idea. Choosing a machine, challenge or seed by hand leaves the showcase.
 const SHOWS = [
-  { label: 'Reaching across', a: 'Span', b: 'Bulwark', ch: 'The gap', seed: 1, watch: 'The point is out over a gap. Bulwark works out it cannot get there and holds the edge. Span parks square to the edge, reaches its nose across, swings its weights forward and stops astride the gap.' },
-  { label: 'Island hopping', a: 'Span', b: 'Strider', ch: 'Islands', seed: 1, watch: 'The point is on the middle island. Watch the labels under the view: each machine says what it is trying to do as it does it.' },
-  { label: 'Ranging shots', a: 'Mangonel', b: 'Corral', ch: 'Open floor', seed: 1, watch: 'Mangonel works out the swing speed for the range, aims where Corral will be when the ball lands, backs off when it is too close to throw, and uses its arms as clubs once the balls are gone.' },
-  { label: 'The pen', a: 'Corral', b: 'Bulwark', ch: 'Bring it home', seed: 1, watch: 'Both want the crate. Corral drives its pen over it, shuts the gates and hauls it home. Bulwark has to get behind it and shove.' },
-  { label: 'The climb', a: 'Strider', b: 'Bulwark', ch: 'The plinth', seed: 1, watch: 'The point is on a raised block. Wheels cannot climb it. Legs can.' },
-  { label: 'Over the ridges', a: 'Strider', b: 'Bulwark', ch: 'Ridges', seed: 1, watch: 'Two low ridges cross the floor, each with one opening. Strider steps straight over them. Wheels have to find a way round or risk bashing over, and then the two contest the point.' },
-  { label: 'King of the hill', a: 'Strider', b: 'Bulwark', ch: 'King of the hill', seed: 1, watch: 'The point is on top of a broad hill. Both machines have to climb to it and then hold the top against each other.' },
-  { label: 'The ridge', a: 'Strider', b: 'Corral', ch: 'The ridge', seed: 1, watch: 'A long ridge lies between the two starts, too steep to drive straight up, with a low saddle somewhere along it. Each machine reads the heights and plans a way it can climb.' },
-  { label: 'Hill country', a: 'Mangonel', b: 'Span', ch: 'Hill country', seed: 1, watch: 'Steep hills and a point that jumps. The planner goes round slopes a machine cannot hold, so the quickest way is rarely straight.' },
-  { label: 'Run-up', a: 'Bulwark', b: 'Corral', ch: 'Open floor', seed: 1, watch: 'Two heavy machines of the same weight cannot push each other. So Bulwark does not lean on Corral: it backs off for a run-up and hits again at speed, and it is Bulwark that comes off worse.' },
-  { label: 'On ice', a: 'Bulwark', b: 'Corral', ch: 'Ice', seed: 1, watch: 'A quarter of the usual grip. Each machine measures how slowly it is picking up speed and brakes early to match.' },
-  { label: 'Coming apart', a: 'Strider', b: 'Mangonel', ch: 'Wandering point', seed: 3, watch: 'Hits take pieces off. A joint gives way when the whole blow, at the speed the parts met, is more than it can carry, and the joint nearest the blow goes first.' },
-  { label: 'Low gravity', a: 'Mangonel', b: 'Span', ch: 'Low gravity', seed: 1, watch: 'A third of normal gravity. The same throw goes three times as far, so Mangonel swings more gently.' },
+  { label: 'Hammers', a: 'Mantis', b: 'Strider', ch: 'Rubble', seed: 1, watch: 'Mantis walks up, squares on, and brings two steel hammers down in turn. A machine loses when more than half of it has been broken off its core.' },
+  { label: 'The bar', a: 'Thresher', b: 'Slinger', ch: 'Terraces', seed: 1, watch: 'Thresher carries a steel bar spinning across its nose, turning upward at the front. Slinger wants to stay at range and throw. On terraced rock neither gets the fight it wants.' },
+  { label: 'Ranging shots', a: 'Slinger', b: 'Strider', ch: 'Terraces', seed: 1, watch: 'Slinger works out the swing for the range, the gravity and the difference in height, and aims where the target will be when the ball lands.' },
+  { label: 'Wheels on crags', a: 'Strider', b: 'Rover', ch: 'Crags', seed: 1, watch: 'Rover has the biggest tyres the kit allows and is the fastest machine here on a flat floor. Watch what the ledges do to it, and read its label: it says when it can find no way its wheels can take.' },
+  { label: 'Wheels on the flat', a: 'Rover', b: 'Mantis', ch: 'Open floor', seed: 1, watch: 'The same wheeled machine on flat ground, where it can ram at speed and push a walker toward the edge.' },
+  { label: 'Walker against walker', a: 'Mantis', b: 'Thresher', ch: 'Crags', seed: 1, watch: 'Two walkers with different weapons on craggy rock. Each plans a route it can climb and stops short of drops.' },
+  { label: 'Low gravity', a: 'Slinger', b: 'Thresher', ch: 'Low gravity crags', seed: 1, watch: 'A third of normal gravity. Throws carry three times as far, steps take longer to land, and a hit sends things a long way.' },
+  { label: 'Ice', a: 'Mantis', b: 'Rover', ch: 'Icy crags', seed: 1, watch: 'Crags with a quarter of the usual grip.' },
 ];
 let showing = -1;
 function markShow(i) { showing = i; document.querySelectorAll('#shows button').forEach((b, k) => b.setAttribute('aria-pressed', String(k === i))); $('watch').textContent = i >= 0 ? SHOWS[i].watch : ''; }

@@ -22,13 +22,13 @@ const chRound = (v) => Math.round(v * 100) / 100;
 
 export const OPEN = {
   name: 'Open floor',
-  brief: 'A plain square platform. Hold the centre.',
+  brief: 'A plain square platform. Win by breaking more than half of the enemy off its core, or by putting its core off the floor.',
   floor: [{ x: 0, z: 0, w: 30, d: 30 }],
   walls: [],
   surface: { grip: 1, slide: 1 },
   gravity: 1,
   spawn: [{ x: 0, z: -9 }, { x: 0, z: 9 }],
-  objective: { type: 'hold', scoring: 'final', path: { kind: 'fixed', x: 0, z: 0 } },
+  objective: { type: 'knockout' },
 };
 
 const LAYOUTS = {
@@ -78,102 +78,78 @@ const GRAVITIES = {
 
 // Draw one challenge from the family. The same seed always gives the same challenge.
 const GROUNDS = {
-  rolling: 'The ground rolls: low rounded rises and dips all over the floor.',
-  hills: 'There are hills on the floor, some too steep to drive straight up.',
-  mound: 'The middle of the floor is a broad hill.',
-  basin: 'A ring of high ground surrounds the middle, with passes through it.',
-  ridge: 'A long ridge runs across the floor between the two starting places, with a low saddle somewhere along it.',
+  crags: { text: 'The ground is craggy rock: stepped ledges and outcrops all over, up to {max} m high, with steps of up to {step} m between neighbouring ledges.', amp: 1.7, q: 0.2, maxStep: 0.6, fine: 0.4, jut: 0.14 },
+  terraces: { text: 'The ground is terraced: broad level shelves, up to {max} m high, with a step of {q} m or more from each to the next.', amp: 1.5, q: 0.35, maxStep: 0.35, fine: 0.1, jut: 0 },
+  rubble: { text: 'The ground is rubble: small uneven steps everywhere, up to {max} m high, none more than {step} m.', amp: 0.55, q: 0.1, maxStep: 0.3, fine: 0.75, jut: 0.2 },
+  flat: { text: '' },
 };
-// Topography as a grid of heights with posts every metre. It is built from smooth rounded bumps and is flat
-// at the starting places, along every edge and around anything standing on the floor.
-function drawTerrain(L, kind, r, spawnZ, crate) {
-  const base = L.floor.filter((f) => !f.top && Math.min(f.w, f.d) >= 9);
-  if (!base.length) return null;
-  const bumps = [], add = (x, z, h, rx, rz = rx, rot = 0) => bumps.push({ x, z, h, rx, rz, c: Math.cos(rot), s: Math.sin(rot) });
-  const scatter = (f, n, h0, h1, r0, r1) => { for (let i = 0; i < n; i++) add(f.x + (r() - 0.5) * (f.w - 4), f.z + (r() - 0.5) * (f.d - 4), h0 + r() * (h1 - h0), r0 + r() * (r1 - r0), r0 + r() * (r1 - r0), r() * 3.14); };
-  for (const f of base) {
-    const area = f.w * f.d, half = Math.min(f.w, f.d) / 2, mid = Math.abs(f.x) < f.w / 2 - 3 && Math.abs(f.z) < f.d / 2 - 3;
-    if (kind === 'rolling') scatter(f, Math.round(area / 35), 0.3, 0.8, 3, 5.5);
-    else if (kind === 'hills' || !mid) scatter(f, Math.round(area / 110) + 2, 0.9, 1.9, 3.2, 5.5);
-    else if (kind === 'mound') { add(0, 0, 1.2 + r() * 0.8, Math.min(8, half * 0.6)); scatter(f, Math.round(area / 150), 0.4, 1, 3, 5); }
-    else if (kind === 'basin') {
-      const ring = Math.min(8, half * 0.55), n = 10, gap = Math.floor(r() * n), gap2 = (gap + 4 + Math.floor(r() * 3)) % n;
-      for (let i = 0; i < n; i++) if (i !== gap && i !== gap2) add(Math.cos((i / n) * 6.283) * ring, Math.sin((i / n) * 6.283) * ring, 1.1 + r() * 0.7, 3 + r() * 0.8);
-    } else if (kind === 'ridge') {
-      const zr = (r() - 0.5) * 3, h = 1.2 + r() * 0.7;
-      add(f.x, zr, h, f.w * 0.5, 2.6 + r() * 1.2);
-      add(f.x + (r() - 0.5) * (f.w - 10), zr, -h * (0.6 + r() * 0.25), 2.5 + r() * 1, 4);
-      scatter(f, Math.round(area / 200), 0.4, 0.9, 3, 5);
+// Broken ground, as flat-topped ledges of rock standing on the base floor. Heights come from smooth noise cut
+// into steps, so there are shelves, ledges and outcrops and not a scatter of separate obstacles. No step
+// between neighbouring ledges is higher than maxStep, so nothing is walled in, but most steps are too high
+// for a small wheel. Each ledge is a floor slab with a "top", like any other raised block.
+function drawCrags(L, G, r, spawnZ) {
+  const out = [];
+  let max = 0, step = 0;
+  const lattice = (period, nx, nz) => { const w = Math.ceil(nx / period) + 2, d = Math.ceil(nz / period) + 2, v = Array.from({ length: w * d }, () => r()); return (x, z) => { const fx = x / period, fz = z / period, ix = Math.floor(fx), iz = Math.floor(fz); let u = fx - ix, t = fz - iz; u = u * u * (3 - 2 * u); t = t * t * (3 - 2 * t); const a = v[iz * w + ix], b = v[iz * w + ix + 1], c = v[(iz + 1) * w + ix], e = v[(iz + 1) * w + ix + 1]; return a * (1 - u) * (1 - t) + b * u * (1 - t) + c * (1 - u) * t + e * u * t; }; };
+  for (const f of L.floor) {
+    if (f.top || Math.min(f.w, f.d) < 6) continue;
+    const nx = Math.round(f.w), nz = Math.round(f.d), cw = f.w / nx, cd = f.d / nz, x0 = f.x - f.w / 2, z0 = f.z - f.d / 2;
+    const broad = lattice(5 + r() * 2, nx, nz), mid = lattice(2.4, nx, nz);
+    const h = new Float32Array(nx * nz);
+    for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) {
+      let v = (1 - G.fine) * broad(ix, iz) + G.fine * (0.6 * mid(ix, iz) + 0.4 * r());
+      v = Math.max(0, v - 0.25) / 0.75;
+      h[iz * nx + ix] = G.amp * v + (r() < G.jut ? G.q * (1 + Math.floor(r() * 2)) : 0);
+    }
+    // Each starting place is a level pad.
+    for (const sgn of [-1, 1]) { const cx = Math.floor((0 - x0) / cw), cz = Math.floor((sgn * spawnZ - z0) / cd); if (cx < 0 || cz < 0 || cx >= nx || cz >= nz) continue; const lvl = h[cz * nx + cx]; for (let iz = cz - 3; iz <= cz + 3; iz++) for (let ix = cx - 3; ix <= cx + 3; ix++) if (ix >= 0 && iz >= 0 && ix < nx && iz < nz) h[iz * nx + ix] = lvl; }
+    const lv = new Int32Array(nx * nz), cap = Math.round(G.maxStep / G.q);
+    let low = Infinity;
+    for (let i = 0; i < nx * nz; i++) { lv[i] = Math.round(h[i] / G.q); low = Math.min(low, lv[i]); }
+    for (let i = 0; i < nx * nz; i++) lv[i] -= low;
+    // Wear down any step higher than the limit.
+    for (let pass = 0, changed = true; changed && pass < 40; pass++) {
+      changed = false;
+      for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) { const i = iz * nx + ix; let m = Infinity; if (ix > 0) m = Math.min(m, lv[i - 1]); if (ix < nx - 1) m = Math.min(m, lv[i + 1]); if (iz > 0) m = Math.min(m, lv[i - nx]); if (iz < nz - 1) m = Math.min(m, lv[i + nx]); if (lv[i] > m + cap) { lv[i] = m + cap; changed = true; } }
+    }
+    for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) { const i = iz * nx + ix; if (ix < nx - 1) step = Math.max(step, Math.abs(lv[i] - lv[i + 1]) * G.q); if (iz < nz - 1) step = Math.max(step, Math.abs(lv[i] - lv[i + nx]) * G.q); }
+    // Join neighbouring squares at the same level into as few ledges as possible.
+    const used = new Uint8Array(nx * nz);
+    for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) {
+      const i = iz * nx + ix; if (used[i] || !lv[i]) continue;
+      let w = 1; while (ix + w < nx && !used[i + w] && lv[i + w] === lv[i]) w++;
+      let d = 1; grow: while (iz + d < nz) { for (let k = 0; k < w; k++) { const j = (iz + d) * nx + ix + k; if (used[j] || lv[j] !== lv[i]) break grow; } d++; }
+      for (let a = 0; a < d; a++) for (let k = 0; k < w; k++) used[(iz + a) * nx + ix + k] = 1;
+      const top = chRound(lv[i] * G.q); max = Math.max(max, top);
+      out.push({ x: chRound(x0 + (ix + w / 2) * cw), z: chRound(z0 + (iz + d / 2) * cd), w: chRound(w * cw), d: chRound(d * cd), top, rock: true });
     }
   }
-  const ease = (v) => { v = Math.max(0, Math.min(1, v)); return v * v * (3 - 2 * v); };
-  const away = (o, x, z, h) => Math.hypot(Math.max(0, Math.abs(x - o.x) - o.w / 2), Math.max(0, Math.abs(z - o.z) - (h ? o.d : o.d) / 2));
-  const height = (x, z) => {
-    let inside = -1;
-    for (const f of base) inside = Math.max(inside, Math.min(f.w / 2 - Math.abs(x - f.x), f.d / 2 - Math.abs(z - f.z)));
-    if (inside <= 1) return 0;
-    let h = 0;
-    for (const b of bumps) { const dx = x - b.x, dz = z - b.z, u = (dx * b.c + dz * b.s) / b.rx, v = (-dx * b.s + dz * b.c) / b.rz, q = Math.hypot(u, v); if (q < 1) h += b.h * 0.5 * (1 + Math.cos(Math.PI * q)); }
-    let k = ease((inside - 1) / 2.5) * ease((Math.hypot(x, Math.abs(z) - spawnZ) - 2) / 2.5);
-    for (const o of L.floor) if (o.top) k *= ease((away(o, x, z) - 1) / 2);
-    for (const o of L.walls) k *= ease((away(o, x, z) - 1) / 2);
-    if (crate) k *= ease((Math.hypot(x, z) - 1.5) / 2);
-    return Math.max(0, h) * k;
-  };
-  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
-  for (const f of base) { x0 = Math.min(x0, f.x - f.w / 2); x1 = Math.max(x1, f.x + f.w / 2); z0 = Math.min(z0, f.z - f.d / 2); z1 = Math.max(z1, f.z + f.d / 2); }
-  x0 = Math.floor(x0); z0 = Math.floor(z0);
-  const nx = Math.ceil(x1) - x0 + 1, nz = Math.ceil(z1) - z0 + 1, heights = [];
-  let max = 0;
-  for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) { const h = chRound(height(x0 + ix, z0 + iz)); heights.push(h); max = Math.max(max, h); }
-  if (max < 0.2) return null;
-  return { cell: 1, x0, z0, nx, nz, max, heights };
+  return { ledges: out, max, step: chRound(step) };
 }
 
+// Draw one challenge from the family. The same seed always gives the same challenge.
 export function drawChallenge(seed, force = {}) {
   const r = chRng(seed * 7919 + 13);
   const pick = (obj, weights) => { const keys = Object.keys(weights); let t = r() * keys.reduce((n, k) => n + weights[k], 0); for (const k of keys) { t -= weights[k]; if (t <= 0) return k; } return keys[0]; };
-  const layoutKey = force.layout || pick(LAYOUTS, { open: 2.5, small: 1.5, bridge: 2, gap: 1.5, pillars: 1.5, plinth: 2, islands: 2, ridges: 2 });
-  const surfaceKey = force.surface || pick(SURFACES, { normal: 3, ice: 2, sticky: 1 });
+  const layoutKey = force.layout || pick(LAYOUTS, { open: 3, small: 2, bridge: 1.5, gap: 1, pillars: 1.5, islands: 1.5 });
+  const surfaceKey = force.surface || pick(SURFACES, { normal: 3, ice: 1.5, sticky: 1 });
   const gravityKey = force.gravity || pick(GRAVITIES, { normal: 3, low: 1.5, high: 1 });
-  let objKey = force.objective || pick({}, { fixed: 2, orbit: 2, jump: 2, deliver: 2 });
   const L = LAYOUTS[layoutKey](r), S = SURFACES[surfaceKey], G = GRAVITIES[gravityKey];
-  if (L.split && objKey !== 'fixed') objKey = 'fixed';
-  if (L.only && !L.only.includes(objKey)) objKey = 'fixed';
-  if (L.narrow && objKey === 'orbit') objKey = 'jump';
-  let objective, text;
-  if (objKey === 'fixed') {
-    objective = { type: 'hold', scoring: 'final', path: { kind: 'fixed', x: 0, z: 0 } };
-    text = L.split ? 'The point to hold is in the middle of the gap. The core closer to it at the end wins.' : `Hold the marked point${L.where ? ', which is ' + L.where : ''}. The core closer to it at the end wins.`;
-  } else if (objKey === 'orbit') {
-    const radius = chRound(Math.max(2, L.reach * (0.5 + r() * 0.4))), period = Math.round(20 + r() * 15);
-    objective = { type: 'hold', scoring: 'time', path: { kind: 'orbit', radius, period, phase: chRound(r() * 6.28) } };
-    text = `The marked point circles the centre at ${radius} m, once every ${period} seconds. Whoever spends longer closest to it wins.`;
-  } else if (objKey === 'jump') {
-    const every = Math.round(9 + r() * 6), points = [];
-    for (let i = 0; i < 8; i++) points.push(L.narrow ? { x: 0, z: chRound((r() - 0.5) * 2 * (L.floor[2].d / 2 + 4)) } : { x: chRound((r() - 0.5) * 2 * L.reach), z: chRound((r() - 0.5) * 2 * L.reach) });
-    objective = { type: 'hold', scoring: 'time', path: { kind: 'jump', every, points } };
-    text = `The marked point jumps to a new place every ${every} seconds. Whoever spends longer closest to it wins.`;
-  } else {
-    const size = chRound(1 + r() * 0.6), mass = Math.round(40 + r() * 120);
-    objective = { type: 'deliver', crate: { size, mass, x: 0, z: 0 } };
-    text = `A ${mass} kg crate starts ${L.where || 'in the middle'}. Whoever has it nearer their own end when the round stops wins.`;
-  }
   const spawnZ = chRound(L.spawnZ);
-  // Ground. Most rounds have real topography: hills, ridges, basins or rolling ground, as a grid of heights.
-  // Drawn last, so it does not change what the rest of a round is.
-  const groundKey = force.ground || (force.layout ? 'flat' : pick({}, { rolling: 2, hills: 2, mound: 2, basin: 1, ridge: 1, flat: 2 }));
-  let terrain = null, groundText = '';
+  // Ground. Most rounds are fought over broken rock. Drawn last, so it does not change the rest of a round.
+  const groundKey = force.ground || (force.layout ? 'flat' : pick({}, { crags: 3, terraces: 2, rubble: 2, flat: 1 }));
+  let floor = L.floor, groundText = '';
   if (groundKey !== 'flat') {
-    terrain = drawTerrain(L, groundKey, r, spawnZ, objKey === 'deliver');
-    if (terrain) groundText = `${GROUNDS[groundKey]} The highest ground is ${terrain.max} m above the flat. The heights are in the terrain grid, one every ${terrain.cell} m.`;
+    const c = drawCrags(L, GROUNDS[groundKey], r, spawnZ);
+    floor = [...L.floor, ...c.ledges];
+    groundText = GROUNDS[groundKey].text.replace('{max}', c.max).replace('{step}', c.step).replace('{q}', GROUNDS[groundKey].q);
   }
-  const floor = L.floor;
+  const text = 'Win by breaking more than half of the enemy off its core, or by putting its core off the floor. If neither happens in time, the machine with more of itself still attached wins.';
   const brief = [`The arena is ${L.text}.`, groundText, S.text, G.text, text].filter(Boolean).join(' ');
   return {
-    name: `Round ${seed}`, brief, keys: { layout: layoutKey, ground: groundKey, surface: surfaceKey, gravity: gravityKey, objective: objKey },
-    floor, walls: L.walls, terrain, surface: { grip: S.grip, slide: S.slide }, gravity: G.g,
-    spawn: [{ x: 0, z: -spawnZ }, { x: 0, z: spawnZ }], objective,
+    name: `Round ${seed}`, brief, keys: { layout: layoutKey, ground: groundKey, surface: surfaceKey, gravity: gravityKey },
+    floor, walls: L.walls, terrain: null, surface: { grip: S.grip, slide: S.slide }, gravity: G.g,
+    spawn: [{ x: 0, z: -spawnZ }, { x: 0, z: spawnZ }], objective: { type: 'knockout' },
   };
 }
 
@@ -220,22 +196,15 @@ export function edgeDistance(ch, x, z) {
 // A few fixed challenges to look at by name, plus the generator for everything else.
 export const NAMED = [
   OPEN,
-  { ...drawChallenge(101, { layout: 'open', surface: 'ice', gravity: 'normal', objective: 'fixed' }), name: 'Ice' },
-  { ...drawChallenge(102, { layout: 'open', surface: 'normal', gravity: 'low', objective: 'fixed' }), name: 'Low gravity' },
-  { ...drawChallenge(103, { layout: 'open', surface: 'normal', gravity: 'normal', objective: 'orbit' }), name: 'Wandering point' },
-  { ...drawChallenge(104, { layout: 'bridge', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Bridge' },
-  { ...drawChallenge(105, { layout: 'gap', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'The gap' },
-  { ...drawChallenge(106, { layout: 'pillars', surface: 'normal', gravity: 'normal', objective: 'jump' }), name: 'Pillars' },
-  { ...drawChallenge(107, { layout: 'open', surface: 'normal', gravity: 'normal', objective: 'deliver' }), name: 'Bring it home' },
-  { ...drawChallenge(108, { layout: 'small', surface: 'ice', gravity: 'normal', objective: 'deliver' }), name: 'Crate on ice' },
-  { ...drawChallenge(109, { layout: 'plinth', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'The plinth' },
-  { ...drawChallenge(113, { layout: 'ridges', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Ridges' },
-  { ...drawChallenge(121, { layout: 'open', ground: 'rolling', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Rolling ground' },
-  { ...drawChallenge(122, { layout: 'open', ground: 'mound', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'King of the hill' },
-  { ...drawChallenge(123, { layout: 'open', ground: 'hills', surface: 'normal', gravity: 'normal', objective: 'jump' }), name: 'Hill country' },
-  { ...drawChallenge(124, { layout: 'open', ground: 'basin', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'The basin' },
-  { ...drawChallenge(125, { layout: 'open', ground: 'ridge', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'The ridge' },
-  { ...drawChallenge(126, { layout: 'open', ground: 'hills', surface: 'ice', gravity: 'normal', objective: 'fixed' }), name: 'Icy hills' },
-  { ...drawChallenge(110, { layout: 'islands', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Islands' },
-  { ...drawChallenge(111, { layout: 'plinth', surface: 'normal', gravity: 'normal', objective: 'deliver' }), name: 'Crate on the plinth' },
+  { ...drawChallenge(201, { layout: 'open', ground: 'crags' }), name: 'Crags' },
+  { ...drawChallenge(202, { layout: 'open', ground: 'terraces' }), name: 'Terraces' },
+  { ...drawChallenge(203, { layout: 'open', ground: 'rubble' }), name: 'Rubble' },
+  { ...drawChallenge(204, { layout: 'small', ground: 'crags' }), name: 'Small crag' },
+  { ...drawChallenge(205, { layout: 'islands', ground: 'crags' }), name: 'Crag islands' },
+  { ...drawChallenge(206, { layout: 'bridge', ground: 'rubble' }), name: 'Bridge' },
+  { ...drawChallenge(105, { layout: 'gap' }), name: 'The gap' },
+  { ...drawChallenge(207, { layout: 'pillars', ground: 'terraces' }), name: 'Pillars' },
+  { ...drawChallenge(208, { layout: 'open', ground: 'crags', surface: 'ice' }), name: 'Icy crags' },
+  { ...drawChallenge(209, { layout: 'open', ground: 'crags', gravity: 'low' }), name: 'Low gravity crags' },
+  { ...drawChallenge(109, { layout: 'plinth' }), name: 'The plinth' },
 ];

@@ -2,11 +2,11 @@
 
 A 3D simulated arena where AI models build battlers from parts and pit them against each other. It has two goals: a test space where pre-training gives little help, and something fun to watch. What it means to reward is creative problem solving under conditions the builder has not seen before.
 
-This is an early prototype (v0.5). It has a family of challenges, a kit of plain pieces, breakable joints, five hand-built machines, and a viewer that replays a fight and shows what each machine says it is doing. No model calls yet: the machines here are written by hand, to the standard a model's would need to reach.
+This is an early prototype (v0.6). It has a family of challenges, a kit of plain pieces, breakable joints, five hand-built machines, and a viewer that replays a fight and shows what each machine says it is doing. No model calls yet: the machines here are written by hand, to the standard a model's would need to reach.
 
-The kit and the physics stay fixed. What changes from round to round is the challenge: the shape of the floor, the surface, gravity and the objective. A machine that only works in one arena does badly.
+The kit and the physics stay fixed. What changes from round to round is the challenge: the shape of the arena, the ground, the surface and gravity. There is one way to win everywhere: break the enemy apart or put it off the floor. A machine that only works in one arena does badly.
 
-There are no ready-made parts. No wheel unit, no track, no thruster, no gripper. A wheel is a rubber ball on a small geared motor; a leg is a hub with spokes; a gate is a beam on a motor with limits. Function has to be assembled, so machines end up as mechanisms and not as one idea on a box.
+There are no ready-made parts. No wheel unit, no track, no thruster, no gripper. A wheel is a rubber disc on a geared motor; a leg is a hub with spokes; a gate is a beam on a motor with limits. Function has to be assembled, so machines end up as mechanisms and not as one idea on a box.
 
 ## Try it
 
@@ -58,34 +58,37 @@ Leverage grows with the distance from the joint to the hit. Sharpness is the spe
 
 A wheel grips according to how hard it is pressed to the floor, which is mostly the weight of the machine above it. (The physics engine on its own uses the wheel's own weight, which left wheels with about a sixth of the grip they should have.) Braking distances now match the textbook figure, v² / 2μg.
 
-### Loose pieces
+### Earth physics
 
-A piece that breaks off loses its spin quickly, and a motor with no power still resists turning, so broken-off wheels and rails come to rest near where they fell instead of rolling off the floor.
+Nothing here coasts for ever. Four things slow and stop objects, and each is checked in the tests against the textbook figure.
+
+- **Sliding friction** on every contact, by material, limited by how hard the two things are pressed together. Anything sliding grips 0.8 as well as it did at rest; a skidding rubber tyre, 0.6.
+- **Rolling resistance.** A thing that rolls or pivots on another loses a little at the contact: a torque against its turning of (resistance x pressing force x distance to the contact). A steel ball rolling at 3 m/s stops in about 11 m.
+- **Air drag** that grows with the square of speed, from real air density and each body's area. It barely touches a steel shot and takes a fifth off the range of a light ball.
+- **Rest.** A loose piece that has stopped stays stopped until something hits it.
+
+A motor with no power still resists turning, so wheels on a broken-off axle drag. Two pieces that were built overlapping do not collide with each other even after they break apart.
 
 ### Shoving
 
-Two machines of the same weight and grip pushing head on is a deadlock, and it should be. Two things break it. A rubber tyre that is spinning or skidding has 0.6 of the grip of one that is rolling, so a machine that feeds its power in beats one that floors it. And a slow push loads no joints while a blow at speed does, so the machines here back off for a run-up instead of leaning.
+Two machines of the same weight and grip pushing head on is a deadlock, and it should be. A slow push loads no joints while a blow at speed does, so the machines here back off for a run-up instead of leaning.
 
 ### Challenges
 
 A challenge is plain data (`src/challenges.js`), and a program receives it whole as `s.challenge`, with the same conditions in words as `s.challenge.brief`. `drawChallenge(n)` draws round `n` from the family:
 
-- **Floor**: an open square, a small square, two platforms joined by a bridge, two platforms with a gap between them, a square with solid pillars, a square with a raised block in the middle, three islands in a row, or a square crossed by two low ridges that legs step over and wheels have to go round.
-- **Ground**: flat in about one round in five; otherwise real topography, given as a grid of heights with a post every metre (`s.challenge.terrain`). The kinds are rolling ground, steep hills, a broad hill with the point on top, a ring of high ground with passes through it, and a long ridge with a saddle. The ground is always flat at the starting places and along edges. The physics uses the same grid, so the height a program reads is the height the machine meets.
+- **Arena**: an open square, a small square, two platforms joined by a bridge, two platforms with a gap between them, a square with solid pillars, or three islands in a row.
+- **Ground**: broken rock in seven rounds out of eight. It is made of flat-topped ledges, each an entry in `s.challenge.floor` with a `top` height, cut from smooth noise so there are shelves and outcrops and not a scatter of obstacles. *Crags* have ledges up to 1.6 m with steps up to 0.6 m. *Terraces* are broad shelves 0.35 m apart. *Rubble* is small steps of 0.1 to 0.3 m everywhere. No step is higher than the round says, so nothing is walled in, but most steps are more than a wheel can take. Starting places are level pads.
 - **Surface**: normal, ice, or sticky.
 - **Gravity**: normal, a third, or half again as strong.
-- **Objective**: hold a fixed point, hold a point that circles, hold a point that jumps, or get a crate toward your own end.
-
-Sizes, speeds and masses are drawn too, so there are a few hundred kinds of round and no two are quite alike.
 
 ### How a round ends
 
-- **Ring-out**: a core that falls off the floor loses, whatever the objective.
-- **Hold a fixed point**: at 60 seconds, or sooner if nothing has moved for 8 seconds, the core closer to the point wins. If they are within 0.4 m of level, the machine that has had less broken off it wins; if that is level too, it is a draw.
-- **Hold a moving point**: five times a second the closer core scores. Most time closest wins.
-- **Crate**: whoever has the crate nearer their own end when the round stops wins.
+- **Ring-out**: a core that goes off the floor loses.
+- **Destroyed**: a machine that has had more than half its mass broken off its core loses.
+- **Otherwise**, at 90 seconds, or sooner if nothing has moved for 10 seconds, the machine with more of itself still attached wins, if the difference is 5% or more. If not, it is a draw.
 
-Damage only counts as a tie-break. A machine that cannot reach the point does better by pushing the enemy further from it than by waiting.
+There are no points to hold and nothing to fetch. Standing somewhere wins nothing.
 
 ### The fight log
 
@@ -93,11 +96,15 @@ Each fight produces three layers of data: a summary, timestamped events (hits, p
 
 ## The machines
 
-- **Bulwark** (29 parts): a six-wheeled shover with five plough blades on sprung hinges.
-- **Strider** (52 parts): six spoked legs held in a tripod gait by reading each hub angle. Climbs the plinth, which wheels cannot. Slows its gait in low gravity.
-- **Mangonel** (31 parts): three throwing arms. Works out the swing for the range and gravity, leads a moving target, backs off when too close, clubs with the arms once the shot is gone.
-- **Corral** (73 parts): a walled pen of separate bricks with two motor gates. Drives over the crate, shuts the gates, hauls it home.
-- **Span** (34 parts): a 5 m frame on four axles with two heavy weights on arms. With the weights at the tail it reaches its nose over a gap, then swings them over the top to the nose and brings its tail across. If the point is out over a gap it stops astride it.
+Design round 1 for the knockout game on broken ground. Four walk on six spoked legs, which step onto ledges; one has wheels.
+
+- **Strider** (52 parts, 165 kg): light and quick, with a steel beak. Goes for machines that are stuck or near an edge.
+- **Mantis** (58 parts): two steel hammers on 1.7 m arms that lie back along the body and come down in front of it. Squares up at striking distance and swings them in turn.
+- **Thresher** (54 parts): a steel bar spinning across its nose, turning upward at the front. Keeps its nose on the enemy and walks into it.
+- **Slinger** (68 parts): three throwing arms. Works out the swing for the range, the gravity and the difference in height, leads a moving target, and clubs with the arms once the shot is gone.
+- **Rover** (14 parts, 423 kg): the wheeled machine, with six of the biggest tyres the kit allows, a high frame and a steel ram. Fast on the flat. On crags and terraces it usually reports that there is no way its wheels can take.
+
+All of them share one idea of where to go: a machine near a drop is easier to put over it than to break, so get inboard of it and drive it out; otherwise close with it.
 
 ## Layout
 
@@ -108,15 +115,15 @@ Each fight produces three layers of data: a summary, timestamped events (hits, p
 - `src/viewer.js`, `src/page.html`: the replay page.
 - `scripts/build.mjs`: inlines everything into `dist/index.html`.
 - `test/fights.test.mjs`: build checks, repeatability, physics sanity checks, and one test per machine's signature move.
-- `old/`: the v0.4 bots, kept for reference. They use parts that no longer exist.
+- `old/`: earlier machines, kept for reference. `bots-v05.js` are the point-holding machines for flat floors; `bots-v04.js` use parts that no longer exist.
 
 ## Known rough edges
 
-- Damage is newly tuned (about six parts lost per fight in a sample). A broken joint takes everything beyond it, so a rail goes with its wheels; builds made of longer chains lose bigger pieces.
-- About a third of fights end with both machines standing still, most often when the point is somewhere neither can reach and both sensibly wait.
-- Low gravity is where machines still fall off on their own: braking distances are long and tall machines tip.
-- The machines here were designed for flat floors. Bulwark's plough had to be lifted clear of the ground to get onto a slope at all, low frames beach on rounded rises, and the planner uses one slope limit for every machine. None has been redesigned for hills yet.
-- Hills make fights about twice as slow to simulate. The ground is a thin surface, so a fast enough shot could pass through a hillside.
+- The machines are a first attempt at this game. Walkers lose a whole axle and both its legs to one good hit, so fights can be over in seconds. Hammers and throwing arms can break their own machine when it is tipped over.
+- Rover often wins on damage without going anywhere: walkers come to it and break themselves on it.
+- Where there is a gap with no way across, only a thrower can do anything, and the round is usually a draw.
+- A fight takes about as long to simulate as it lasts.
 - A fight replays exactly in one JavaScript engine, but the page in a browser and the scripts in Node can come out differently for the same seed.
-- Wheels are spheres in the physics. The engine is cannon-es, chosen because it is plain JavaScript; friction is corrected on top of it.
+- The engine is cannon-es, chosen because it is plain JavaScript; friction, rolling resistance and air drag are added on top of it.
+- Smooth terrain (a grid of heights) is still supported by the simulator and the helpers but no round uses it.
 - Compute per tick is not limited yet. There are no hidden test rounds yet.

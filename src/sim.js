@@ -8,14 +8,19 @@ import { LIB } from './lib.js';
 // A bot's frame: +z is forward, +y is up, +x is its left side.
 // ───────────────────────────────────────────────────────────────────────────
 export const CONFIG = {
-  version: 'v0.5',
+  version: 'v0.6',
   physics: { hz: 480, controlHz: 30, gravity: 9.81, solverIterations: 12 },
+  // The world the fight happens in. Rolling resistance is the fraction of the load a rolling thing loses as
+  // drag (a tyre on rough ground is about 0.05). Sliding grip is this fraction of grip at rest. Air is real
+  // air: density in kg per cubic metre and a blunt-body drag figure. Loose pieces that have stopped stay stopped.
+  ground: { rollRubber: 0.05, rollHard: 0.06, kinetic: 0.8, slideSpeed: 0.1, airDensity: 1.2, dragShape: 1.0, restSpeed: 0.12, restSeconds: 0.6 },
   arena: { size: 30, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2, slipSpeed: 0.8, spinGrip: 0.6 },
-  // A fight ends when a core leaves the arena, when nothing has moved for stalemateSeconds, or at maxSeconds.
+  // A fight ends when a core leaves the arena, when a machine has lost wreckShare of its mass, when nothing has
+  // moved for stalemateSeconds, or at maxSeconds. In the last two cases the more intact machine wins.
   // If no core has left, the core closer to the point wins (by at least centerMargin metres). If they are level,
   // the machine that has had less broken off it wins (by at least intactMargin of its mass). Otherwise a draw.
   // Nothing here rewards damage or movement for their own sake, so sitting still or shedding parts is allowed.
-  match: { maxSeconds: 60, stalemateSeconds: 8, stalemateRadius: 0.35, graceSeconds: 3, centerMargin: 0.4, intactMargin: 0.05 },
+  match: { maxSeconds: 90, stalemateSeconds: 10, stalemateRadius: 0.35, graceSeconds: 3, wreckShare: 0.5, intactMargin: 0.05 },
   budget: { mass: 500, cost: 300, box: [5, 4, 5], maxParts: 200 },
   // Limits on the control program itself. It may see everything, but it has to be small.
   program: { maxChars: 20000 },
@@ -23,7 +28,7 @@ export const CONFIG = {
   // Sharpness: a hit at speedRef m/s counts 1.5x, faster hits count for more.
   // A joint's load = impulse of the whole blow x share of the machine the joint drags x leverage x sharpness.
   // Sharpness is closing speed / speedRef, capped at maxSharp. Blows against the floor count for floorFactor.
-  breakage: { scale: 1, leverLength: 1.0, speedRef: 4, maxSharp: 2.5, floorFactor: 0.4, maxLever: 1.2, window: 0.05, looseSpinLoss: 0.7, deadMotorDrag: 0.3, logImpulse: 60 },
+  breakage: { scale: 1, leverLength: 1.0, speedRef: 4, maxSharp: 2.5, floorFactor: 0.4, maxLever: 1.2, window: 0.05, deadMotorDrag: 0.3, logImpulse: 60 },
   materials: {
     steel: { density: 780, strength: 1.5, costPerVolume: 70 },
     aluminium: { density: 270, strength: 1.0, costPerVolume: 90 },
@@ -196,7 +201,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
   const world = new CANNON.World();
   world.gravity.set(0, -cfg.physics.gravity * ch.gravity, 0);
   world.solver.iterations = cfg.physics.solverIterations;
-  world.allowSleep = false;
+  world.allowSleep = true;   // only loose pieces are ever allowed to come to rest; see assemble()
   world.defaultContactMaterial.friction = cfg.arena.slide * ch.surface.slide;
   world.defaultContactMaterial.restitution = 0.15;
 
@@ -212,7 +217,9 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
     const tag = (e) => `${e.bi.id}:${e.bj.id}:${e.ri.x}:${e.ri.y}:${e.ri.z}`;
     for (let i = result.length - 1; i >= 0; i--) {
       const e = result[i], p = e.si.partRef, q = e.sj.partRef;
-      if (!p || !q || p.bot !== q.bot || !p.live || !q.live) continue;
+      // That holds after they break apart too: two pieces built overlapping would otherwise be thrown apart
+      // with great force the moment they became separate bodies.
+      if (!p || !q || p.bot !== q.bot) continue;
       if (p.parent === q || q.parent === p || p.bot.clash.has(p.index * 100000 + q.index)) { dropped.add(tag(e)); result.splice(i, 1); }
     }
     if (dropped.size) for (let i = frictionResult.length - 1; i >= 0; i--) if (dropped.has(tag(frictionResult[i]))) frictionResult.splice(i, 1);
@@ -235,6 +242,13 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const slip = Math.hypot(rel.dot(a1.t), rel.dot(a2.t));
       a1.spin = a2.spin = slip > cfg.arena.slipSpeed ? cfg.arena.spinGrip : 1;
     }
+    // Everything else also grips a little less once it is sliding than it does at rest.
+    for (let i = 0; i + 1 < frictionResult.length; i += 2) {
+      const a1 = frictionResult[i], a2 = frictionResult[i + 1];
+      if (a1.bi !== a2.bi || a1.bj !== a2.bj || rubberAt.has(tag(a1))) continue;
+      const vi = a1.bi.velocity.vadd(a1.bi.angularVelocity.cross(a1.ri)), vj = a1.bj.velocity.vadd(a1.bj.angularVelocity.cross(a1.rj)), rel = vi.vsub(vj);
+      if (Math.hypot(rel.dot(a1.t), rel.dot(a2.t)) > cfg.ground.slideSpeed) a1.spin = a2.spin = cfg.ground.kinetic;
+    }
     for (const e of frictionResult) {
       const k = count.get(key(e)) || 1, press = pressed.get(key(e)), spin = e.spin || 1; e.spin = 1;
       if (press === undefined) { e.minForce *= (dt / k) * spin; e.maxForce *= (dt / k) * spin; continue; }
@@ -250,6 +264,37 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
     for (const [k2, v] of now) { const was = pressed.get(k2); now.set(k2, was === undefined ? v : was * 0.6 + v * 0.4); }
     pressed = now;
   };
+
+  // Rolling and air. A thing that rolls or pivots on another loses a little to the contact: a torque against
+  // its turning of (rolling resistance x pressing force x distance from its centre to the contact). And
+  // everything moving through the air is slowed by drag that grows with the square of its speed.
+  const tmpT = new CANNON.Vec3(), tmpW = new CANNON.Vec3();
+  const groundAndAir = () => {
+    const G = cfg.ground, soft = Math.max(0.5, Math.min(2, ch.surface.slide));
+    for (const e of world.contacts) {
+      const N = Math.max(0, e.multiplier || 0); if (N <= 0) continue;
+      const rubber = e.si.material === matRubber || e.sj.material === matRubber, onFloor = e.bi === floor || e.bj === floor;
+      const c = (rubber ? G.rollRubber : G.rollHard) * (onFloor ? soft : 1);
+      e.bi.angularVelocity.vsub(e.bj.angularVelocity, tmpW);
+      const w = tmpW.length(); if (w < 1e-4) continue;
+      for (const [b, r, sign] of [[e.bi, e.ri, -1], [e.bj, e.rj, 1]]) {
+        if (b.type !== CANNON.Body.DYNAMIC || b.sleepState === CANNON.Body.SLEEPING) continue;
+        const torque = c * N * Math.min(0.6, r.length());
+        tmpW.scale((sign * torque * dt) / w, tmpT);
+        b.invInertiaWorld.vmult(tmpT, tmpT);
+        const dw = tmpT.length(); if (dw > 0.5 * w) tmpT.scale((0.5 * w) / dw, tmpT);
+        b.angularVelocity.vadd(tmpT, b.angularVelocity);
+      }
+    }
+    for (const b of world.bodies) {
+      if (b.type !== CANNON.Body.DYNAMIC || b.sleepState === CANNON.Body.SLEEPING || !b.dragArea) continue;
+      const v = b.velocity.length(); if (v < 0.5) continue;
+      const k = Math.min(0.5, (0.5 * G.airDensity * G.dragShape * b.dragArea * v * dt) / b.mass);
+      b.velocity.scale(1 - k, b.velocity);
+    }
+  };
+  // The area a body shows to the air: for a convex shape seen from all sides, a quarter of its surface.
+  const faceArea = (sh) => (sh.type === CANNON.Shape.types.SPHERE ? Math.PI * sh.radius * sh.radius : sh.halfExtents ? 2 * (sh.halfExtents.x * sh.halfExtents.y + sh.halfExtents.y * sh.halfExtents.z + sh.halfExtents.z * sh.halfExtents.x) : Math.PI * sh.boundingSphereRadius * sh.boundingSphereRadius * 0.5);
 
   const matFloor = new CANNON.Material('floor');
   const matRubber = new CANNON.Material('rubber');
@@ -290,7 +335,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
   if (ch.objective.type === 'deliver') {
     const c = ch.objective.crate, sh = new CANNON.Box(new CANNON.Vec3(c.size / 2, c.size / 2, c.size / 2));
     sh.label = 'the crate'; sh.material = matHard;
-    const body = new CANNON.Body({ mass: c.mass, collisionFilterGroup: DEBRIS, collisionFilterMask: -1, angularDamping: 0.1 });
+    const body = new CANNON.Body({ mass: c.mass, collisionFilterGroup: DEBRIS, collisionFilterMask: -1, angularDamping: 0.01 });
     body.addShape(sh); body.position.set(c.x, floorHeight(geo, c.x, c.z) + c.size / 2 + 0.02, c.z);
     body.pv = new CANNON.Vec3(); body.pw = new CANNON.Vec3();
     world.addBody(body);
@@ -330,7 +375,8 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const y = (def.pos ? def.pos[1] : 0) - (def.rot ? Math.max(...specs[k].half) : specs[k].half[1]);
       lowest = Math.min(lowest, y);
     });
-    const origin = new CANNON.Vec3(sp.x, -lowest + 0.02 + floorHeight(geo, sp.x, sp.z), sp.z);
+    let ground = 0; for (let ax = -2.5; ax <= 2.5; ax += 0.5) for (let az = -2.5; az <= 2.5; az += 0.5) ground = Math.max(ground, floorHeight(geo, sp.x + ax, sp.z + az));   // clear of any ledge under the machine
+    const origin = new CANNON.Vec3(sp.x, -lowest + 0.02 + ground, sp.z);
     build.parts.forEach((def, k) => {
       const spec = specs[k];
       const lq = new CANNON.Quaternion();
@@ -425,14 +471,16 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       let heavy = list[0];
       for (const p of list) { M += p.mass; com.vadd(p.wpos.scale(p.mass), com); vel.vadd(p.wvel.scale(p.mass), vel); if (p.mass > heavy.mass) heavy = p; }
       com.scale(1 / M, com); vel.scale(1 / M, vel);
-      // Loose pieces lose their spin quickly, which stands in for rolling resistance: a broken-off wheel comes to rest instead of rolling away.
-      const body = new CANNON.Body({ mass: M, angularDamping: g.live ? 0.02 : cfg.breakage.looseSpinLoss, linearDamping: 0.01 });
+      // No blanket damping: what slows things is contact (friction, rolling resistance) and air. A piece that
+      // has broken off may come to rest for good; a live machine never sleeps.
+      const body = new CANNON.Body({ mass: M, angularDamping: 0.01, linearDamping: 0, allowSleep: !g.live, sleepSpeedLimit: cfg.ground.restSpeed, sleepTimeLimit: cfg.ground.restSeconds });
       body.position.copy(com); body.quaternion.copy(g.wquat);
       const qi = g.wquat.inverse();
       for (const p of list) {
         p.localPos = qi.vmult(p.wpos.vsub(com)); p.localQuat = qi.mult(p.wquat); p.body = body;
         body.addShape(p.shape, p.localPos, p.localQuat);
       }
+      body.dragArea = 0.7 * list.reduce((n, p) => n + faceArea(p.shape), 0);
       body.velocity.copy(vel); body.angularVelocity.copy(heavy.wang);
       body.pv = vel.clone(); body.pw = heavy.wang.clone();
       body.live = g.live; body.bot = bot; body.rootPart = g;
@@ -749,41 +797,22 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const w = out[0] ? 1 : 0;
       return end(w, 'ring_out', `${n[1 - w]} fell out of the arena. ${n[w]} wins by ring-out.`);
     }
-    const over = m.t >= cfg.match.maxSeconds;
-    const obj = ch.objective;
-    if (obj.type === 'deliver') {
-      const cb = crate.body, gone = cb.position.y < -cfg.arena.ringOutDepth;
-      const crateStill = cb.velocity.length() < 0.15;
-      if (!(gone || over || (still[0] && still[1] && crateStill))) return;
-      const why = gone ? 'The crate fell off the arena.' : over ? 'Time ran out.' : `Nothing moved for ${cfg.match.stalemateSeconds} seconds.`;
-      const z = cb.position.z;
-      if (Math.abs(z) < cfg.match.centerMargin) return end(null, 'crate_draw', `${why} It ended within ${cfg.match.centerMargin} m of the middle. Draw.`);
-      const w = z < 0 ? 0 : 1;
-      return end(w, gone ? 'crate_off' : 'crate_home', `${why} It ended ${Math.abs(z).toFixed(1)} m toward ${n[w]}'s end. ${n[w]} wins.`);
+    // Destroyed: more than the set share of a machine, by mass, has been broken off its core.
+    const whole = m.bots.map((b) => 1 - (b.brokenMass || 0) / b.startMass), pct = (i) => Math.round(whole[i] * 100);
+    const wrecked = whole.map((v) => v < 1 - cfg.match.wreckShare);
+    if (wrecked[0] || wrecked[1]) {
+      if (wrecked[0] && wrecked[1]) return end(null, 'double_wreck', 'Both machines were broken apart. Draw.');
+      const w = wrecked[0] ? 1 : 0;
+      return end(w, 'destroyed', `${n[1 - w]} was broken apart: only ${pct(1 - w)}% of it is still attached to its core. ${n[w]} wins.`);
     }
-    const tg = targetAt(ch, m.t);
-    const d = m.bots.map((b) => Math.hypot(b.core.body.position.x - tg.x, b.core.body.position.z - tg.z));
-    if (obj.scoring === 'time') {
-      if (Math.abs(d[0] - d[1]) >= cfg.match.centerMargin) m.score[d[0] < d[1] ? 0 : 1] += 0.2;
-      if (!over) return;
-      const sc = m.score.map((v) => Math.round(v * 10) / 10);
-      if (Math.abs(sc[0] - sc[1]) < 1) return end(null, 'time_draw', `Time ran out. Each bot was closest to the point for about ${sc[0].toFixed(0)} seconds. Draw.`);
-      const w = sc[0] > sc[1] ? 0 : 1;
-      return end(w, 'time_closest', `Time ran out. ${n[w]} wins: it was closest to the point for ${sc[w].toFixed(0)} seconds against ${sc[1 - w].toFixed(0)}.`);
-    }
-    const settled = still[0] && still[1];
-    if (settled || over) {
-      const why = settled ? `Nothing moved for ${cfg.match.stalemateSeconds} seconds.` : 'Time ran out.';
-      const kind = settled ? 'settled' : 'time';
-      if (Math.abs(d[0] - d[1]) < cfg.match.centerMargin) {
-        // Level on the objective: the machine that has had less of itself broken off wins, if the difference is clear.
-        const whole = m.bots.map((b) => 1 - (b.brokenMass || 0) / b.startMass);
-        if (Math.abs(whole[0] - whole[1]) >= cfg.match.intactMargin) { const w = whole[0] > whole[1] ? 0 : 1; return end(w, kind + '_intact', `${why} Both cores are about the same distance from the ${ch === OPEN ? 'centre' : 'point'}. ${n[w]} wins by being more intact: ${Math.round(whole[w] * 100)}% of it is still attached against ${Math.round(whole[1 - w] * 100)}%.`); }
-      }
-      if (Math.abs(d[0] - d[1]) < cfg.match.centerMargin) return end(null, kind + '_draw', `${why} Both cores are about the same distance from the ${ch === OPEN ? 'centre' : 'point'}. Draw.`);
-      const w = d[0] < d[1] ? 0 : 1;
-      return end(w, kind + '_center', `${why} ${n[w]} wins by holding the ${ch === OPEN ? 'centre' : 'point'}: its core is ${d[w].toFixed(1)} m from ${ch === OPEN ? 'the middle' : 'it'} against ${d[1 - w].toFixed(1)} m.`);
-    }
+    const over = m.t >= cfg.match.maxSeconds, settled = still[0] && still[1];
+    if (!(settled || over)) return;
+    // Nobody was destroyed or put out. The machine that is more intact wins, if the difference is clear.
+    const why = settled ? `Nothing moved for ${cfg.match.stalemateSeconds} seconds.` : 'Time ran out.';
+    const kind = settled ? 'settled' : 'time';
+    if (Math.abs(whole[0] - whole[1]) < cfg.match.intactMargin) return end(null, kind + '_draw', `${why} Neither machine was destroyed or put out, and they are about equally intact. Draw.`);
+    const w = whole[0] > whole[1] ? 0 : 1;
+    return end(w, kind + '_damage', `${why} ${n[w]} wins on damage: ${pct(w)}% of it is still attached against ${pct(1 - w)}%.`);
   }
 
   m.bots.forEach((bot) => { bot.restHeight = bot.core.body.position.y; });
@@ -798,7 +827,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
     for (const pr of props) { pr.body.pv.copy(pr.body.velocity); pr.body.pw.copy(pr.body.angularVelocity); }
     drivePistons();
     driveHinges();
-    world.step(dt); notePressure();
+    world.step(dt); notePressure(); groundAndAir();
     m.steps++; m.t = m.steps * dt;
     stress();
     // A broken-off part ignores the bot it came from until the two are clear of each other,
