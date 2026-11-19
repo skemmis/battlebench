@@ -198,6 +198,13 @@ const LAYOUTS = {
     const g = chRound(1.5 + r() * 1.5), z = 4 + g + 5;
     return { text: `three platforms in a row with ${g} m gaps between them; the middle one is 8 m square`, floor: [{ x: 0, z: -z, w: 24, d: 10 }, { x: 0, z, w: 24, d: 10 }, { x: 0, z: 0, w: 8, d: 8 }], walls: [], spawnZ: z, reach: 3, only: ['fixed', 'deliver'], where: 'on the middle platform' };
   },
+  ridges: (r) => {
+    // Low steps right across the floor, each with one opening. Anything that can step up goes straight over;
+    // anything that cannot has to weave through the openings.
+    const top = chRound(0.25 + r() * 0.15), floor = [{ x: 0, z: 0, w: 30, d: 30 }];
+    [-5, 5].forEach((z, i) => { const open = (i % 2 ? 1 : -1) * (6 + r() * 3), half = 3.6; floor.push({ x: (open - half - 15) / 2, z, w: open - half + 15, d: 0.7, top }, { x: (open + half + 15) / 2, z, w: 15 - open - half, d: 0.7, top }); });
+    return { text: `a square platform crossed by two ridges ${top} m high, each with one opening 7.2 m wide`, floor, walls: [], spawnZ: 12, reach: 2.5, only: ['fixed', 'orbit', 'jump'] };
+  },
   pillars: (r) => {
     const s = 30, walls = [];
     for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2 + r() * 0.8, d = 5 + r() * 4; walls.push({ x: chRound(Math.cos(a) * d), z: chRound(Math.sin(a) * d * 0.6), w: chRound(1.2 + r() * 1.8), d: chRound(1.2 + r() * 1.8), h: 2 }); }
@@ -219,7 +226,7 @@ const GRAVITIES = {
 function drawChallenge(seed, force = {}) {
   const r = chRng(seed * 7919 + 13);
   const pick = (obj, weights) => { const keys = Object.keys(weights); let t = r() * keys.reduce((n, k) => n + weights[k], 0); for (const k of keys) { t -= weights[k]; if (t <= 0) return k; } return keys[0]; };
-  const layoutKey = force.layout || pick(LAYOUTS, { open: 2.5, small: 1.5, bridge: 2, gap: 1.5, pillars: 1.5, plinth: 2, islands: 2 });
+  const layoutKey = force.layout || pick(LAYOUTS, { open: 2.5, small: 1.5, bridge: 2, gap: 1.5, pillars: 1.5, plinth: 2, islands: 2, ridges: 2 });
   const surfaceKey = force.surface || pick(SURFACES, { normal: 3, ice: 2, sticky: 1 });
   const gravityKey = force.gravity || pick(GRAVITIES, { normal: 3, low: 1.5, high: 1 });
   let objKey = force.objective || pick({}, { fixed: 2, orbit: 2, jump: 2, deliver: 2 });
@@ -296,6 +303,7 @@ const NAMED = [
   { ...drawChallenge(107, { layout: 'open', surface: 'normal', gravity: 'normal', objective: 'deliver' }), name: 'Bring it home' },
   { ...drawChallenge(108, { layout: 'small', surface: 'ice', gravity: 'normal', objective: 'deliver' }), name: 'Crate on ice' },
   { ...drawChallenge(109, { layout: 'plinth', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'The plinth' },
+  { ...drawChallenge(113, { layout: 'ridges', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Ridges' },
   { ...drawChallenge(110, { layout: 'islands', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Islands' },
   { ...drawChallenge(111, { layout: 'plinth', surface: 'normal', gravity: 'normal', objective: 'deliver' }), name: 'Crate on the plinth' },
 ];
@@ -374,9 +382,25 @@ const LIB = {
         if (d < edge[j]) { edge[j] = d; queue.push(j); }
       }
     }
-    g = { x0, z0, nx, nz, C, h, edge, cell: (x, z) => { const cx = Math.floor((x - x0) / C), cz = Math.floor((z - z0) / C); return cx < 0 || cz < 0 || cx >= nx || cz >= nz ? -1 : cz * nx + cx; }, pos: (i) => ({ x: x0 + ((i % nx) + 0.5) * C, z: z0 + (Math.floor(i / nx) + 0.5) * C }) };
+    g = { x0, z0, nx, nz, C, h, edge, steps: new Map(), cell: (x, z) => { const cx = Math.floor((x - x0) / C), cz = Math.floor((z - z0) / C); return cx < 0 || cz < 0 || cx >= nx || cz >= nz ? -1 : cz * nx + cx; }, pos: (i) => ({ x: x0 + ((i % nx) + 0.5) * C, z: z0 + (Math.floor(i / nx) + 0.5) * C }) };
     LIB_GRIDS.set(s.challenge, g);
     return g;
+  },
+  // How far each square is from the nearest step up that is too high to take from ground at height h0.
+  stepClear(g, limit) {
+    const key = Math.round(limit * 100);
+    let d = g.steps.get(key); if (d) return d;
+    const n = g.nx * g.nz, queue = []; d = new Float32Array(n).fill(99);
+    for (let i = 0; i < n; i++) if (g.h[i] > limit) { d[i] = 0; queue.push(i); }
+    for (let q = 0; q < queue.length; q++) {
+      const i = queue[q], cx = i % g.nx, cz = Math.floor(i / g.nx);
+      for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+        const ax = cx + dx, az = cz + dz; if ((!dx && !dz) || ax < 0 || az < 0 || ax >= g.nx || az >= g.nz) continue;
+        const j = az * g.nx + ax, v = d[i] + g.C * (dx && dz ? 1.41 : 1);
+        if (v < d[j] && v < 4) { d[j] = v; queue.push(j); }
+      }
+    }
+    g.steps.set(key, d); return d;
   },
   // Plan a way across the floor to (x, z), keeping "margin" metres from drops and walls and taking no step up
   // higher than "climb". Returns the next point to steer for, the place the plan ends, and whether that is the
@@ -384,6 +408,8 @@ const LIB = {
   plan(s, x, z, { margin = 1.5, climb = 0.15 } = {}) {
     const g = LIB.grid(s), start = g.cell(s.self.x, s.self.z);
     if (start < 0 || g.h[start] < 0) return { x, z, end: { x, z }, reachable: false, off: true, left: 0 };
+    // Keep clear of steps too high to climb as well, by the same margin.
+    const step = LIB.stepClear(g, g.h[start] + climb), side = margin;
     const from = new Int32Array(g.nx * g.nz).fill(-2), queue = [start];
     from[start] = -1;
     let best = start, bestD = Math.hypot(x - s.self.x, z - s.self.z);
@@ -395,6 +421,7 @@ const LIB = {
         if (from[j] !== -2 || g.h[j] < 0 || g.h[j] - g.h[i] > climb) continue;
         // Keep the margin, except that a machine already inside it may move toward open floor.
         if (g.edge[j] < margin && !(g.edge[i] < margin && g.edge[j] > g.edge[i])) continue;
+        if (step[j] < side && !(step[i] < side && step[j] > step[i])) continue;
         from[j] = i; queue.push(j);
         const p = g.pos(j), d = Math.hypot(x - p.x, z - p.z);
         if (d < bestD - 1e-6) { bestD = d; best = j; }
@@ -404,10 +431,12 @@ const LIB = {
     const reachable = bestD < 0.6 || (LIB.floorAt(s, x, z) && !LIB.inWall(s, x, z) && bestD <= margin + 0.8 && Math.abs(LIB.heightAt(s, x, z) - g.h[best]) <= climb), end = bestD < 0.6 ? { x, z } : g.pos(best);
     // Walk the plan back from its end and steer for the furthest point on it that is in a straight clear line.
     const chain = []; for (let i = best; i !== -1 && i !== -2; i = from[i]) chain.push(i);
+    // A straight run to a point on the plan must also keep its distance from steps too high to climb.
+    const wide = (p) => { const d = Math.hypot(p.x - s.self.x, p.z - s.self.z); for (let t = 1; t < d; t += 0.4) { const c = g.cell(s.self.x + ((p.x - s.self.x) * t) / d, s.self.z + ((p.z - s.self.z) * t) / d); if (c >= 0 && step[c] < side * 0.7 && step[c] < step[start]) return false; } return true; };
     let way = end, left = 0;
     for (let k = 0; k < chain.length; k++) {
       const p = k === 0 ? end : g.pos(chain[k]);
-      if (LIB.clear(s, p.x, p.z, margin * 0.7, climb)) { way = p; break; }
+      if (LIB.clear(s, p.x, p.z, margin * 0.7, climb) && wide(p)) { way = p; break; }
       way = p;
     }
     for (let k = 1; k < chain.length; k++) { const a = g.pos(chain[k - 1]), b = g.pos(chain[k]); left += Math.hypot(a.x - b.x, a.z - b.z); }
@@ -415,37 +444,30 @@ const LIB = {
   },
   // The fastest it is safe to be going with "room" metres of floor left ahead, given the round's grip and gravity.
   safeSpeed(s, room, grip = 1) { const a = 0.3 * grip * s.challenge.surface.grip * 9.81 * s.challenge.gravity; return Math.sqrt(2 * a * Math.max(0, room)); },
-  // How hard the machine can brake, in m/s2: a cautious guess from the round's grip and gravity, lowered to
-  // what guard() has measured if the program lends it its memory.
-  braking(s, { grip = 1, mem = null } = {}) {
-    const guess = 0.55 * grip * s.challenge.surface.grip * 9.81 * s.challenge.gravity, k = mem && mem._guard;
-    return k && k.n > 8 ? Math.max(guess * 0.15, Math.min(guess, k.a * 0.8)) : guess;
-  },
+  // How hard the machine can brake, in m/s2, from the round's grip and gravity. Cautious: a little over half
+  // of what a perfect stop on rubber would give.
+  braking(s, { grip = 1 } = {}) { return 0.55 * grip * s.challenge.surface.grip * 9.81 * s.challenge.gravity; },
   // Take a wanted drive (-1 to 1) and return one that will not take the machine off the floor: slowed when the
   // floor ahead is short, and reversed to brake when it is already going too fast to stop, or sliding sideways
   // toward a drop. "length" is how far the machine reaches ahead of its core, "top" its top speed.
-  guard(s, want, { grip = 1, length = 1.5, top = 4, climb = 0.15, mem = null } = {}) {
+  guard(s, want, { grip = 1, length = 1.5, top = 4, climb = 0.15, mem = null, feed = true } = {}) {
     const me = s.self; let drive = want, braking = false;
-    // How hard the machine can brake: a cautious guess from the round's grip and gravity, corrected by how
-    // quickly it has actually been changing speed when driven hard (if the program lends its memory).
-    let decel = 0.3 * grip * s.challenge.surface.grip * 9.81 * s.challenge.gravity;
-    const k = mem ? (mem._guard = mem._guard || { v: 0, cmd: 0, a: null, n: 0, t: -1 }) : null;
-    if (k && k.t !== s.t) {
-      if (Math.abs(k.cmd) > 0.3 && Math.abs(k.cmd * top - me.forwardSpeed) > 0.25 * top) { const dv = Math.abs(me.forwardSpeed - k.v) * 30; k.a = k.a === null ? dv : k.a * 0.9 + dv * 0.1; k.n++; }
-      k.v = me.forwardSpeed; k.t = s.t;
-    }
-    decel = LIB.braking(s, { grip, mem });
+    let decel = 0;
+    decel = LIB.braking(s, { grip });
     const safe = (room) => Math.sqrt(2 * decel * Math.max(0, room));
     const dir = drive < 0 || (drive === 0 && me.forwardSpeed < 0) ? Math.PI : 0;
-    const roomAhead = LIB.runAhead(s, dir, 9, 0, climb) - length;
+    // Only drops and walls are worth braking for. A step up is something to bump into, not fall off.
+    const roomAhead = LIB.runAhead(s, dir, 9, 0, 99) - length;
     const along = Math.abs(me.forwardSpeed), limit = safe(roomAhead);
     if (along > limit + 0.3 && (me.forwardSpeed > 0) === (dir === 0)) { drive = me.forwardSpeed > 0 ? -1 : 1; braking = true; }
     else if (Math.abs(drive) * top > limit) drive = Math.sign(drive) * Math.min(Math.abs(drive), limit / top);
     if (!braking && me.speed > 0.8) {
-      const roomSlide = LIB.run(s, me.x, me.z, me.vx, me.vz, 9, 0, climb) - length;
+      const roomSlide = LIB.run(s, me.x, me.z, me.vx, me.vz, 9, 0, 99) - length;
       if (me.speed > safe(roomSlide) + 0.3) { drive = me.forwardSpeed > 0 ? -1 : 1; braking = true; }
     }
-    if (k) k.cmd = drive;
+    // Feed the power in: a tyre that spins or locks grips less, so never ask the wheels to turn much faster or
+    // slower than the ground is passing. Full grip is kept for pulling away, for braking and for shoving.
+    if (feed) drive = LIB.clamp(drive * top, me.forwardSpeed - 0.7, me.forwardSpeed + 0.7) / top;
     return { drive, braking, room: roomAhead };
   },
   // How far a point is from the nearest drop or wall (to the nearest half metre or so).
@@ -455,14 +477,16 @@ const LIB = {
   // Drive to (x, z) and stay on the floor. Plans a way round gaps and walls, slows for corners and on arrival,
   // and brakes in time for an edge, allowing for how slippery the floor is and how long the machine is.
   // Returns { drive, turn, arrived, reachable, braking, left } where left is the distance still to go.
-  nav(s, x, z, { margin = 1.5, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null } = {}) {
+  nav(s, x, z, { margin = 1.5, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null, feed = true } = {}) {
     const me = s.self, p = LIB.plan(s, x, z, { margin, climb });
     const w = LIB.to(s, p.x, p.z), endD = Math.hypot(p.end.x - me.x, p.end.z - me.z), last = Math.hypot(p.x - p.end.x, p.z - p.end.z) < 0.3;
     // Once arrived, stay arrived until well off the spot, so the machine does not fidget.
     const held = mem && mem._at && Math.hypot(mem._at.x - p.end.x, mem._at.z - p.end.z) < 0.5 && endD < stopAt * 3 + 0.3;
     const c = held ? { drive: 0, turn: 0, arrived: true } : LIB.steer(w.bearing, last ? endD : 9, { stopAt, reverse, speed });
     if (mem) mem._at = c.arrived && last ? (held ? mem._at : { x: p.end.x, z: p.end.z }) : null;
-    const gd = LIB.guard(s, c.drive, { grip, length, top, climb, mem }), drive = gd.drive, braking = gd.braking;
+    const gd = LIB.guard(s, c.drive, { grip, length, top, climb, mem, feed }), drive = gd.drive, braking = gd.braking;
+    // While the wheels are being fed in gently, steer gently too, so neither side is asked to stand still.
+    if (feed && Math.abs(c.drive) > 0.3 && Math.abs(drive) < Math.abs(c.drive) && !braking) c.turn = LIB.clamp(c.turn, -0.5 * Math.abs(drive), 0.5 * Math.abs(drive));
     return { drive, turn: c.turn, arrived: c.arrived && last, reachable: p.reachable, braking, left: endD, end: p.end };
   },
   // Turn a bearing and distance into drive and turn for a machine that steers by driving its two sides at
@@ -489,7 +513,7 @@ const LIB = {
 const CONFIG = {
   version: 'v0.5',
   physics: { hz: 480, controlHz: 30, gravity: 9.81, solverIterations: 12 },
-  arena: { size: 30, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2 },
+  arena: { size: 30, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2, slipSpeed: 0.8, spinGrip: 0.6 },
   // A fight ends when a core leaves the arena, when nothing has moved for stalemateSeconds, or at maxSeconds.
   // If no core has left, the core closer to the point wins (by at least centerMargin metres). If they are level,
   // the machine that has had less broken off it wins (by at least intactMargin of its mass). Otherwise a draw.
@@ -702,10 +726,22 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
     // carries the machine above it. Use the pressing force the solver found for this pair on the last step. A
     // pair that has only just touched has no such figure yet and falls back to the lighter body's weight.
     const gAbs = Math.abs(world.gravity.y) || 1;
+    // A rubber tyre that is spinning or skidding grips less than one that is rolling: above a small slip speed
+    // its grip drops to cfg.arena.spinGrip of normal. Driving the wheels no faster than the ground is passing
+    // keeps full grip, so a machine that feeds its power in wins a shove against one that just floors it.
+    const rubberAt = new Set();
+    for (const e of result) if ((e.si.material === matRubber) !== (e.sj.material === matRubber) && (e.si.material === matFloor || e.sj.material === matFloor)) rubberAt.add(tag(e));
+    for (let i = 0; i + 1 < frictionResult.length; i += 2) {
+      const a1 = frictionResult[i], a2 = frictionResult[i + 1];
+      if (a1.bi !== a2.bi || a1.bj !== a2.bj || !rubberAt.has(tag(a1))) continue;
+      const vi = a1.bi.velocity.vadd(a1.bi.angularVelocity.cross(a1.ri)), vj = a1.bj.velocity.vadd(a1.bj.angularVelocity.cross(a1.rj)), rel = vi.vsub(vj);
+      const slip = Math.hypot(rel.dot(a1.t), rel.dot(a2.t));
+      a1.spin = a2.spin = slip > cfg.arena.slipSpeed ? cfg.arena.spinGrip : 1;
+    }
     for (const e of frictionResult) {
-      const k = count.get(key(e)) || 1, press = pressed.get(key(e));
-      if (press === undefined) { e.minForce *= dt / k; e.maxForce *= dt / k; continue; }
-      const reduced = 1 / ((e.bi.invMass + e.bj.invMass) || 1), mu = e.maxForce / (gAbs * reduced), lim = (mu * press * dt) / k;
+      const k = count.get(key(e)) || 1, press = pressed.get(key(e)), spin = e.spin || 1; e.spin = 1;
+      if (press === undefined) { e.minForce *= (dt / k) * spin; e.maxForce *= (dt / k) * spin; continue; }
+      const reduced = 1 / ((e.bi.invMass + e.bj.invMass) || 1), mu = e.maxForce / (gAbs * reduced), lim = (mu * press * dt * spin) / k;
       e.minForce = -lim; e.maxForce = lim;
     }
   };
@@ -1316,6 +1352,21 @@ function shoveTarget(s, lib, { margin = 1.2, climb = 0.15, lead = 1.2 } = {}) {
   return onPointSide ? { x: foe.x, z: foe.z, charge: true } : { x: foe.x + (ux / un) * 2.6, z: foe.z + (uz / un) * 2.6, charge: false };
 }
 
+// Ram the enemy, and if it does not give, do not sit there pushing: back off for a run-up and hit it again at
+// speed. A blow at speed loads joints; a slow push loads nothing.
+function ram(s, lib, mem, x, z, SELF) {
+  const me = s.self, foe = s.enemy;
+  if (mem.ramBack && s.t < mem.ramBack) {
+    const b = lib.to(s, foe.x, foe.z), g = lib.guard(s, -1, SELF);
+    if (foe.distance > 5.5 || g.room < 0.3) mem.ramBack = 0;
+    return { drive: g.drive, turn: lib.clamp(b.bearing * 2, -0.5, 0.5), braking: false, say: 'it will not budge: backing off for a run-up' };
+  }
+  mem.ramStall = foe.distance < 4.2 && me.speed < 0.4 ? (mem.ramStall || 0) + 1 : 0;
+  if (mem.ramStall > 30) { mem.ramStall = 0; mem.ramBack = s.t + 1.5; }
+  const b = lib.to(s, x, z), c = lib.steer(b.bearing, 9, {}), g = lib.guard(s, c.drive, SELF);
+  return { drive: g.drive, turn: c.turn, braking: g.braking, say: null };
+}
+
 // ── Bulwark ────────────────────────────────────────────────────────────────
 const bulwarkFrame = ladder({ width: 1.5, length: 2.4, wheels: 3, slickEnds: true });
 const BULWARK = {
@@ -1341,7 +1392,7 @@ function bulwarkProgram(s, out, mem, lib) {
   const charge = (x, z) => { const b = lib.to(s, x, z), c = lib.steer(b.bearing, 9, {}), g = lib.guard(s, c.drive, SELF); drive(g.drive, c.turn); return g; };
   // Stuck against something for a second: remember it and wriggle free.
   // (Only counts when I was trying to move: standing still on purpose is not being stuck.)
-  mem.stuck = Math.abs(me.forwardSpeed) < 0.15 && Math.abs(me.turnRate) < 0.2 && s.t > 2 && (mem.push || 0) > 0.4 ? (mem.stuck || 0) + 1 : 0;
+  mem.stuck = Math.abs(me.forwardSpeed) < 0.15 && Math.abs(me.turnRate) < 0.2 && s.t > 2 && (mem.push || 0) > 0.1 ? (mem.stuck || 0) + 1 : 0;
   // Pushing on the enemy and getting nowhere is different: give it three seconds, then come at it from another side.
   const shoving = foe.distance < 3.4;
   if (mem.stuck > (shoving ? 90 : 40)) { mem.freeUntil = s.t + (shoving ? 1.8 : 1.0); mem.freeTurn = mem.freeTurn > 0 ? -0.7 : 0.7; mem.stuck = 0; mem.freeWhy = shoving ? 'it will not budge, backing off to hit it from another side' : 'stuck, backing out'; }
@@ -1393,8 +1444,8 @@ function bulwarkProgram(s, out, mem, lib) {
   // The enemy is on the point and I am not: hit it where it will be, if there is room to stop afterwards.
   if (foeToT < 2.4 && toT.distance > foeToT - 0.7 && lib.clear(s, foe.x, foe.z, 0.6)) {
     const hit = lib.intercept(s, foe, 3.5);
-    out.say = 'driving the enemy off the point';
-    const g = charge(hit.x, hit.z); if (g.braking) out.say = 'not following it over the edge';
+    const r = ram(s, lib, mem, hit.x, hit.z, SELF); drive(r.drive, r.turn); mem.push = 0;
+    out.say = r.say || (r.braking ? 'not following it over the edge' : 'driving the enemy off the point');
     return;
   }
   out.say = path.kind === 'fixed' ? 'going for the point' : 'chasing the point';
@@ -1458,7 +1509,7 @@ function striderProgram(s, out, mem, lib) {
       out[id] = lib.clamp((v + 6 * (ph - j.angle)) / 10);
     }
   };
-  const CLIMB = 1.0, SELF = { length: 1.9, top: 2.4, margin: 2.0, climb: CLIMB, grip: 0.8, mem };
+  const CLIMB = 1.0, SELF = { length: 1.9, top: 2.4, margin: 2.0, climb: CLIMB, grip: 0.8, mem, feed: false };
   if (me.upright < 0.2) { out.say = 'on my back, kicking to roll over'; for (const id of L) out[id] = 1; for (const id of R) out[id] = -1; return; }
   let aim, say, stopAt = 0.4;
   if (s.crate) {
@@ -1640,7 +1691,7 @@ function corralProgram(s, out, mem, lib) {
   // The pen reaches 2.4 m ahead of the core and 1.2 m behind, so the two ends need different room.
   const FWD = { length: 2.6, top: 4, margin: 2.8, mem }, BACK = { length: 1.4, top: 4, margin: 2.8, mem };
   const safe = (d) => lib.guard(s, d, d >= 0 ? FWD : BACK).drive;
-  mem.stuck = Math.abs(me.forwardSpeed) < 0.12 && Math.abs(me.turnRate) < 0.15 && s.t > 2 && (mem.push || 0) > 0.4 ? (mem.stuck || 0) + 1 : 0;
+  mem.stuck = Math.abs(me.forwardSpeed) < 0.12 && Math.abs(me.turnRate) < 0.15 && s.t > 2 && (mem.push || 0) > 0.1 ? (mem.stuck || 0) + 1 : 0;
   if (mem.stuck > 45) { mem.freeUntil = s.t + 1.2; mem.stuck = 0; mem.freeTurn = mem.freeTurn > 0 ? -0.6 : 0.6; }
   if (s.t < (mem.freeUntil || 0)) { out.say = 'jammed, backing off to try another line'; gates(false); drive(safe(-0.7), mem.freeTurn); return; }
   mem.parked = false;
@@ -1679,9 +1730,8 @@ function corralProgram(s, out, mem, lib) {
     if (plan.left / 3 > left + 0.5) { aim = next; say = 'cannot make this one, heading to the next point'; }
   }
   if (plan.reachable && aim === tg && foeToT < 2.6 && g.distance > foeToT - 0.7 && lib.clear(s, foe.x, foe.z, 0.8)) {
-    const hit = lib.intercept(s, foe, 3), hb = lib.to(s, hit.x, hit.z);
-    out.say = 'ramming the enemy off the point with the gates shut';
-    const c = lib.steer(hb.bearing, 9, {}); drive(safe(c.drive), c.turn); return;
+    const hit = lib.intercept(s, foe, 3), r = ram(s, lib, mem, hit.x, hit.z, FWD);
+    out.say = r.say || 'ramming the enemy off the point with the gates shut'; drive(r.drive, r.turn); mem.push = 0; return;
   }
   const n = lib.nav(s, aim.x, aim.z, { ...FWD, stopAt: 0.4, reverse: true });
   mem.idle = me.speed < 0.15 ? (mem.idle || 0) + 1 : 0;
@@ -1818,8 +1868,8 @@ function spanProgram(s, out, mem, lib) {
     const tg = s.target, foeToT = Math.hypot(foe.x - tg.x, foe.z - tg.z), d = lib.to(s, tg.x, tg.z).distance;
     if (P && P.tooWide !== undefined) say = P.tooWide ? `the ${P.tooWide.toFixed(1)} m gap is too wide for me, holding this side` : 'no way to the point, holding the nearest ground';
     else if (foeToT < 2.6 && d > foeToT - 0.7 && lib.clear(s, foe.x, foe.z, 0.8)) {
-      const hit = lib.intercept(s, foe, 3), hb = lib.to(s, hit.x, hit.z), c = lib.steer(hb.bearing, 9, {}), g = lib.guard(s, c.drive, SELF);
-      out.say = g.braking ? 'not following it over the edge' : 'shouldering the enemy off the point'; drive(g.drive, c.turn); return;
+      const hit = lib.intercept(s, foe, 3), r = ram(s, lib, mem, hit.x, hit.z, SELF);
+      out.say = r.say || (r.braking ? 'not following it over the edge' : 'shouldering the enemy off the point'); drive(r.drive, r.turn); return;
     }
   }
   const n = lib.nav(s, goal.x, goal.z, { ...SELF, stopAt, reverse: true });
@@ -2136,6 +2186,8 @@ const SHOWS = [
   { label: 'Ranging shots', a: 'Mangonel', b: 'Corral', ch: 'Open floor', seed: 1, watch: 'Mangonel works out the swing speed for the range, aims where Corral will be when the ball lands, backs off when it is too close to throw, and uses its arms as clubs once the balls are gone.' },
   { label: 'The pen', a: 'Corral', b: 'Bulwark', ch: 'Bring it home', seed: 1, watch: 'Both want the crate. Corral drives its pen over it, shuts the gates and hauls it home. Bulwark has to get behind it and shove.' },
   { label: 'The climb', a: 'Strider', b: 'Bulwark', ch: 'The plinth', seed: 1, watch: 'The point is on a raised block. Wheels cannot climb it. Legs can.' },
+  { label: 'Over the ridges', a: 'Strider', b: 'Bulwark', ch: 'Ridges', seed: 1, watch: 'Two low ridges cross the floor, each with one opening. Strider steps straight over them. Wheels have to find a way round or risk bashing over, and then the two contest the point.' },
+  { label: 'Run-up', a: 'Bulwark', b: 'Corral', ch: 'Open floor', seed: 1, watch: 'Two heavy machines of the same weight cannot push each other. So Bulwark does not lean on Corral: it backs off for a run-up and hits again at speed, and it is Bulwark that comes off worse.' },
   { label: 'On ice', a: 'Bulwark', b: 'Corral', ch: 'Ice', seed: 1, watch: 'A quarter of the usual grip. Each machine measures how slowly it is picking up speed and brakes early to match.' },
   { label: 'Coming apart', a: 'Strider', b: 'Mangonel', ch: 'Wandering point', seed: 3, watch: 'Hits take pieces off. A joint gives way when the whole blow, at the speed the parts met, is more than it can carry, and the joint nearest the blow goes first.' },
   { label: 'Low gravity', a: 'Mangonel', b: 'Span', ch: 'Low gravity', seed: 1, watch: 'A third of normal gravity. The same throw goes three times as far, so Mangonel swings more gently.' },

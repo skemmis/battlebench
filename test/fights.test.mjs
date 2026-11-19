@@ -123,8 +123,9 @@ test('floor friction matches the textbook: a sliding slab stops where it should,
     for (let i = 0; i < 480 * 4; i++) m.step();
     return b.position.x - x0;
   };
-  // Distance = speed squared / (2 x friction x gravity): 1.53 m at 0.3 and 0.46 m at 1.0.
-  assert.ok(Math.abs(slide('aluminium') - 1.53) < 0.15); assert.ok(Math.abs(slide('rubber') - 0.46) < 0.1);
+  // Distance = speed squared / (2 x friction x gravity): 1.53 m at 0.3. Rubber that is skidding has 0.6 of its
+  // rolling grip, so it stops in about 0.76 m, not the 0.46 m full grip would give.
+  assert.ok(Math.abs(slide('aluminium') - 1.53) < 0.15); const rub = slide('rubber'); assert.ok(rub > 0.5 && rub < 0.95, `rubber slid ${rub}`);
 });
 
 test('parts of one machine collide with each other: an arm swung down stops on its own deck', () => {
@@ -148,7 +149,7 @@ test('the route planner goes round a gap when it can and says so when it cannot'
 });
 
 test('machines stop for edges: on ice in low gravity nobody drives off on their own', () => {
-  const ch = drawChallenge(1);
+  const ch = drawChallenge(1, { layout: 'gap', surface: 'ice', gravity: 'low', objective: 'fixed' });
   for (const r of ALL) { const m = createMatch({ builds: [r.build, BRICK], programs: [r.program, idle], seed: 1, challenge: ch }).run(); assert.ok(!(m.result.reason === 'ring_out' && m.result.winner !== 0), r.build.name); }
 });
 
@@ -168,6 +169,6 @@ test('the long machine crosses a gap by shifting its weight, and stops astride o
   assert.equal(a.result.winner, 0); assert.ok(Math.abs(a.bots[0].core.body.position.z) < 3, 'on the middle island');
   const b = createMatch({ builds: [span.build, BRICK], programs: [span.program, idle], seed: 1, challenge: named('The gap') }).run();
   assert.equal(b.result.winner, 0); assert.ok(Math.abs(b.bots[0].core.body.position.z) < 1 && b.bots[0].core.body.position.y > 0.2, 'astride the gap');
-  const c = createMatch({ builds: [span.build, BRICK], programs: [span.program, idle], seed: 1, challenge: drawChallenge(1) }).run();
+  const c = createMatch({ builds: [span.build, BRICK], programs: [span.program, idle], seed: 1, challenge: drawChallenge(1, { layout: 'gap', surface: 'ice', gravity: 'low', objective: 'fixed' }) }).run();
   assert.ok(Math.abs(c.bots[0].core.body.position.z) < 1, 'astride the gap on ice in low gravity');
 });

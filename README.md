@@ -42,7 +42,7 @@ Parts of one machine collide with each other unless they were built touching, so
 
 The program sees everything: both machines' position, speed and heading, every part with its position and whether it is still attached, joint angles, loose parts, the challenge, the target or crate, and the score. It is limited in size (20,000 characters), not in what it can see.
 
-`src/lib.js` is a small helper library passed to every program: bearings and interception, a map of the floor, a route planner that goes round gaps and walls and says when there is no way, and a guard that keeps a machine from driving off an edge. The guard works out braking distance from the round's grip and gravity, then corrects it by measuring how the machine actually picks up speed. Strategy stays in the program.
+`src/lib.js` is a small helper library passed to every program: bearings and interception, a map of the floor, a route planner that goes round gaps and walls and says when there is no way, and a guard that keeps a machine from driving off an edge. The guard works out braking distance from the round's grip and gravity, and feeds power to the wheels no faster than the ground is passing so they keep their grip. Strategy stays in the program.
 
 A fight is simulated in full first and then replayed, so the same seed always gives the same fight.
 
@@ -58,11 +58,15 @@ Leverage grows with the distance from the joint to the hit. Sharpness is the spe
 
 A wheel grips according to how hard it is pressed to the floor, which is mostly the weight of the machine above it. (The physics engine on its own uses the wheel's own weight, which left wheels with about a sixth of the grip they should have.) Braking distances now match the textbook figure, v² / 2μg.
 
+### Shoving
+
+Two machines of the same weight and grip pushing head on is a deadlock, and it should be. Two things break it. A rubber tyre that is spinning or skidding has 0.6 of the grip of one that is rolling, so a machine that feeds its power in beats one that floors it. And a slow push loads no joints while a blow at speed does, so the machines here back off for a run-up instead of leaning.
+
 ### Challenges
 
 A challenge is plain data (`src/challenges.js`), and a program receives it whole as `s.challenge`, with the same conditions in words as `s.challenge.brief`. `drawChallenge(n)` draws round `n` from the family:
 
-- **Floor**: an open square, a small square, two platforms joined by a bridge, two platforms with a gap between them, a square with solid pillars, a square with a raised block in the middle, or three islands in a row.
+- **Floor**: an open square, a small square, two platforms joined by a bridge, two platforms with a gap between them, a square with solid pillars, a square with a raised block in the middle, three islands in a row, or a square crossed by two low ridges that legs step over and wheels have to go round.
 - **Surface**: normal, ice, or sticky.
 - **Gravity**: normal, a third, or half again as strong.
 - **Objective**: hold a fixed point, hold a point that circles, hold a point that jumps, or get a crate toward your own end.

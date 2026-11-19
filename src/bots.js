@@ -45,6 +45,21 @@ function shoveTarget(s, lib, { margin = 1.2, climb = 0.15, lead = 1.2 } = {}) {
   return onPointSide ? { x: foe.x, z: foe.z, charge: true } : { x: foe.x + (ux / un) * 2.6, z: foe.z + (uz / un) * 2.6, charge: false };
 }
 
+// Ram the enemy, and if it does not give, do not sit there pushing: back off for a run-up and hit it again at
+// speed. A blow at speed loads joints; a slow push loads nothing.
+function ram(s, lib, mem, x, z, SELF) {
+  const me = s.self, foe = s.enemy;
+  if (mem.ramBack && s.t < mem.ramBack) {
+    const b = lib.to(s, foe.x, foe.z), g = lib.guard(s, -1, SELF);
+    if (foe.distance > 5.5 || g.room < 0.3) mem.ramBack = 0;
+    return { drive: g.drive, turn: lib.clamp(b.bearing * 2, -0.5, 0.5), braking: false, say: 'it will not budge: backing off for a run-up' };
+  }
+  mem.ramStall = foe.distance < 4.2 && me.speed < 0.4 ? (mem.ramStall || 0) + 1 : 0;
+  if (mem.ramStall > 30) { mem.ramStall = 0; mem.ramBack = s.t + 1.5; }
+  const b = lib.to(s, x, z), c = lib.steer(b.bearing, 9, {}), g = lib.guard(s, c.drive, SELF);
+  return { drive: g.drive, turn: c.turn, braking: g.braking, say: null };
+}
+
 // ── Bulwark ────────────────────────────────────────────────────────────────
 const bulwarkFrame = ladder({ width: 1.5, length: 2.4, wheels: 3, slickEnds: true });
 export const BULWARK = {
@@ -70,7 +85,7 @@ export function bulwarkProgram(s, out, mem, lib) {
   const charge = (x, z) => { const b = lib.to(s, x, z), c = lib.steer(b.bearing, 9, {}), g = lib.guard(s, c.drive, SELF); drive(g.drive, c.turn); return g; };
   // Stuck against something for a second: remember it and wriggle free.
   // (Only counts when I was trying to move: standing still on purpose is not being stuck.)
-  mem.stuck = Math.abs(me.forwardSpeed) < 0.15 && Math.abs(me.turnRate) < 0.2 && s.t > 2 && (mem.push || 0) > 0.4 ? (mem.stuck || 0) + 1 : 0;
+  mem.stuck = Math.abs(me.forwardSpeed) < 0.15 && Math.abs(me.turnRate) < 0.2 && s.t > 2 && (mem.push || 0) > 0.1 ? (mem.stuck || 0) + 1 : 0;
   // Pushing on the enemy and getting nowhere is different: give it three seconds, then come at it from another side.
   const shoving = foe.distance < 3.4;
   if (mem.stuck > (shoving ? 90 : 40)) { mem.freeUntil = s.t + (shoving ? 1.8 : 1.0); mem.freeTurn = mem.freeTurn > 0 ? -0.7 : 0.7; mem.stuck = 0; mem.freeWhy = shoving ? 'it will not budge, backing off to hit it from another side' : 'stuck, backing out'; }
@@ -122,8 +137,8 @@ export function bulwarkProgram(s, out, mem, lib) {
   // The enemy is on the point and I am not: hit it where it will be, if there is room to stop afterwards.
   if (foeToT < 2.4 && toT.distance > foeToT - 0.7 && lib.clear(s, foe.x, foe.z, 0.6)) {
     const hit = lib.intercept(s, foe, 3.5);
-    out.say = 'driving the enemy off the point';
-    const g = charge(hit.x, hit.z); if (g.braking) out.say = 'not following it over the edge';
+    const r = ram(s, lib, mem, hit.x, hit.z, SELF); drive(r.drive, r.turn); mem.push = 0;
+    out.say = r.say || (r.braking ? 'not following it over the edge' : 'driving the enemy off the point');
     return;
   }
   out.say = path.kind === 'fixed' ? 'going for the point' : 'chasing the point';
@@ -187,7 +202,7 @@ export function striderProgram(s, out, mem, lib) {
       out[id] = lib.clamp((v + 6 * (ph - j.angle)) / 10);
     }
   };
-  const CLIMB = 1.0, SELF = { length: 1.9, top: 2.4, margin: 2.0, climb: CLIMB, grip: 0.8, mem };
+  const CLIMB = 1.0, SELF = { length: 1.9, top: 2.4, margin: 2.0, climb: CLIMB, grip: 0.8, mem, feed: false };
   if (me.upright < 0.2) { out.say = 'on my back, kicking to roll over'; for (const id of L) out[id] = 1; for (const id of R) out[id] = -1; return; }
   let aim, say, stopAt = 0.4;
   if (s.crate) {
@@ -369,7 +384,7 @@ export function corralProgram(s, out, mem, lib) {
   // The pen reaches 2.4 m ahead of the core and 1.2 m behind, so the two ends need different room.
   const FWD = { length: 2.6, top: 4, margin: 2.8, mem }, BACK = { length: 1.4, top: 4, margin: 2.8, mem };
   const safe = (d) => lib.guard(s, d, d >= 0 ? FWD : BACK).drive;
-  mem.stuck = Math.abs(me.forwardSpeed) < 0.12 && Math.abs(me.turnRate) < 0.15 && s.t > 2 && (mem.push || 0) > 0.4 ? (mem.stuck || 0) + 1 : 0;
+  mem.stuck = Math.abs(me.forwardSpeed) < 0.12 && Math.abs(me.turnRate) < 0.15 && s.t > 2 && (mem.push || 0) > 0.1 ? (mem.stuck || 0) + 1 : 0;
   if (mem.stuck > 45) { mem.freeUntil = s.t + 1.2; mem.stuck = 0; mem.freeTurn = mem.freeTurn > 0 ? -0.6 : 0.6; }
   if (s.t < (mem.freeUntil || 0)) { out.say = 'jammed, backing off to try another line'; gates(false); drive(safe(-0.7), mem.freeTurn); return; }
   mem.parked = false;
@@ -408,9 +423,8 @@ export function corralProgram(s, out, mem, lib) {
     if (plan.left / 3 > left + 0.5) { aim = next; say = 'cannot make this one, heading to the next point'; }
   }
   if (plan.reachable && aim === tg && foeToT < 2.6 && g.distance > foeToT - 0.7 && lib.clear(s, foe.x, foe.z, 0.8)) {
-    const hit = lib.intercept(s, foe, 3), hb = lib.to(s, hit.x, hit.z);
-    out.say = 'ramming the enemy off the point with the gates shut';
-    const c = lib.steer(hb.bearing, 9, {}); drive(safe(c.drive), c.turn); return;
+    const hit = lib.intercept(s, foe, 3), r = ram(s, lib, mem, hit.x, hit.z, FWD);
+    out.say = r.say || 'ramming the enemy off the point with the gates shut'; drive(r.drive, r.turn); mem.push = 0; return;
   }
   const n = lib.nav(s, aim.x, aim.z, { ...FWD, stopAt: 0.4, reverse: true });
   mem.idle = me.speed < 0.15 ? (mem.idle || 0) + 1 : 0;
@@ -547,8 +561,8 @@ export function spanProgram(s, out, mem, lib) {
     const tg = s.target, foeToT = Math.hypot(foe.x - tg.x, foe.z - tg.z), d = lib.to(s, tg.x, tg.z).distance;
     if (P && P.tooWide !== undefined) say = P.tooWide ? `the ${P.tooWide.toFixed(1)} m gap is too wide for me, holding this side` : 'no way to the point, holding the nearest ground';
     else if (foeToT < 2.6 && d > foeToT - 0.7 && lib.clear(s, foe.x, foe.z, 0.8)) {
-      const hit = lib.intercept(s, foe, 3), hb = lib.to(s, hit.x, hit.z), c = lib.steer(hb.bearing, 9, {}), g = lib.guard(s, c.drive, SELF);
-      out.say = g.braking ? 'not following it over the edge' : 'shouldering the enemy off the point'; drive(g.drive, c.turn); return;
+      const hit = lib.intercept(s, foe, 3), r = ram(s, lib, mem, hit.x, hit.z, SELF);
+      out.say = r.say || (r.braking ? 'not following it over the edge' : 'shouldering the enemy off the point'); drive(r.drive, r.turn); return;
     }
   }
   const n = lib.nav(s, goal.x, goal.z, { ...SELF, stopAt, reverse: true });

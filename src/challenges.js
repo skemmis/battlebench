@@ -50,6 +50,13 @@ const LAYOUTS = {
     const g = chRound(1.5 + r() * 1.5), z = 4 + g + 5;
     return { text: `three platforms in a row with ${g} m gaps between them; the middle one is 8 m square`, floor: [{ x: 0, z: -z, w: 24, d: 10 }, { x: 0, z, w: 24, d: 10 }, { x: 0, z: 0, w: 8, d: 8 }], walls: [], spawnZ: z, reach: 3, only: ['fixed', 'deliver'], where: 'on the middle platform' };
   },
+  ridges: (r) => {
+    // Low steps right across the floor, each with one opening. Anything that can step up goes straight over;
+    // anything that cannot has to weave through the openings.
+    const top = chRound(0.25 + r() * 0.15), floor = [{ x: 0, z: 0, w: 30, d: 30 }];
+    [-5, 5].forEach((z, i) => { const open = (i % 2 ? 1 : -1) * (6 + r() * 3), half = 3.6; floor.push({ x: (open - half - 15) / 2, z, w: open - half + 15, d: 0.7, top }, { x: (open + half + 15) / 2, z, w: 15 - open - half, d: 0.7, top }); });
+    return { text: `a square platform crossed by two ridges ${top} m high, each with one opening 7.2 m wide`, floor, walls: [], spawnZ: 12, reach: 2.5, only: ['fixed', 'orbit', 'jump'] };
+  },
   pillars: (r) => {
     const s = 30, walls = [];
     for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2 + r() * 0.8, d = 5 + r() * 4; walls.push({ x: chRound(Math.cos(a) * d), z: chRound(Math.sin(a) * d * 0.6), w: chRound(1.2 + r() * 1.8), d: chRound(1.2 + r() * 1.8), h: 2 }); }
@@ -71,7 +78,7 @@ const GRAVITIES = {
 export function drawChallenge(seed, force = {}) {
   const r = chRng(seed * 7919 + 13);
   const pick = (obj, weights) => { const keys = Object.keys(weights); let t = r() * keys.reduce((n, k) => n + weights[k], 0); for (const k of keys) { t -= weights[k]; if (t <= 0) return k; } return keys[0]; };
-  const layoutKey = force.layout || pick(LAYOUTS, { open: 2.5, small: 1.5, bridge: 2, gap: 1.5, pillars: 1.5, plinth: 2, islands: 2 });
+  const layoutKey = force.layout || pick(LAYOUTS, { open: 2.5, small: 1.5, bridge: 2, gap: 1.5, pillars: 1.5, plinth: 2, islands: 2, ridges: 2 });
   const surfaceKey = force.surface || pick(SURFACES, { normal: 3, ice: 2, sticky: 1 });
   const gravityKey = force.gravity || pick(GRAVITIES, { normal: 3, low: 1.5, high: 1 });
   let objKey = force.objective || pick({}, { fixed: 2, orbit: 2, jump: 2, deliver: 2 });
@@ -148,6 +155,7 @@ export const NAMED = [
   { ...drawChallenge(107, { layout: 'open', surface: 'normal', gravity: 'normal', objective: 'deliver' }), name: 'Bring it home' },
   { ...drawChallenge(108, { layout: 'small', surface: 'ice', gravity: 'normal', objective: 'deliver' }), name: 'Crate on ice' },
   { ...drawChallenge(109, { layout: 'plinth', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'The plinth' },
+  { ...drawChallenge(113, { layout: 'ridges', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Ridges' },
   { ...drawChallenge(110, { layout: 'islands', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Islands' },
   { ...drawChallenge(111, { layout: 'plinth', surface: 'normal', gravity: 'normal', objective: 'deliver' }), name: 'Crate on the plinth' },
 ];

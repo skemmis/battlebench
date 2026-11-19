@@ -10,7 +10,7 @@ import { LIB } from './lib.js';
 export const CONFIG = {
   version: 'v0.5',
   physics: { hz: 480, controlHz: 30, gravity: 9.81, solverIterations: 12 },
-  arena: { size: 30, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2 },
+  arena: { size: 30, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2, slipSpeed: 0.8, spinGrip: 0.6 },
   // A fight ends when a core leaves the arena, when nothing has moved for stalemateSeconds, or at maxSeconds.
   // If no core has left, the core closer to the point wins (by at least centerMargin metres). If they are level,
   // the machine that has had less broken off it wins (by at least intactMargin of its mass). Otherwise a draw.
@@ -223,10 +223,22 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
     // carries the machine above it. Use the pressing force the solver found for this pair on the last step. A
     // pair that has only just touched has no such figure yet and falls back to the lighter body's weight.
     const gAbs = Math.abs(world.gravity.y) || 1;
+    // A rubber tyre that is spinning or skidding grips less than one that is rolling: above a small slip speed
+    // its grip drops to cfg.arena.spinGrip of normal. Driving the wheels no faster than the ground is passing
+    // keeps full grip, so a machine that feeds its power in wins a shove against one that just floors it.
+    const rubberAt = new Set();
+    for (const e of result) if ((e.si.material === matRubber) !== (e.sj.material === matRubber) && (e.si.material === matFloor || e.sj.material === matFloor)) rubberAt.add(tag(e));
+    for (let i = 0; i + 1 < frictionResult.length; i += 2) {
+      const a1 = frictionResult[i], a2 = frictionResult[i + 1];
+      if (a1.bi !== a2.bi || a1.bj !== a2.bj || !rubberAt.has(tag(a1))) continue;
+      const vi = a1.bi.velocity.vadd(a1.bi.angularVelocity.cross(a1.ri)), vj = a1.bj.velocity.vadd(a1.bj.angularVelocity.cross(a1.rj)), rel = vi.vsub(vj);
+      const slip = Math.hypot(rel.dot(a1.t), rel.dot(a2.t));
+      a1.spin = a2.spin = slip > cfg.arena.slipSpeed ? cfg.arena.spinGrip : 1;
+    }
     for (const e of frictionResult) {
-      const k = count.get(key(e)) || 1, press = pressed.get(key(e));
-      if (press === undefined) { e.minForce *= dt / k; e.maxForce *= dt / k; continue; }
-      const reduced = 1 / ((e.bi.invMass + e.bj.invMass) || 1), mu = e.maxForce / (gAbs * reduced), lim = (mu * press * dt) / k;
+      const k = count.get(key(e)) || 1, press = pressed.get(key(e)), spin = e.spin || 1; e.spin = 1;
+      if (press === undefined) { e.minForce *= (dt / k) * spin; e.maxForce *= (dt / k) * spin; continue; }
+      const reduced = 1 / ((e.bi.invMass + e.bj.invMass) || 1), mu = e.maxForce / (gAbs * reduced), lim = (mu * press * dt * spin) / k;
       e.minForce = -lim; e.maxForce = lim;
     }
   };

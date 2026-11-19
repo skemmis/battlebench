@@ -72,9 +72,25 @@ export const LIB = {
         if (d < edge[j]) { edge[j] = d; queue.push(j); }
       }
     }
-    g = { x0, z0, nx, nz, C, h, edge, cell: (x, z) => { const cx = Math.floor((x - x0) / C), cz = Math.floor((z - z0) / C); return cx < 0 || cz < 0 || cx >= nx || cz >= nz ? -1 : cz * nx + cx; }, pos: (i) => ({ x: x0 + ((i % nx) + 0.5) * C, z: z0 + (Math.floor(i / nx) + 0.5) * C }) };
+    g = { x0, z0, nx, nz, C, h, edge, steps: new Map(), cell: (x, z) => { const cx = Math.floor((x - x0) / C), cz = Math.floor((z - z0) / C); return cx < 0 || cz < 0 || cx >= nx || cz >= nz ? -1 : cz * nx + cx; }, pos: (i) => ({ x: x0 + ((i % nx) + 0.5) * C, z: z0 + (Math.floor(i / nx) + 0.5) * C }) };
     LIB_GRIDS.set(s.challenge, g);
     return g;
+  },
+  // How far each square is from the nearest step up that is too high to take from ground at height h0.
+  stepClear(g, limit) {
+    const key = Math.round(limit * 100);
+    let d = g.steps.get(key); if (d) return d;
+    const n = g.nx * g.nz, queue = []; d = new Float32Array(n).fill(99);
+    for (let i = 0; i < n; i++) if (g.h[i] > limit) { d[i] = 0; queue.push(i); }
+    for (let q = 0; q < queue.length; q++) {
+      const i = queue[q], cx = i % g.nx, cz = Math.floor(i / g.nx);
+      for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+        const ax = cx + dx, az = cz + dz; if ((!dx && !dz) || ax < 0 || az < 0 || ax >= g.nx || az >= g.nz) continue;
+        const j = az * g.nx + ax, v = d[i] + g.C * (dx && dz ? 1.41 : 1);
+        if (v < d[j] && v < 4) { d[j] = v; queue.push(j); }
+      }
+    }
+    g.steps.set(key, d); return d;
   },
   // Plan a way across the floor to (x, z), keeping "margin" metres from drops and walls and taking no step up
   // higher than "climb". Returns the next point to steer for, the place the plan ends, and whether that is the
@@ -82,6 +98,8 @@ export const LIB = {
   plan(s, x, z, { margin = 1.5, climb = 0.15 } = {}) {
     const g = LIB.grid(s), start = g.cell(s.self.x, s.self.z);
     if (start < 0 || g.h[start] < 0) return { x, z, end: { x, z }, reachable: false, off: true, left: 0 };
+    // Keep clear of steps too high to climb as well, by the same margin.
+    const step = LIB.stepClear(g, g.h[start] + climb), side = margin;
     const from = new Int32Array(g.nx * g.nz).fill(-2), queue = [start];
     from[start] = -1;
     let best = start, bestD = Math.hypot(x - s.self.x, z - s.self.z);
@@ -93,6 +111,7 @@ export const LIB = {
         if (from[j] !== -2 || g.h[j] < 0 || g.h[j] - g.h[i] > climb) continue;
         // Keep the margin, except that a machine already inside it may move toward open floor.
         if (g.edge[j] < margin && !(g.edge[i] < margin && g.edge[j] > g.edge[i])) continue;
+        if (step[j] < side && !(step[i] < side && step[j] > step[i])) continue;
         from[j] = i; queue.push(j);
         const p = g.pos(j), d = Math.hypot(x - p.x, z - p.z);
         if (d < bestD - 1e-6) { bestD = d; best = j; }
@@ -102,10 +121,12 @@ export const LIB = {
     const reachable = bestD < 0.6 || (LIB.floorAt(s, x, z) && !LIB.inWall(s, x, z) && bestD <= margin + 0.8 && Math.abs(LIB.heightAt(s, x, z) - g.h[best]) <= climb), end = bestD < 0.6 ? { x, z } : g.pos(best);
     // Walk the plan back from its end and steer for the furthest point on it that is in a straight clear line.
     const chain = []; for (let i = best; i !== -1 && i !== -2; i = from[i]) chain.push(i);
+    // A straight run to a point on the plan must also keep its distance from steps too high to climb.
+    const wide = (p) => { const d = Math.hypot(p.x - s.self.x, p.z - s.self.z); for (let t = 1; t < d; t += 0.4) { const c = g.cell(s.self.x + ((p.x - s.self.x) * t) / d, s.self.z + ((p.z - s.self.z) * t) / d); if (c >= 0 && step[c] < side * 0.7 && step[c] < step[start]) return false; } return true; };
     let way = end, left = 0;
     for (let k = 0; k < chain.length; k++) {
       const p = k === 0 ? end : g.pos(chain[k]);
-      if (LIB.clear(s, p.x, p.z, margin * 0.7, climb)) { way = p; break; }
+      if (LIB.clear(s, p.x, p.z, margin * 0.7, climb) && wide(p)) { way = p; break; }
       way = p;
     }
     for (let k = 1; k < chain.length; k++) { const a = g.pos(chain[k - 1]), b = g.pos(chain[k]); left += Math.hypot(a.x - b.x, a.z - b.z); }
@@ -113,37 +134,30 @@ export const LIB = {
   },
   // The fastest it is safe to be going with "room" metres of floor left ahead, given the round's grip and gravity.
   safeSpeed(s, room, grip = 1) { const a = 0.3 * grip * s.challenge.surface.grip * 9.81 * s.challenge.gravity; return Math.sqrt(2 * a * Math.max(0, room)); },
-  // How hard the machine can brake, in m/s2: a cautious guess from the round's grip and gravity, lowered to
-  // what guard() has measured if the program lends it its memory.
-  braking(s, { grip = 1, mem = null } = {}) {
-    const guess = 0.55 * grip * s.challenge.surface.grip * 9.81 * s.challenge.gravity, k = mem && mem._guard;
-    return k && k.n > 8 ? Math.max(guess * 0.15, Math.min(guess, k.a * 0.8)) : guess;
-  },
+  // How hard the machine can brake, in m/s2, from the round's grip and gravity. Cautious: a little over half
+  // of what a perfect stop on rubber would give.
+  braking(s, { grip = 1 } = {}) { return 0.55 * grip * s.challenge.surface.grip * 9.81 * s.challenge.gravity; },
   // Take a wanted drive (-1 to 1) and return one that will not take the machine off the floor: slowed when the
   // floor ahead is short, and reversed to brake when it is already going too fast to stop, or sliding sideways
   // toward a drop. "length" is how far the machine reaches ahead of its core, "top" its top speed.
-  guard(s, want, { grip = 1, length = 1.5, top = 4, climb = 0.15, mem = null } = {}) {
+  guard(s, want, { grip = 1, length = 1.5, top = 4, climb = 0.15, mem = null, feed = true } = {}) {
     const me = s.self; let drive = want, braking = false;
-    // How hard the machine can brake: a cautious guess from the round's grip and gravity, corrected by how
-    // quickly it has actually been changing speed when driven hard (if the program lends its memory).
-    let decel = 0.3 * grip * s.challenge.surface.grip * 9.81 * s.challenge.gravity;
-    const k = mem ? (mem._guard = mem._guard || { v: 0, cmd: 0, a: null, n: 0, t: -1 }) : null;
-    if (k && k.t !== s.t) {
-      if (Math.abs(k.cmd) > 0.3 && Math.abs(k.cmd * top - me.forwardSpeed) > 0.25 * top) { const dv = Math.abs(me.forwardSpeed - k.v) * 30; k.a = k.a === null ? dv : k.a * 0.9 + dv * 0.1; k.n++; }
-      k.v = me.forwardSpeed; k.t = s.t;
-    }
-    decel = LIB.braking(s, { grip, mem });
+    let decel = 0;
+    decel = LIB.braking(s, { grip });
     const safe = (room) => Math.sqrt(2 * decel * Math.max(0, room));
     const dir = drive < 0 || (drive === 0 && me.forwardSpeed < 0) ? Math.PI : 0;
-    const roomAhead = LIB.runAhead(s, dir, 9, 0, climb) - length;
+    // Only drops and walls are worth braking for. A step up is something to bump into, not fall off.
+    const roomAhead = LIB.runAhead(s, dir, 9, 0, 99) - length;
     const along = Math.abs(me.forwardSpeed), limit = safe(roomAhead);
     if (along > limit + 0.3 && (me.forwardSpeed > 0) === (dir === 0)) { drive = me.forwardSpeed > 0 ? -1 : 1; braking = true; }
     else if (Math.abs(drive) * top > limit) drive = Math.sign(drive) * Math.min(Math.abs(drive), limit / top);
     if (!braking && me.speed > 0.8) {
-      const roomSlide = LIB.run(s, me.x, me.z, me.vx, me.vz, 9, 0, climb) - length;
+      const roomSlide = LIB.run(s, me.x, me.z, me.vx, me.vz, 9, 0, 99) - length;
       if (me.speed > safe(roomSlide) + 0.3) { drive = me.forwardSpeed > 0 ? -1 : 1; braking = true; }
     }
-    if (k) k.cmd = drive;
+    // Feed the power in: a tyre that spins or locks grips less, so never ask the wheels to turn much faster or
+    // slower than the ground is passing. Full grip is kept for pulling away, for braking and for shoving.
+    if (feed) drive = LIB.clamp(drive * top, me.forwardSpeed - 0.7, me.forwardSpeed + 0.7) / top;
     return { drive, braking, room: roomAhead };
   },
   // How far a point is from the nearest drop or wall (to the nearest half metre or so).
@@ -153,14 +167,16 @@ export const LIB = {
   // Drive to (x, z) and stay on the floor. Plans a way round gaps and walls, slows for corners and on arrival,
   // and brakes in time for an edge, allowing for how slippery the floor is and how long the machine is.
   // Returns { drive, turn, arrived, reachable, braking, left } where left is the distance still to go.
-  nav(s, x, z, { margin = 1.5, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null } = {}) {
+  nav(s, x, z, { margin = 1.5, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null, feed = true } = {}) {
     const me = s.self, p = LIB.plan(s, x, z, { margin, climb });
     const w = LIB.to(s, p.x, p.z), endD = Math.hypot(p.end.x - me.x, p.end.z - me.z), last = Math.hypot(p.x - p.end.x, p.z - p.end.z) < 0.3;
     // Once arrived, stay arrived until well off the spot, so the machine does not fidget.
     const held = mem && mem._at && Math.hypot(mem._at.x - p.end.x, mem._at.z - p.end.z) < 0.5 && endD < stopAt * 3 + 0.3;
     const c = held ? { drive: 0, turn: 0, arrived: true } : LIB.steer(w.bearing, last ? endD : 9, { stopAt, reverse, speed });
     if (mem) mem._at = c.arrived && last ? (held ? mem._at : { x: p.end.x, z: p.end.z }) : null;
-    const gd = LIB.guard(s, c.drive, { grip, length, top, climb, mem }), drive = gd.drive, braking = gd.braking;
+    const gd = LIB.guard(s, c.drive, { grip, length, top, climb, mem, feed }), drive = gd.drive, braking = gd.braking;
+    // While the wheels are being fed in gently, steer gently too, so neither side is asked to stand still.
+    if (feed && Math.abs(c.drive) > 0.3 && Math.abs(drive) < Math.abs(c.drive) && !braking) c.turn = LIB.clamp(c.turn, -0.5 * Math.abs(drive), 0.5 * Math.abs(drive));
     return { drive, turn: c.turn, arrived: c.arrived && last, reachable: p.reachable, braking, left: endD, end: p.end };
   },
   // Turn a bearing and distance into drive and turn for a machine that steers by driving its two sides at
