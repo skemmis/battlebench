@@ -105,10 +105,34 @@ export function drawChallenge(seed, force = {}) {
     text = `A ${mass} kg crate starts ${L.where || 'in the middle'}. Whoever has it nearer their own end when the round stops wins.`;
   }
   const spawnZ = chRound(L.spawnZ);
-  const brief = [`The arena is ${L.text}.`, S.text, G.text, text].filter(Boolean).join(' ');
+  // Ground. Most rounds are rough: low blocks scattered over the floor. Legs step over them; wheels have to go
+  // round, or risk bashing over the lower ones. Drawn last, so it does not change what the rest of a round is.
+  const groundKey = force.ground || (force.layout ? 'flat' : pick({}, { rough: 3, flat: 1 }));
+  let floor = L.floor, groundText = '';
+  if (groundKey === 'rough') {
+    const blocks = [], base = L.floor.filter((f) => !f.top && Math.min(f.w, f.d) >= 9);
+    // One wide block goes squarely between each starting place and the middle, so the straight line is never free.
+    if (!L.split && !L.narrow && spawnZ > 7) for (const sgn of [-1, 1]) { const zz = chRound(sgn * spawnZ * (0.45 + r() * 0.15)); if (!L.floor.some((o) => o.top && Math.abs(zz - o.z) < o.d / 2 + 1.5 && Math.abs(o.x) < o.w / 2 + 2)) blocks.push({ x: chRound((r() - 0.5) * 1.5), z: zz, w: chRound(2.6 + r() * 1.4), d: chRound(0.8 + r() * 0.6), top: chRound(0.28 + r() * 0.14), on: null }); }
+    for (const f of base) {
+      const want = Math.min(22, Math.round((f.w * f.d) / 45));
+      for (let tries = 0; tries < want * 6 && blocks.filter((b) => b.on === f).length < want; tries++) {
+        const w = chRound(1 + r() * 1.6), d = chRound(1 + r() * 1.6), top = chRound(0.12 + r() * 0.3);
+        const x = chRound(f.x + (r() - 0.5) * (f.w - w - 2)), z = chRound(f.z + (r() - 0.5) * (f.d - d - 2));
+        if (Math.hypot(x, Math.abs(z) - spawnZ) < 4.5) continue;                      // leave the starting places clear
+        if (Math.hypot(x, z) < 2.5 + Math.max(w, d) / 2) continue;                    // and the middle
+        if (L.floor.some((o) => o.top && Math.abs(x - o.x) < (w + o.w) / 2 + 1 && Math.abs(z - o.z) < (d + o.d) / 2 + 1)) continue;
+        if (L.walls.some((o) => Math.abs(x - o.x) < (w + o.w) / 2 + 1 && Math.abs(z - o.z) < (d + o.d) / 2 + 1)) continue;
+        if (blocks.some((o) => Math.abs(x - o.x) < (w + o.w) / 2 + 3.4 && Math.abs(z - o.z) < (d + o.d) / 2 + 3.4)) continue;
+        blocks.push({ x, z, w, d, top, on: f });
+      }
+    }
+    floor = [...L.floor, ...blocks.map(({ x, z, w, d, top }) => ({ x, z, w, d, top }))];
+    if (blocks.length) groundText = `The ground is rough: ${blocks.length} low blocks, from ${Math.min(...blocks.map((b) => b.top))} to ${Math.max(...blocks.map((b) => b.top))} m high, are scattered over it.`;
+  }
+  const brief = [`The arena is ${L.text}.`, groundText, S.text, G.text, text].filter(Boolean).join(' ');
   return {
-    name: `Round ${seed}`, brief, keys: { layout: layoutKey, surface: surfaceKey, gravity: gravityKey, objective: objKey },
-    floor: L.floor, walls: L.walls, surface: { grip: S.grip, slide: S.slide }, gravity: G.g,
+    name: `Round ${seed}`, brief, keys: { layout: layoutKey, ground: groundKey, surface: surfaceKey, gravity: gravityKey, objective: objKey },
+    floor, walls: L.walls, surface: { grip: S.grip, slide: S.slide }, gravity: G.g,
     spawn: [{ x: 0, z: -spawnZ }, { x: 0, z: spawnZ }], objective,
   };
 }
@@ -156,6 +180,8 @@ export const NAMED = [
   { ...drawChallenge(108, { layout: 'small', surface: 'ice', gravity: 'normal', objective: 'deliver' }), name: 'Crate on ice' },
   { ...drawChallenge(109, { layout: 'plinth', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'The plinth' },
   { ...drawChallenge(113, { layout: 'ridges', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Ridges' },
+  { ...drawChallenge(121, { layout: 'open', ground: 'rough', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Rough ground' },
+  { ...drawChallenge(122, { layout: 'open', ground: 'rough', surface: 'normal', gravity: 'normal', objective: 'jump' }), name: 'Rough ground, jumping point' },
   { ...drawChallenge(110, { layout: 'islands', surface: 'normal', gravity: 'normal', objective: 'fixed' }), name: 'Islands' },
   { ...drawChallenge(111, { layout: 'plinth', surface: 'normal', gravity: 'normal', objective: 'deliver' }), name: 'Crate on the plinth' },
 ];

@@ -99,7 +99,7 @@ export const LIB = {
     const g = LIB.grid(s), start = g.cell(s.self.x, s.self.z);
     if (start < 0 || g.h[start] < 0) return { x, z, end: { x, z }, reachable: false, off: true, left: 0 };
     // Keep clear of steps too high to climb as well, by the same margin.
-    const step = LIB.stepClear(g, g.h[start] + climb), side = margin;
+    const step = LIB.stepClear(g, g.h[start] + climb), side = Math.min(margin, 1.5);
     const from = new Int32Array(g.nx * g.nz).fill(-2), queue = [start];
     from[start] = -1;
     let best = start, bestD = Math.hypot(x - s.self.x, z - s.self.z);
@@ -122,7 +122,7 @@ export const LIB = {
     // Walk the plan back from its end and steer for the furthest point on it that is in a straight clear line.
     const chain = []; for (let i = best; i !== -1 && i !== -2; i = from[i]) chain.push(i);
     // A straight run to a point on the plan must also keep its distance from steps too high to climb.
-    const wide = (p) => { const d = Math.hypot(p.x - s.self.x, p.z - s.self.z); for (let t = 1; t < d; t += 0.4) { const c = g.cell(s.self.x + ((p.x - s.self.x) * t) / d, s.self.z + ((p.z - s.self.z) * t) / d); if (c >= 0 && step[c] < side * 0.7 && step[c] < step[start]) return false; } return true; };
+    const wide = (p) => { const d = Math.hypot(p.x - s.self.x, p.z - s.self.z); for (let t = 1; t < d; t += 0.4) { const c = g.cell(s.self.x + ((p.x - s.self.x) * t) / d, s.self.z + ((p.z - s.self.z) * t) / d); if (c >= 0 && step[c] < side && step[c] < step[start]) return false; } return true; };
     let way = end, left = 0;
     for (let k = 0; k < chain.length; k++) {
       const p = k === 0 ? end : g.pos(chain[k]);
@@ -174,9 +174,15 @@ export const LIB = {
     const held = mem && mem._at && Math.hypot(mem._at.x - p.end.x, mem._at.z - p.end.z) < 0.5 && endD < stopAt * 3 + 0.3;
     const c = held ? { drive: 0, turn: 0, arrived: true } : LIB.steer(w.bearing, last ? endD : 9, { stopAt, reverse, speed });
     if (mem) mem._at = c.arrived && last ? (held ? mem._at : { x: p.end.x, z: p.end.z }) : null;
+    // Nose jammed against something: asked to move, not moving, not turning. Back off a little and come again.
+    if (mem) {
+      if (s.t < (mem._back || 0)) { const g2 = LIB.guard(s, -0.6 * (mem._backDir || 1), { grip, length, top, climb, feed }); return { drive: g2.drive, turn: LIB.clamp(c.turn * 1.5), arrived: false, reachable: p.reachable, braking: false, backing: true, left: endD, end: p.end }; }
+      mem._jam = !c.arrived && Math.abs(c.drive) + Math.abs(c.turn) > 0.25 && me.speed < 0.12 && Math.abs(me.turnRate) < 0.08 && s.t > 1.5 ? (mem._jam || 0) + 1 : 0;
+      if (mem._jam > 30) { mem._jam = 0; mem._back = s.t + 1.1; mem._backDir = c.drive >= 0 ? 1 : -1; }
+    }
     const gd = LIB.guard(s, c.drive, { grip, length, top, climb, mem, feed }), drive = gd.drive, braking = gd.braking;
     // While the wheels are being fed in gently, steer gently too, so neither side is asked to stand still.
-    if (feed && Math.abs(c.drive) > 0.3 && Math.abs(drive) < Math.abs(c.drive) && !braking) c.turn = LIB.clamp(c.turn, -0.5 * Math.abs(drive), 0.5 * Math.abs(drive));
+    if (feed && Math.abs(c.drive) > 0.6 && Math.abs(drive) < Math.abs(c.drive) && !braking) c.turn = LIB.clamp(c.turn, -0.5 * Math.abs(drive), 0.5 * Math.abs(drive));
     return { drive, turn: c.turn, arrived: c.arrived && last, reachable: p.reachable, braking, left: endD, end: p.end };
   },
   // Turn a bearing and distance into drive and turn for a machine that steers by driving its two sides at
