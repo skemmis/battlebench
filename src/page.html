@@ -5,17 +5,17 @@
 /* Layout: a workbench. The arena is the bench top on the left; the clipboard (log, builds, settings) hangs on the right. */
 :root {
   --bg: #e9ecf1; --surface: #f7f8fa; --raised: #ffffff; --ink: #18202c; --muted: #5b6676; --line: #cfd5de;
-  --team-a: #d9530b; --team-b: #1763c6; --warn: #b4290f; --stage: #dfe4ec; --floor: #aeb7c4; --hill: #7c9468; --rock: #7d7466; --contour: #4a6040; --grid: #8d98a8; --pit: #c9d0db;
+  --team-a: #d9530b; --team-b: #1763c6; --warn: #b4290f; --stage: #dfe4ec; --floor: #aeb7c4; --grass: #7fa35a; --hill: #b5c27a; --rock: #8a8172; --sand: #cdbb8a; --water: #2f7fc4; --contour: #4a6040; --grid: #8d98a8; --pit: #c9d0db;
   --display: 'Space Grotesk', 'Avenir Next', system-ui, sans-serif;
   --body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #12161d; --surface: #1a2029; --raised: #222a35; --ink: #e8ecf2; --muted: #98a3b3; --line: #323c4a;
-  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --hill: #6d8759; --rock: #8c8271; --contour: #b4cc9c; --grid: #566273; --pit: #07090c; color-scheme: dark } }
+  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --grass: #4f7240; --hill: #869a58; --rock: #6f685c; --sand: #94875f; --water: #3b8bd0; --contour: #b4cc9c; --grid: #566273; --pit: #07090c; color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #12161d; --surface: #1a2029; --raised: #222a35; --ink: #e8ecf2; --muted: #98a3b3; --line: #323c4a;
-  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --hill: #6d8759; --rock: #8c8271; --contour: #b4cc9c; --grid: #566273; --pit: #07090c; color-scheme: dark }
+  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --grass: #4f7240; --hill: #869a58; --rock: #6f685c; --sand: #94875f; --water: #3b8bd0; --contour: #b4cc9c; --grid: #566273; --pit: #07090c; color-scheme: dark }
 * { box-sizing: border-box }
 [hidden] { display: none !important }
 body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.5 }

@@ -5,8 +5,10 @@
 //
 //   floor      slabs: { x, z, w, d, top } (centre, width along x, depth along z, height of the top, 0 if absent)
 //   walls      solid blocks standing on the floor: { x, z, w, d, h }
-//   terrain    topography on the base floor, or null: { cell, x0, z0, nx, nz, max, heights } where heights[iz * nx + ix]
-//              is the height of the ground at (x0 + ix * cell, z0 + iz * cell)
+//   terrain    the lie of the land on the base floor, or null: { cell, x0, z0, nx, nz, max, heights } where
+//              heights[iz * nx + ix] is the height of the ground at (x0 + ix * cell, z0 + iz * cell)
+//   water      { level } or null: wherever the ground is lower than level there is water, level - ground deep.
+//              Water drags on whatever is in it and bears up light parts (rubber and plastic float).
 //   surface    multipliers on floor friction: grip (rubber and wheels) and slide (everything else)
 //   gravity    multiplier on normal gravity
 //   spawn      where each bot's core starts; bot 0's home end is -z, bot 1's is +z
@@ -29,10 +31,11 @@ export const OPEN = {
   gravity: 1,
   spawn: [{ x: 0, z: -9 }, { x: 0, z: 9 }],
   objective: { type: 'knockout' },
+  terrain: null, water: null,
 };
 
 const LAYOUTS = {
-  open: (r) => { const s = 26 + Math.round(r() * 8); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 6, reach: s / 2 - 5 }; },
+  open: (r) => { const s = 30 + Math.round(r() * 8); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 6, reach: s / 2 - 5 }; },
   small: (r) => { const s = 14 + Math.round(r() * 4); return { text: `a small ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 3.5, reach: s / 2 - 3.5 }; },
   bridge: (r) => {
     const w = chRound(4.5 + r() * 2.5), len = chRound(6 + r() * 4), isl = 12;
@@ -127,6 +130,51 @@ function drawCrags(L, G, r, spawnZ) {
   return { ledges: out, max, step: chRound(step) };
 }
 
+// Land, in the way a game map has land: rolling ground you can walk anywhere on, flat-topped high ground with
+// sides too steep to climb and a ramp or two up, and a river that is slow to wade except at its fords. Every
+// map is the same seen from either end, so neither starting place is the better one.
+const LANDS = {
+  valley: { text: 'The land rolls gently. A river {wide} m wide crosses the middle, {deep} m deep except at two fords. On each side stands a flat-topped hill {high} m high with steep sides and one ramp up.', river: true, hills: 'twin', roll: 0.22 },
+  highground: { text: 'The land rolls gently around a flat-topped hill in the middle, {high} m high, with steep sides and two ramps up. Whoever holds the top looks down on the other.', river: false, hills: 'middle', roll: 0.25 },
+  riverlands: { text: 'The land rolls gently. A winding river {wide} m wide crosses the middle, {deep} m deep except at two fords.', river: true, hills: null, roll: 0.3 },
+  downs: { text: 'Open rolling downs: rises and hollows up to {high} m, all of them walkable.', river: false, hills: null, roll: 0.7 },
+};
+function drawLand(L, K, r, spawnZ) {
+  const f = L.floor[0], nx = Math.round(f.w) + 1, nz = Math.round(f.d) + 1, x0 = f.x - f.w / 2, z0 = f.z - f.d / 2;
+  const sm = (a, b, v) => { let t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const period = 6 + r() * 3, lw = Math.ceil(nx / period) + 3, ld = Math.ceil(nz / period) + 3, lv = Array.from({ length: lw * ld }, () => r());
+  const noise = (x, z) => { const fx = (x - x0) / period, fz = (z - z0) / period, ix = Math.floor(fx), iz = Math.floor(fz); const u = sm(0, 1, fx - ix), t = sm(0, 1, fz - iz); const a = lv[iz * lw + ix], b = lv[iz * lw + ix + 1], c = lv[(iz + 1) * lw + ix], e = lv[(iz + 1) * lw + ix + 1]; return a * (1 - u) * (1 - t) + b * u * (1 - t) + c * (1 - u) * t + e * u * t; };
+  const BASE = 1, half = Math.min(f.w, f.d) / 2;
+  // High ground.
+  const hills = [], high = chRound(1.2 + r() * 0.5);
+  if (K.hills === 'twin') { const hx = half * (0.4 + r() * 0.2), hz = half * (0.36 + r() * 0.12), R = 2.6 + r() * 0.8, a = Math.atan2(-hx, hz - spawnZ) + (r() - 0.5) * 0.5; /* the ramp faces the hill's own end of the map */ hills.push({ x: hx, z: -hz, R, ramps: [a] }, { x: -hx, z: hz, R, ramps: [a + Math.PI] }); }
+  if (K.hills === 'middle') { const a = r() * Math.PI; hills.push({ x: 0, z: 0, R: Math.min(5, half * 0.3), ramps: [a, a + Math.PI] }); }
+  // The river runs across the map between the two starting places, and winds.
+  const wide = chRound(2.5 + r() * 1.5), deep = chRound(0.45 + r() * 0.2), amp = 1 + r() * 1.5, wave = (Math.PI * (1 + Math.floor(r() * 2))) / half, fordX = half * (0.3 + r() * 0.35), level = BASE - 0.2;
+  const heights = new Float32Array(nx * nz);
+  let max = 0;
+  for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) {
+    const x = x0 + ix, z = z0 + iz;
+    let h = BASE + K.roll * (noise(x, z) + noise(-x, -z) - 1);
+    // Level ground where each machine starts.
+    const pad = sm(5, 2.5, Math.hypot(x, Math.abs(z) - spawnZ));
+    h = h * (1 - pad) + BASE * pad;
+    for (const m of hills) {
+      const dx = x - m.x, dz = z - m.z, d = Math.hypot(dx, dz);
+      let top = 1 - sm(m.R, m.R + 1.1, d);
+      for (const a of m.ramps) { const ux = Math.sin(a), uz = Math.cos(a), along = dx * ux + dz * uz, across = Math.abs(dx * uz - dz * ux); if (along > 0) top = Math.max(top, Math.max(0, Math.min(1, 1 - (along - m.R + 0.5) / (high / 0.3))) * (1 - sm(1.4, 2.3, across))); }
+      h = h * (1 - top) + (BASE + high) * top;
+    }
+    if (K.river) {
+      const off = Math.abs(z - amp * Math.sin(wave * x)), ford = sm(2.6, 1.4, Math.abs(Math.abs(x) - fordX));
+      const bed = level - (deep * (1 - ford) + 0.1 * ford), cut = sm(wide / 2 + 2.2, wide / 2, off);
+      h = h * (1 - cut) + bed * cut;
+    }
+    heights[iz * nx + ix] = chRound(h); max = Math.max(max, h);
+  }
+  return { terrain: { cell: 1, x0, z0, nx, nz, max: chRound(max), heights: Array.from(heights) }, water: K.river ? { level: chRound(level) } : null, text: K.text.replace('{wide}', wide).replace('{deep}', deep).replace('{high}', K.hills ? high : chRound(max - BASE + K.roll)) };
+}
+
 // Draw one challenge from the family. The same seed always gives the same challenge.
 export function drawChallenge(seed, force = {}) {
   const r = chRng(seed * 7919 + 13);
@@ -136,10 +184,16 @@ export function drawChallenge(seed, force = {}) {
   const gravityKey = force.gravity || pick(GRAVITIES, { normal: 3, low: 1.5, high: 1 });
   const L = LAYOUTS[layoutKey](r), S = SURFACES[surfaceKey], G = GRAVITIES[gravityKey];
   const spawnZ = chRound(L.spawnZ);
-  // Ground. Most rounds are fought over broken rock. Drawn last, so it does not change the rest of a round.
-  const groundKey = force.ground || (force.layout ? 'flat' : pick({}, { crags: 3, terraces: 2, rubble: 2, flat: 1 }));
-  let floor = L.floor, groundText = '';
-  if (groundKey !== 'flat') {
+  // Ground. Most rounds are fought over land with high ground and water. Drawn last, so it does not change the
+  // rest of a round. Land needs one unbroken platform; the stepped rock kinds remain for rounds that ask for them.
+  const one = L.floor.length === 1 && !L.walls.length;
+  const groundKey = force.ground || (force.layout ? 'flat' : one ? pick({}, { valley: 3, highground: 2.5, riverlands: 2, downs: 1.5, flat: 1 }) : pick({}, { rubble: 1, flat: 2 }));
+  let floor = L.floor, groundText = '', terrain = null, water = null;
+  if (LANDS[groundKey]) {
+    const land = drawLand(L, LANDS[groundKey], r, spawnZ);
+    terrain = land.terrain; water = land.water; groundText = land.text;
+  }
+  else if (groundKey !== 'flat') {
     const c = drawCrags(L, GROUNDS[groundKey], r, spawnZ);
     floor = [...L.floor, ...c.ledges];
     groundText = GROUNDS[groundKey].text.replace('{max}', c.max).replace('{step}', c.step).replace('{q}', GROUNDS[groundKey].q);
@@ -148,7 +202,7 @@ export function drawChallenge(seed, force = {}) {
   const brief = [`The arena is ${L.text}.`, groundText, S.text, G.text, text].filter(Boolean).join(' ');
   return {
     name: `Round ${seed}`, brief, keys: { layout: layoutKey, ground: groundKey, surface: surfaceKey, gravity: gravityKey },
-    floor, walls: L.walls, terrain: null, surface: { grip: S.grip, slide: S.slide }, gravity: G.g,
+    floor, walls: L.walls, terrain, water, surface: { grip: S.grip, slide: S.slide }, gravity: G.g,
     spawn: [{ x: 0, z: -spawnZ }, { x: 0, z: spawnZ }], objective: { type: 'knockout' },
   };
 }
@@ -196,16 +250,14 @@ export function edgeDistance(ch, x, z) {
 // A few fixed challenges to look at by name, plus the generator for everything else.
 export const NAMED = [
   OPEN,
-  { ...drawChallenge(201, { layout: 'open', ground: 'crags' }), name: 'Crags' },
-  { ...drawChallenge(202, { layout: 'open', ground: 'terraces' }), name: 'Terraces' },
-  { ...drawChallenge(203, { layout: 'open', ground: 'rubble' }), name: 'Rubble' },
-  { ...drawChallenge(204, { layout: 'small', ground: 'crags' }), name: 'Small crag' },
-  { ...drawChallenge(205, { layout: 'islands', ground: 'crags' }), name: 'Crag islands' },
-  { ...drawChallenge(206, { layout: 'bridge', ground: 'rubble' }), name: 'Bridge' },
-  { ...drawChallenge(105, { layout: 'gap' }), name: 'The gap' },
+  { ...drawChallenge(401, { layout: 'open', ground: 'valley', surface: 'normal', gravity: 'normal' }), name: 'Valley' },
+  { ...drawChallenge(402, { layout: 'open', ground: 'highground', surface: 'normal', gravity: 'normal' }), name: 'High ground' },
+  { ...drawChallenge(403, { layout: 'open', ground: 'riverlands', surface: 'normal', gravity: 'normal' }), name: 'Riverlands' },
+  { ...drawChallenge(404, { layout: 'open', ground: 'downs', surface: 'normal', gravity: 'normal' }), name: 'Downs' },
+  { ...drawChallenge(405, { layout: 'open', ground: 'highground', surface: 'ice', gravity: 'normal' }), name: 'Icy heights' },
+  { ...drawChallenge(406, { layout: 'open', ground: 'valley', surface: 'normal', gravity: 'low' }), name: 'Low gravity valley' },
   { ...drawChallenge(308, { layout: 'gap', ground: 'flat', surface: 'normal', gravity: 'normal' }), name: 'Narrow gap' },
-  { ...drawChallenge(207, { layout: 'pillars', ground: 'terraces' }), name: 'Pillars' },
-  { ...drawChallenge(208, { layout: 'open', ground: 'crags', surface: 'ice' }), name: 'Icy crags' },
-  { ...drawChallenge(209, { layout: 'open', ground: 'crags', gravity: 'low' }), name: 'Low gravity crags' },
-  { ...drawChallenge(109, { layout: 'plinth' }), name: 'The plinth' },
+  { ...drawChallenge(206, { layout: 'bridge', ground: 'rubble' }), name: 'Bridge' },
+  { ...drawChallenge(203, { layout: 'open', ground: 'rubble' }), name: 'Rubble' },
+  { ...drawChallenge(201, { layout: 'open', ground: 'crags' }), name: 'Crags' },
 ];

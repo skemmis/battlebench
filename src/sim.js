@@ -1,5 +1,5 @@
 import * as CANNON from 'cannon-es';
-import { OPEN, targetAt, floorHeight, edgeDistance } from './challenges.js';
+import { OPEN, targetAt, floorHeight, terrainHeight, edgeDistance } from './challenges.js';
 import { LIB } from './lib.js';
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -8,12 +8,12 @@ import { LIB } from './lib.js';
 // A bot's frame: +z is forward, +y is up, +x is its left side.
 // ───────────────────────────────────────────────────────────────────────────
 export const CONFIG = {
-  version: 'v0.6',
+  version: 'v0.7',
   physics: { hz: 480, controlHz: 30, gravity: 9.81, solverIterations: 12 },
   // The world the fight happens in. Rolling resistance is the fraction of the load a rolling thing loses as
   // drag (a tyre on rough ground is about 0.05). Sliding grip is this fraction of grip at rest. Air is real
   // air: density in kg per cubic metre and a blunt-body drag figure. Loose pieces that have stopped stay stopped.
-  ground: { rollRubber: 0.05, rollHard: 0.06, kinetic: 0.8, slideSpeed: 0.1, airDensity: 1.2, dragShape: 1.0, restSpeed: 0.12, restSeconds: 0.6 },
+  ground: { rollRubber: 0.05, rollHard: 0.06, kinetic: 0.8, slideSpeed: 0.1, airDensity: 1.2, waterDensity: 1000, dragShape: 1.0, restSpeed: 0.12, restSeconds: 0.6 },
   arena: { size: 30, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2, slipSpeed: 0.8, spinGrip: 0.6 },
   // A fight ends when a core leaves the arena, when a machine has lost wreckShare of its mass, when nothing has
   // moved for stalemateSeconds, or at maxSeconds. In the last two cases the more intact machine wins.
@@ -21,7 +21,7 @@ export const CONFIG = {
   // the machine that has had less broken off it wins (by at least intactMargin of its mass). Otherwise a draw.
   // Nothing here rewards damage or movement for their own sake, so sitting still or shedding parts is allowed.
   match: { maxSeconds: 90, stalemateSeconds: 10, stalemateRadius: 0.35, graceSeconds: 3, wreckShare: 0.5, intactMargin: 0.05 },
-  budget: { mass: 500, cost: 300, box: [5, 4, 5], maxParts: 200 },
+  budget: { mass: 1200, cost: 800, box: [8, 5, 9], maxParts: 300 },
   // Limits on the control program itself. It may see everything, but it has to be small.
   program: { maxChars: 20000 },
   // A joint's load = impulse x share of the bot it has to drag along x leverage x sharpness.
@@ -37,10 +37,13 @@ export const CONFIG = {
     rubber: { density: 110, strength: 0.8, costPerVolume: 50 },
   },
   joints: {
+    // Joint strengths below are for a part 0.12 m square in section. Thicker parts make stronger joints, by the
+    // square root of the section, up to maxThick times. Thinner parts are not weaker than the figures given.
+    section: 0.0144, maxThick: 2.5,
     fixed: { strength: 500, cost: 0 },
     // A hinge turns freely about "axis". It may set "limits": [low, high] in degrees from its built position,
     // and "spring": stiffness in N·m per radian pulling it back toward "rest" degrees (default 0).
-    hinge: { strength: 500, cost: 2, maxSpring: 4000, stopStiffness: 6000, stopDamping: 150 },
+    hinge: { strength: 500, cost: 2, maxSpring: 4000, stopStiffness: 6000, stopDamping: 150, stopRate: 60 },
     // A motor joint may set "gear": n. Speed is divided by n and torque multiplied by n (0.5 to 8).
     // Hinge and motor joints may set "pivot": [x, y, z] in the bot frame; without it they turn about the part's centre.
     // "power" from 0.02 to 1 picks the size of the motor: torque and cost scale with it. A wheel is a rubber
@@ -162,6 +165,11 @@ export function validateBuild(build, cfg = CONFIG) {
         if (!Array.isArray(ax) || ax.length !== 3 || Math.hypot(...ax) < 1e-6) errors.push(`${where}: a ${jt} joint needs an "axis" such as [0, 1, 0].`);
         const pv = p.joint.pivot;
         if (pv !== undefined && (!Array.isArray(pv) || pv.length !== 3 || pv.some((x) => typeof x !== 'number'))) errors.push(`${where}: "pivot" must be three numbers [x, y, z] measured from the core.`);
+        // The pivot has to be on the part it turns. Otherwise a weight could swing about a point it is not joined to.
+        else if (pv !== undefined && Array.isArray(p.pos)) {
+          const reach = Array.isArray(p.size) ? Math.hypot(...p.size) / 2 : (p.radius || 0.3) + (p.thickness || 0) / 2;
+          if (Math.hypot(pv[0] - p.pos[0], pv[1] - p.pos[1], pv[2] - p.pos[2]) > reach + 0.1) errors.push(`${where}: the "pivot" must be on the part itself, not away from it.`);
+        }
         const g = p.joint.gear;
         if (g !== undefined && !(g >= cfg.joints.motor.minGear && g <= cfg.joints.motor.maxGear)) errors.push(`${where}: "gear" must be between ${cfg.joints.motor.minGear} and ${cfg.joints.motor.maxGear}.`);
         const pw = p.joint.power;
@@ -285,6 +293,20 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
         const dw = tmpT.length(); if (dw > 0.5 * w) tmpT.scale((0.5 * w) / dw, tmpT);
         b.angularVelocity.vadd(tmpT, b.angularVelocity);
       }
+    }
+    // Water: whatever stands in it is dragged on by the part of it that is under, and borne up by the weight
+    // of water that part pushes aside. Steel sinks and wades; rubber and plastic float.
+    if (ch.water) for (const b of world.bodies) {
+      if (b.type !== CANNON.Body.DYNAMIC || b.sleepState === CANNON.Body.SLEEPING || !b.dragArea) continue;
+      const lvl = ch.water.level;
+      if (b.position.y > lvl + 1.5 || terrainHeight(ch, b.position.x, b.position.z) >= lvl) continue;
+      b.updateAABB();
+      const lo = b.aabb.lowerBound.y, hi = b.aabb.upperBound.y; if (lo >= lvl) continue;
+      const sub = Math.min(1, (lvl - lo) / Math.max(0.05, hi - lo));
+      b.velocity.y += (G.waterDensity * cfg.physics.gravity * ch.gravity * (b.volume || 0) * sub * dt) / b.mass;
+      const v = b.velocity.length();
+      b.velocity.scale(1 - Math.min(0.5, (0.5 * G.waterDensity * G.dragShape * b.dragArea * sub * v * dt) / b.mass), b.velocity);
+      b.angularVelocity.scale(1 - Math.min(0.5, 2 * sub * dt), b.angularVelocity);
     }
     for (const b of world.bodies) {
       if (b.type !== CANNON.Body.DYNAMIC || b.sleepState === CANNON.Body.SLEEPING || !b.dragArea) continue;
@@ -418,7 +440,10 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       p.rel0 = p.parent.wquat.inverse().mult(p.wquat);
       p.axisParent = p.rel0.vmult(p.axisLocal);
       const base = cfg.joints[p.jointType].strength;
-      p.strength = base * Math.min(p.spec.strength, p.parent.spec.strength);
+      // A joint is as strong as the weaker of the two materials, and stronger the thicker the part it holds:
+      // a heavy beam makes a heavier joint. The thickness is the part's cross-section across its length.
+      const hs = [...p.spec.half].sort((a, b) => a - b), thick = Math.sqrt((4 * hs[0] * hs[1]) / cfg.joints.section);
+      p.strength = base * Math.min(p.spec.strength, p.parent.spec.strength) * Math.max(1, Math.min(cfg.joints.maxThick, thick));
     }
     // Parts that overlap (or all but touch) as built never collide with each other.
     bot.clash = new Set();
@@ -481,6 +506,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
         body.addShape(p.shape, p.localPos, p.localQuat);
       }
       body.dragArea = 0.7 * list.reduce((n, p) => n + faceArea(p.shape), 0);
+      body.volume = list.reduce((n, p) => n + (p.spec.volume || 0), 0);
       body.velocity.copy(vel); body.angularVelocity.copy(heavy.wang);
       body.pv = vel.clone(); body.pw = heavy.wang.clone();
       body.live = g.live; body.bot = bot; body.rootPart = g;
@@ -636,9 +662,17 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const rate = hAxis.dot(B.angularVelocity) - hAxis.dot(A.angularVelocity);
       let torque = 0;
       if (p.spring) torque += -p.spring * (p.angle - p.springRest) - 0.04 * p.spring * rate;
-      if (p.limits) {
-        if (p.angle < p.limits[0]) torque += H.stopStiffness * (p.limits[0] - p.angle) - H.stopDamping * rate;
-        else if (p.angle > p.limits[1]) torque += -H.stopStiffness * (p.angle - p.limits[1]) - H.stopDamping * rate;
+      if (p.limits && (p.angle < p.limits[0] || p.angle > p.limits[1])) {
+        // A stop has to be hard enough for what hits it: a heavy arm needs a stiffer stop than a light flap, or
+        // it swings on through. Stiffness and damping follow the arm's inertia about its pivot.
+        if (p.stopBody !== B) {
+          const inv = B.invInertiaWorld.vmult(hAxis).dot(hAxis), piv = new CANNON.Vec3(); partWorld(p, piv, qC); piv.vadd(qC.vmult(p.anchorLocal), piv);
+          const d = B.position.vsub(piv), off2 = d.lengthSquared() - d.dot(hAxis) ** 2;
+          p.stopInertia = (inv > 0 ? 1 / inv : 0) + B.mass * Math.max(0, off2); p.stopBody = B;
+        }
+        const k = Math.max(H.stopStiffness, p.stopInertia * H.stopRate * H.stopRate), c = Math.max(H.stopDamping, 1.4 * p.stopInertia * H.stopRate);
+        if (p.angle < p.limits[0]) torque += k * (p.limits[0] - p.angle) - c * rate;
+        else torque += -k * (p.angle - p.limits[1]) - c * rate;
       }
       if (!torque) continue;
       hAxis.scale(torque, hT);
@@ -674,7 +708,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
   }
 
   // After each physics step, see whether any hit was hard enough to snap a joint.
-  const cp = new CANNON.Vec3(), pp = new CANNON.Vec3(), hitLog = new Map();
+  const cp = new CANNON.Vec3(), pp = new CANNON.Vec3(), pq = new CANNON.Quaternion(), hitLog = new Map();
   // Velocity of a contact point as it was just before the step, i.e. before the hit changed it.
   const pointVel = (b, r) => (b.pv ? b.pv.vadd(b.pw.cross(r)) : new CANNON.Vec3());
   const blows = new Map();
@@ -683,6 +717,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
     // One log line per hard hit between two parts. The faster part is named as the one doing the hitting.
     const noteHit = (p, q, sp, sq, J, speed) => {
       if (!p || !q || J < cfg.breakage.logImpulse || speed < 1 || (!p.live && !q.live)) return;
+      if (p.bot !== q.bot && p.live && q.live) m.lastBlow = m.t;
       const [striker, target] = (sp >= sq ? [p, q] : [q, p]);
       const key = [p.index, q.index].sort().join('-');
       if (m.t - (hitLog.get(key) ?? -9) < 0.4) return;
@@ -690,24 +725,45 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const name = (x) => (x.live ? `${x.bot.name}'s ${x.id}` : `a loose ${x.id}`);
       log('hit', target.live ? target.bot.index : striker.bot.index, `${name(striker)} hit ${name(target)} (impulse ${Math.round(J)}, closing at ${Math.round(speed)} m/s).`, { striker: striker.id, target: target.id, impulse: Math.round(J), speed: r2(speed), flash: [striker.index, target.index] });
     };
-    const side = (body, shape, r, J, speed, otherShape) => {
+    const side = (body, shape, r, J, speed, otherShape, n) => {
       const part = shape && shape.partRef;
       if (!part || !part.live || !body.live) return;
       body.position.vadd(r, cp);
       const bot = part.bot;
       const op = otherShape && otherShape.partRef;
       const label = (otherShape && otherShape.label) || 'the floor';
+      // The blow as a vector, and the point where it enters the structure. Both change when it passes a pivot.
+      let Jv = n.scale(J), at = cp;
       let cur = part, best = null;
       while (cur.parent && cur.intact) {
-        partWorld(cur, pp);
-        const a = cur.body.quaternion.vmult(cur.localQuat.vmult(cur.anchorLocal)); pp.vadd(a, pp);
-        const lever = Math.min(cfg.breakage.maxLever, pp.distanceTo(cp));
+        partWorld(cur, pp, pq);
+        const a = pq.vmult(cur.anchorLocal); pp.vadd(a, pp);
+        const lever = Math.min(cfg.breakage.maxLever, pp.distanceTo(at));
         const share = (bot.liveMass - cur.subMass) / bot.liveMass;
-        const load = J * share * (1 + lever / cfg.breakage.leverLength) * Math.min(cfg.breakage.maxSharp, speed / cfg.breakage.speedRef) * (op ? 1 : cfg.breakage.floorFactor);
+        const load = Jv.length() * share * (1 + lever / cfg.breakage.leverLength) * Math.min(cfg.breakage.maxSharp, speed / cfg.breakage.speedRef) * (op ? 1 : cfg.breakage.floorFactor);
         const ratio = load / (cur.strength * cfg.breakage.scale);
         // The joint nearest the blow that cannot take it is the one that goes, so machines lose their outer
         // pieces first and come apart a piece at a time.
         if (ratio > 1) { best = { part: cur, ratio, load }; break; }
+        // A part on a hinge or a motor swings when it is struck, and what swings takes up some of the blow
+        // itself: only the rest goes through the pivot into whatever carries it. A weight on the end of an arm
+        // takes nearly all of a blow on the weight (a hammer does not hurt the hand); a balanced rotor takes
+        // none, so a spinner's mounting feels every hit. A motor holds against the swing with its torque.
+        if ((cur.jointType === 'motor' || cur.jointType === 'hinge') && cur.body !== cur.parent.body) {
+          const B = cur.body, ax = pq.vmult(cur.axisLocal);
+          let L = at.vsub(pp).cross(Jv).dot(ax);
+          const hold = cur.jointType === 'motor' ? cur.torque * cfg.breakage.window : 0;
+          L = Math.sign(L) * Math.max(0, Math.abs(L) - hold);
+          // Hard against its stop, it cannot swing any further that way.
+          const stopped = cur.limits && ((L > 0 && cur.angle >= cur.limits[1]) || (L < 0 && cur.angle <= cur.limits[0]));
+          if (L && !stopped) {
+            const d = B.position.vsub(pp), off = d.vsub(ax.scale(d.dot(ax)));
+            const inv = B.invInertiaWorld.vmult(ax).dot(ax);
+            const I = (inv > 0 ? 1 / inv : 0) + B.mass * off.lengthSquared();
+            if (I > 0) Jv = Jv.vsub(ax.cross(off).scale((B.mass * L) / I));
+          }
+          at = pp.clone();
+        }
         cur = cur.parent;
       }
       if (best) { const prev = breaks.get(best.part); if (!prev || prev.ratio < best.ratio) breaks.set(best.part, { ...best, by: op, label }); }
@@ -728,8 +784,8 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const J = blow.J, speed = blow.speed;
       if (J < 20) continue;
       noteHit(P, Q, vi.length(), vj.length(), J, speed);
-      side(eq.bi, eq.si, eq.ri, J, speed, eq.sj);
-      side(eq.bj, eq.sj, eq.rj, J, speed, eq.si);
+      side(eq.bi, eq.si, eq.ri, J, speed, eq.sj, eq.ni.scale(-1));
+      side(eq.bj, eq.sj, eq.rj, J, speed, eq.si, eq.ni);
     }
     if (blows.size > 4000) for (const [k, b] of blows) if (m.t - b.last > 0.1) blows.delete(k);
     if (!breaks.size) return;
@@ -805,10 +861,11 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const w = wrecked[0] ? 1 : 0;
       return end(w, 'destroyed', `${n[1 - w]} was broken apart: only ${pct(1 - w)}% of it is still attached to its core. ${n[w]} wins.`);
     }
-    const over = m.t >= cfg.match.maxSeconds, settled = still[0] && still[1];
+    // Standing still is not a stalemate while one machine is still landing blows on the other.
+    const over = m.t >= cfg.match.maxSeconds, settled = still[0] && still[1] && m.t - (m.lastBlow ?? -99) > cfg.match.stalemateSeconds;
     if (!(settled || over)) return;
     // Nobody was destroyed or put out. The machine that is more intact wins, if the difference is clear.
-    const why = settled ? `Nothing moved for ${cfg.match.stalemateSeconds} seconds.` : 'Time ran out.';
+    const why = settled ? `Neither machine has moved or landed a blow for ${cfg.match.stalemateSeconds} seconds.` : 'Time ran out.';
     const kind = settled ? 'settled' : 'time';
     if (Math.abs(whole[0] - whole[1]) < cfg.match.intactMargin) return end(null, kind + '_draw', `${why} Neither machine was destroyed or put out, and they are about equally intact. Draw.`);
     const w = whole[0] > whole[1] ? 0 : 1;

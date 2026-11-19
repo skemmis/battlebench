@@ -41,7 +41,8 @@ function walk(s, out, mem, lib, fwd, turn, LL = LEGS_L, RR = LEGS_R) {
   if (me.upright < 0) fwd = -fwd;
   // A walker turns badly with one side stopped: for a sharp turn, the two sides step in opposite directions.
   turn = lib.clamp(turn - me.turnRate * 0.5);
-  if (Math.abs(turn) > 0.3) fwd *= 0.1;
+  // A long machine cannot spin on the spot, its end feet would have to drag sideways: it turns on the move.
+  if (Math.abs(turn) > 0.3) fwd = mem.long ? Math.sign(fwd || 1) * Math.max(0.55, Math.abs(fwd) * 0.7) : fwd * 0.1;
   // In low gravity each step takes longer to come down, so the gait slows to match.
   const pace = 3.2 * Math.sqrt(s.challenge.gravity);
   const vl = lib.clamp(fwd - turn) * pace, vr = lib.clamp(fwd + turn) * pace;
@@ -106,7 +107,8 @@ export const STRIDER = {
     { id: 'beak_tip', type: 'wedge', material: 'steel', size: [0.5, 0.3, 0.4], pos: [0, -0.1, 2.0], parent: 'beak' },
   ],
 };
-const WALKER = { length: 1.9, top: 2.4, margin: 2.0, side: 0.5, climb: 0.45, grip: 0.8, feed: false };
+// A walker wades: its frame rides above half a metre of water. It takes slopes up to about one in two.
+const WALKER = { length: 1.9, top: 2.4, margin: 2.0, side: 0.5, climb: 0.45, grade: 0.55, wade: 0.7, grip: 0.8, feed: false };
 export function striderProgram(s, out, mem, lib) {
   const me = s.self, foe = s.enemy, SELF = { ...WALKER, mem };
   if (righting(s, out)) return;
@@ -120,72 +122,68 @@ export function striderProgram(s, out, mem, lib) {
 // ── Mantis ─────────────────────────────────────────────────────────────────
 // A walker with two hammers. The arms lie back along the body, swing up and over, and come down in front of it.
 // Each head is 20 kg of steel on a 1.7 m arm.
+// Each hammer is one steel bar on a motor. There is no separate head to snap off: the bar is the hammer. Struck
+// about two thirds of the way along it swings without loading the pivot at all, and even at the tip only half
+// the blow reaches the mast. The pivot is ahead of the front axle, so a swing that misses comes down on the
+// ground and not on the machine's own legs.
 const hammer = (i, x) => [
-  { id: 'arm_' + i, type: 'beam', material: 'aluminium', size: [0.1, 0.1, 1.8], pos: [x, 0.75, -0.7], parent: 'yoke', joint: { type: 'motor', axis: [1, 0, 0], pivot: [x, 0.75, 0.2], gear: 5, power: 1, limits: [-6, 214] } },
-  block('head_' + i, [0.24, 0.24, 0.3], [x, 0.75, -1.5], 'arm_' + i, 'steel'),
+  { id: 'club_' + i, type: 'beam', material: 'steel', size: [0.14, 0.14, 1.9], pos: [x, 0.66, 0.2], parent: 'yoke', joint: { type: 'motor', axis: [1, 0, 0], pivot: [x, 0.66, 1.1], gear: 5, power: 1, limits: [-6, 215] } },
 ];
 export const MANTIS = {
   name: 'Mantis',
-  note: 'A six-legged walker with two steel hammers. It walks up to the enemy, squares up, and brings the hammers down one after the other. A steel keel keeps it the right way up on ledges.',
+  note: 'A six-legged walker with two steel clubs on a mast at its nose. It walks up to the enemy, squares up, and brings the clubs over and down one after the other. Each club is a single bar, so there is no head to snap off, and a struck club swings and spares the mast.',
   parts: [
     ...hexFrame({ frame: 'steel' }),
-    beam('post_l', [0.14, 0.75, 0.14], [0.62, 0.38, 0.2], 'axle_1', 'steel'),
-    beam('post_r', [0.14, 0.75, 0.14], [-0.62, 0.38, 0.2], 'axle_1', 'steel'),
-    beam('stay_l', [0.08, 0.9, 0.08], [0.62, 0.32, 0.5], 'post_l', 'aluminium', { rot: [-40, 0, 0] }),
-    beam('stay_r', [0.08, 0.9, 0.08], [-0.62, 0.32, 0.5], 'post_r', 'aluminium', { rot: [-40, 0, 0] }),
-    beam('yoke', [1.38, 0.12, 0.12], [0, 0.75, 0.2], 'post_l', 'steel'),
-    ...hammer(0, 0.36), ...hammer(1, -0.36),
-    block('keel', [0.3, 0.2, 0.6], [0, -0.18, 0], 'spine', 'steel'),
+    beam('mast', [0.16, 0.66, 0.16], [0, 0.36, 1.1], 'spine', 'steel'),
+    beam('stay', [0.08, 0.85, 0.08], [0, 0.32, 0.76], 'mast', 'steel', { rot: [-50, 0, 0] }),
+    beam('yoke', [0.9, 0.12, 0.12], [0, 0.66, 1.1], 'mast', 'steel'),
+    ...hammer(0, 0.3), ...hammer(1, -0.3),
+    block('keel', [0.3, 0.2, 0.6], [0, -0.18, -0.2], 'spine', 'steel'),
   ],
 };
 export function mantisProgram(s, out, mem, lib) {
-  const me = s.self, foe = s.enemy, SELF = { ...WALKER, mem }, REST = -0.05, DOWN = 3.62;
-  const arms = [0, 1].filter((i) => me.joints['arm_' + i]);
-  const hold = (i, to, max = 0.6) => { const j = me.joints['arm_' + i]; if (j) out['arm_' + i] = lib.clamp((to - j.angle) * 1.2, -max, max); };
-  if (me.upright < 0.2) { mem.down = (mem.down || 0) + 1; out.say = 'tipped over, kicking and levering up with the hammers'; for (const i of arms) out['arm_' + i] = mem.down < 60 ? 0 : Math.sin(s.t * 2) > 0 ? 0.25 : -0.25; for (const id of LEGS_L) out[id] = 1; for (const id of LEGS_R) out[id] = -1; return; }
+  const me = s.self, foe = s.enemy, SELF = { ...WALKER, mem }, REST = -0.05, DOWN = 3.6;
+  const arms = [0, 1].filter((i) => me.joints['club_' + i]);
+  const hold = (i, to, max = 0.6) => { const j = me.joints['club_' + i]; if (j) out['club_' + i] = lib.clamp((to - j.angle) * 1.2, -max, max); };
+  if (me.upright < 0.2) { mem.down = (mem.down || 0) + 1; out.say = 'tipped over, kicking and levering up with the hammers'; for (const i of arms) out['club_' + i] = mem.down < 60 ? 0 : Math.sin(s.t * 2) > 0 ? 0.25 : -0.25; for (const id of LEGS_L) out[id] = 1; for (const id of LEGS_R) out[id] = -1; return; }
   // A swing in progress: full power down, then lift the arm back.
   if (mem.swing != null) {
-    const i = mem.swing, j = me.joints['arm_' + i];
+    const i = mem.swing, j = me.joints['club_' + i];
     if (!j) mem.swing = null;
     else if (mem.lift) { hold(i, REST, 0.8); if (j.angle < 0.4 || s.t > mem.until) { mem.swing = null; mem.lift = false; mem.next = 1 - i; } }
-    else { out['arm_' + i] = 1; if (j.angle > DOWN || s.t > mem.until) { mem.lift = true; mem.until = s.t + 2; } }
+    else { out['club_' + i] = 1; if (j.angle > DOWN || s.t > mem.until) { mem.lift = true; mem.until = s.t + 2; } }
   }
   for (const i of arms) if (mem.swing !== i) hold(i, REST);
-  // In reach and square on: stand and strike. The heads land between 1.3 and 2.2 m ahead of the core.
-  const inReach = foe.distance > 1.1 && foe.distance < 2.5 && Math.abs(foe.bearing) < 0.3;
+  // In reach and square on: stand and strike. The heads come down about 2.7 m ahead of the core.
+  const inReach = foe.distance > 1.8 && foe.distance < 3.4 && Math.abs(foe.bearing) < 0.3;
   if (inReach && arms.length) {
     out.say = 'in reach, bringing the hammers down';
     walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.4, 0.4));
     if (mem.swing == null && s.t > (mem.cool || 0)) { const i = arms.includes(mem.next) ? mem.next : arms[0]; mem.swing = i; mem.lift = false; mem.until = s.t + 0.9; mem.cool = s.t + 0.45; }
     return;
   }
-  if (foe.distance <= 1.1 && arms.length) { out.say = 'too close to swing, stepping back'; const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 2, -0.4, 0.4)); return; }
+  if (foe.distance <= 1.8 && arms.length) { out.say = 'too close to swing, stepping back'; const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 2, -0.4, 0.4)); return; }
   // Closing in: stop at striking distance, not on top of it.
-  const n = stalk(s, out, mem, lib, SELF, { keep: arms.length ? 1.7 : 0 });
+  const n = stalk(s, out, mem, lib, SELF, { keep: arms.length ? 2.6 : 0 });
   if (n.arrived && arms.length) { out.say = 'squaring up to strike'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.5, 0.5)); }
 }
 
 // ── Thresher ───────────────────────────────────────────────────────────────
-// A walker with a spinning bar across its nose, turning so that it strikes upward. It breaks what it touches
-// and throws lighter machines back.
+// A walker with a heavy steel bar spinning flat above its nose, like a rotor. The bar turns on the spine itself,
+// the strongest thing to hang a weapon from, and it sweeps a circle wider than the front legs stand.
 export const THRESHER = {
   name: 'Thresher',
-  note: 'A six-legged walker with a steel bar spinning across its nose. The bar turns upward at the front, so what it hits is broken or thrown up and back. It keeps its nose on the enemy and walks into it.',
+  note: 'A six-legged walker with a steel bar spinning flat over its nose at 80 km/h at the tips. The bar is mounted on the spine, so hits do not tear it off. It keeps its nose on the enemy and walks the bar into legs and wheels.',
   parts: [
     ...hexFrame({ frame: 'steel' }),
-    beam('fork_l', [0.12, 0.12, 0.9], [0.56, 0.02, 1.55], 'axle_2', 'steel'),
-    beam('fork_r', [0.12, 0.12, 0.9], [-0.56, 0.02, 1.55], 'axle_2', 'steel'),
-    { id: 'drum', type: 'disc', material: 'steel', radius: 0.16, thickness: 0.2, pos: [0, 0.02, 1.9], rot: [0, 0, 90], parent: 'fork_l', joint: { type: 'motor', axis: [1, 0, 0], gear: 3, power: 1 } },
-    beam('bar_a', [0.9, 0.1, 0.12], [0, 0.02, 1.9 + 0.36], 'drum', 'steel'),
-    beam('bar_b', [0.9, 0.1, 0.12], [0, 0.02, 1.9 - 0.36], 'drum', 'steel'),
-    plate('back', [1.0, 0.06, 1.6], [0, 0.22, -0.2], 'spine', 'plastic'),
+    { id: 'bar', type: 'beam', material: 'steel', size: [1.7, 0.14, 0.2], pos: [0, 0.26, 1.2], parent: 'spine', joint: { type: 'motor', axis: [0, 1, 0], gear: 3, power: 1 } },
+    plate('back', [1.0, 0.06, 1.2], [0, 0.2, -0.55], 'spine', 'plastic'),
     block('tail', [0.4, 0.3, 0.4], [0, 0, -1.25], 'spine', 'steel'),
   ],
 };
 export function thresherProgram(s, out, mem, lib) {
   const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 2.4, mem };
-  // The bar always turns upward at the front, whichever way up the machine is.
-  out.drum = me.upright > 0 ? -1 : 1;
+  out.bar = 1;
   if (righting(s, out)) return;
   // After a hit, the enemy is often thrown clear. Do not chase blindly over an edge: stalk plans the way.
   if (foe.distance < 3 && Math.abs(foe.bearing) > 0.5) { out.say = 'turning the bar onto it'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.6, 0.6)); return; }
@@ -292,7 +290,7 @@ export const ROVER = {
   ],
 };
 export function roverProgram(s, out, mem, lib) {
-  const me = s.self, foe = s.enemy, SELF = { length: 2.5, top: 5, margin: 2.0, side: 0.6, climb: 0.2, mem };
+  const me = s.self, foe = s.enemy, SELF = { length: 2.5, top: 5, margin: 2.0, side: 0.6, climb: 0.2, grade: 0.4, wade: 0.2, mem };
   const drive = (d, t) => { for (const id of ['wl_0', 'wl_1', 'wl_2']) out[id] = lib.clamp(d - t); for (const id of ['wr_0', 'wr_1', 'wr_2']) out[id] = lib.clamp(d + t); };
   if (me.upright < 0.2) { out.say = 'on my back, spinning the wheels to roll over'; drive(Math.sin(s.t * 5), 0.5); return; }
   // Ram, and if it does not give, back off for a run-up: a blow at speed is what breaks joints.
@@ -325,6 +323,7 @@ export const CENTIPEDE = {
   ],
 };
 export function centipedeProgram(s, out, mem, lib) {
+  mem.long = true;
   const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 2.7, margin: 2.4, span: 1.9, mem }, legs = { L: PEDE_L, R: PEDE_R };
   if (righting(s, out, PEDE_L, PEDE_R)) return;
   if (s.t < (mem.back || 0)) { out.say = 'stepping back for another run at it'; const g = lib.guard(s, -1, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 1.5, -0.3, 0.3), PEDE_L, PEDE_R); return; }
@@ -335,6 +334,101 @@ export function centipedeProgram(s, out, mem, lib) {
   if (n.reachable && !lib.plan(s, foe.x, foe.z, { ...SELF, span: 0 }).reachable && foe.distance > 4) out.say = 'walking across the gap to get at it';
 }
 
+// ── Scorpion ───────────────────────────────────────────────────────────────
+// A large machine: ten legs, two claws that snap shut across its front, and a tail that comes over the top.
+// The claws are steel bars on upright pivots ahead of the front legs. Open, they stand wide; snapped shut they
+// meet in front of the nose, and whatever is between them takes a bar from each side. The tail is a long club
+// on a mast, lying back along the body until something is in front of it.
+const pedeFrame = (frame = 'steel', power = 1, sp = 0.26) => [
+  { id: 'core', type: 'core' },
+  // The backbone is two heavy beams, thick enough that the machine does not snap in half at the core.
+  beam('spine_f', [sp, sp, 1.9], [0, 0, 0.95], 'core', frame),
+  beam('spine_b', [sp, sp, 1.9], [0, 0, -0.95], 'core', frame),
+  ...PEDE_Z.flatMap((z, i) => { const x = i % 2 ? 1.3 : 1.04, parent = z > 0 ? 'spine_f' : z < 0 ? 'spine_b' : 'core'; return [
+    beam('axle_' + i, [Math.min(2.4, x * 2 - 0.18), 0.12, 0.12], [0, 0, z], parent, frame),
+    ...leg('leg_l' + i, x, z, i % 2 ? 60 : 0, 'axle_' + i, { reach: 0.7, power }), ...leg('leg_r' + i, -x, z, i % 2 ? 0 : 60, 'axle_' + i, { reach: 0.7, power }),
+  ]; }),
+];
+const claw = (side, x) => ({ id: 'claw_' + side, type: 'beam', material: 'steel', size: [0.17, 0.17, 1.5], pos: [x, 0, 3.4], parent: 'brow', joint: { type: 'motor', axis: [0, 1, 0], pivot: [x, 0, 2.68], gear: 8, power: 1, limits: side === 'l' ? [-14, 62] : [-62, 14] } });
+export const SCORPION = {
+  name: 'Scorpion',
+  note: 'A large machine on ten legs, nearly seven metres from tail to claw tips. Two steel claws stand open across its front and snap shut on whatever comes between them, and a tail club comes over the top onto anything held there. It weighs about twice what the six-legged walkers do.',
+  parts: [
+    ...pedeFrame(),
+    beam('neck', [0.2, 0.2, 0.8], [0, 0, 2.3], 'spine_f', 'steel'),
+    beam('brow', [1.4, 0.16, 0.16], [0, 0, 2.68], 'neck', 'steel'),
+    claw('l', 0.55), claw('r', -0.55),
+    beam('mast', [0.22, 0.66, 0.22], [0, 0.44, 1.3], 'spine_f', 'steel'),
+    beam('stay', [0.08, 0.9, 0.08], [0, 0.36, 0.95], 'mast', 'steel', { rot: [-50, 0, 0] }),
+    { id: 'tail', type: 'beam', material: 'steel', size: [0.14, 0.14, 2.4], pos: [0, 0.82, 0.2], parent: 'mast', joint: { type: 'motor', axis: [1, 0, 0], pivot: [0, 0.82, 1.3], gear: 6, power: 1, limits: [-4, 192] } },
+    plate('shell_l', [0.6, 0.06, 2.4], [0.5, 0.24, -0.7], 'spine_b', 'aluminium', { rot: [0, 0, -12] }),
+    plate('shell_r', [0.6, 0.06, 2.4], [-0.5, 0.24, -0.7], 'spine_b', 'aluminium', { rot: [0, 0, 12] }),
+    block('sting', [0.3, 0.3, 0.5], [0, 0.05, -2.1], 'spine_b', 'steel'),
+  ],
+};
+export function scorpionProgram(s, out, mem, lib) {
+  mem.long = true;
+  const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 3.2, margin: 2.6, span: 1.9, mem }, legs = { L: PEDE_L, R: PEDE_R };
+  const OPEN = 0.9, SHUT = -0.12;
+  const set = (id, to, max) => { const j = me.joints[id]; if (j) out[id] = lib.clamp((to - j.angle) * 2, -max, max); };
+  const claws = (l, r, max) => { set('claw_l', l, max); set('claw_r', -r, max); };
+  if (righting(s, out, PEDE_L, PEDE_R)) { claws(OPEN, OPEN, 0.3); return; }
+  const tail = me.joints.tail, flat = me.upright > 0.5;
+  // The tail: over and down at full power, then back.
+  if (tail) {
+    if (mem.strike === 'down') { out.tail = 1; if (tail.angle > 3.2 || s.t > mem.until) { mem.strike = 'up'; mem.until = s.t + 2.5; } }
+    else if (mem.strike === 'up') { out.tail = lib.clamp((-0.05 - tail.angle) * 1.2, -0.7, 0.7); if (tail.angle < 0.4 || s.t > mem.until) mem.strike = null; }
+    else out.tail = lib.clamp((-0.05 - tail.angle) * 1.2, -0.5, 0.5);
+  }
+  const front = Math.abs(foe.bearing) < 0.3, inClaws = foe.distance > 2.2 && foe.distance < 4.6 && front, underTail = foe.distance > 2.4 && foe.distance < 4.3 && Math.abs(foe.bearing) < 0.22;
+  // The claws: wide open on the way in, then snap, hold a moment, and open again.
+  if (mem.snap > s.t) claws(SHUT, SHUT, 1);
+  else if (inClaws && s.t > (mem.reopen || 0)) { mem.snap = s.t + 0.45; mem.reopen = s.t + 1.3; claws(SHUT, SHUT, 1); }
+  else claws(OPEN, OPEN, 0.35);
+  if (inClaws || underTail) {
+    out.say = underTail && tail ? 'it is between the claws, bringing the tail over' : 'snapping the claws shut on it';
+    walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.4, 0.4), PEDE_L, PEDE_R);
+    if (underTail && tail && flat && !mem.strike && s.t > (mem.cool || 0)) { mem.strike = 'down'; mem.until = s.t + 1.1; mem.cool = s.t + 1.6; }
+    return;
+  }
+  if (foe.distance <= 2.2) { out.say = 'too close for the claws, stepping back'; const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 2, -0.4, 0.4), PEDE_L, PEDE_R); return; }
+  const n = stalk(s, out, mem, lib, SELF, { keep: 3.4, ...legs });
+  if (n.arrived) { out.say = 'turning the claws onto it'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.5, 0.5), PEDE_L, PEDE_R); }
+}
+
+// ── Dreadnought ────────────────────────────────────────────────────────────
+// A large machine: ten legs under an armoured shell, with a rotor bar at each end. It does not need to turn to
+// face anything, and it is long enough to walk across gaps.
+const rotor = (id, z, parent) => ({ id, type: 'beam', material: 'steel', size: [1.7, 0.14, 0.2], pos: [0, 0.26, z], parent, joint: { type: 'motor', axis: [0, 1, 0], gear: 3, power: 1 } });
+export const DREADNOUGHT = {
+  name: 'Dreadnought',
+  note: 'A large machine on ten legs under a shell of plates, with a spinning steel bar at each end. Either end is the front. It walks into the enemy with whichever rotor is nearer and crosses gaps the six-legged machines cannot.',
+  parts: [
+    ...pedeFrame(),
+    rotor('rotor_f', 1.95, 'spine_f'), rotor('rotor_b', -1.95, 'spine_b'),
+    // The shell stands on two posts and rides clear above the legs; the skirts hang outside them.
+    beam('post_f', [0.14, 0.8, 0.14], [0, 0.5, 0.45], 'spine_f', 'steel'),
+    beam('post_b', [0.14, 0.8, 0.14], [0, 0.5, -0.45], 'spine_b', 'steel'),
+    beam('rib_f', [2.4, 0.1, 0.1], [0, 0.92, 0.45], 'post_f', 'steel'),
+    beam('rib_b', [2.4, 0.1, 0.1], [0, 0.92, -0.45], 'post_b', 'steel'),
+    plate('roof', [2.0, 0.06, 2.4], [0, 1.0, 0], 'rib_f', 'aluminium'),
+    plate('skirt_l', [0.06, 0.6, 2.4], [1.62, 0.62, 0], 'rib_f', 'aluminium', { rot: [0, 0, 18] }),
+    plate('skirt_r', [0.06, 0.6, 2.4], [-1.62, 0.62, 0], 'rib_f', 'aluminium', { rot: [0, 0, -18] }),
+    beam('tower', [0.3, 0.4, 0.3], [0, 1.23, 0], 'roof', 'aluminium'),
+  ],
+};
+export function dreadnoughtProgram(s, out, mem, lib) {
+  mem.long = true;
+  const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 2.9, margin: 2.5, span: 1.9, mem }, legs = { L: PEDE_L, R: PEDE_R };
+  out.rotor_f = 1; out.rotor_b = -1;
+  if (righting(s, out, PEDE_L, PEDE_R)) return;
+  // Close up, whichever end is nearer goes in first: if the enemy is behind, back into it.
+  if (foe.distance < 5 && Math.abs(foe.bearing) > 2.0) { out.say = 'backing the rear rotor into it'; const turn = lib.clamp((foe.bearing > 0 ? foe.bearing - Math.PI : foe.bearing + Math.PI) * 2, -0.5, 0.5); const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, turn, PEDE_L, PEDE_R); return; }
+  if (foe.distance < 3.5 && Math.abs(foe.bearing) > 0.5) { out.say = 'turning a rotor onto it'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.6, 0.6), PEDE_L, PEDE_R); return; }
+  stalk(s, out, mem, lib, SELF, legs);
+  if (foe.distance < 3.5) out.say = 'walking the rotor into it';
+}
+
 export const ALL = [
   { build: STRIDER, program: striderProgram },
   { build: MANTIS, program: mantisProgram },
@@ -342,5 +436,7 @@ export const ALL = [
   { build: SLINGER, program: slingerProgram },
   { build: ROVER, program: roverProgram },
   { build: CENTIPEDE, program: centipedeProgram },
+  { build: SCORPION, program: scorpionProgram },
+  { build: DREADNOUGHT, program: dreadnoughtProgram },
 ];
 export const ROSTER = ALL;

@@ -9,7 +9,8 @@
     "build": "node scripts/build.mjs",
     "sweep": "node scripts/sweep.mjs",
     "tournament": "node scripts/tournament.mjs",
-    "gauntlet": "node scripts/gauntlet.mjs"
+    "gauntlet": "node scripts/gauntlet.mjs",
+    "quick": "node scripts/quick.mjs"
   },
   "dependencies": {
     "cannon-es": "0.20.0"

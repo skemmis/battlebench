@@ -12,17 +12,17 @@
 /* Layout: a workbench. The arena is the bench top on the left; the clipboard (log, builds, settings) hangs on the right. */
 :root {
   --bg: #e9ecf1; --surface: #f7f8fa; --raised: #ffffff; --ink: #18202c; --muted: #5b6676; --line: #cfd5de;
-  --team-a: #d9530b; --team-b: #1763c6; --warn: #b4290f; --stage: #dfe4ec; --floor: #aeb7c4; --hill: #7c9468; --rock: #7d7466; --contour: #4a6040; --grid: #8d98a8; --pit: #c9d0db;
+  --team-a: #d9530b; --team-b: #1763c6; --warn: #b4290f; --stage: #dfe4ec; --floor: #aeb7c4; --grass: #7fa35a; --hill: #b5c27a; --rock: #8a8172; --sand: #cdbb8a; --water: #2f7fc4; --contour: #4a6040; --grid: #8d98a8; --pit: #c9d0db;
   --display: 'Space Grotesk', 'Avenir Next', system-ui, sans-serif;
   --body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #12161d; --surface: #1a2029; --raised: #222a35; --ink: #e8ecf2; --muted: #98a3b3; --line: #323c4a;
-  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --hill: #6d8759; --rock: #8c8271; --contour: #b4cc9c; --grid: #566273; --pit: #07090c; color-scheme: dark } }
+  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --grass: #4f7240; --hill: #869a58; --rock: #6f685c; --sand: #94875f; --water: #3b8bd0; --contour: #b4cc9c; --grid: #566273; --pit: #07090c; color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #12161d; --surface: #1a2029; --raised: #222a35; --ink: #e8ecf2; --muted: #98a3b3; --line: #323c4a;
-  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --hill: #6d8759; --rock: #8c8271; --contour: #b4cc9c; --grid: #566273; --pit: #07090c; color-scheme: dark }
+  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --grass: #4f7240; --hill: #869a58; --rock: #6f685c; --sand: #94875f; --water: #3b8bd0; --contour: #b4cc9c; --grid: #566273; --pit: #07090c; color-scheme: dark }
 * { box-sizing: border-box }
 [hidden] { display: none !important }
 body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.5 }
@@ -153,8 +153,10 @@ import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cann
 //
 //   floor      slabs: { x, z, w, d, top } (centre, width along x, depth along z, height of the top, 0 if absent)
 //   walls      solid blocks standing on the floor: { x, z, w, d, h }
-//   terrain    topography on the base floor, or null: { cell, x0, z0, nx, nz, max, heights } where heights[iz * nx + ix]
-//              is the height of the ground at (x0 + ix * cell, z0 + iz * cell)
+//   terrain    the lie of the land on the base floor, or null: { cell, x0, z0, nx, nz, max, heights } where
+//              heights[iz * nx + ix] is the height of the ground at (x0 + ix * cell, z0 + iz * cell)
+//   water      { level } or null: wherever the ground is lower than level there is water, level - ground deep.
+//              Water drags on whatever is in it and bears up light parts (rubber and plastic float).
 //   surface    multipliers on floor friction: grip (rubber and wheels) and slide (everything else)
 //   gravity    multiplier on normal gravity
 //   spawn      where each bot's core starts; bot 0's home end is -z, bot 1's is +z
@@ -177,10 +179,11 @@ const OPEN = {
   gravity: 1,
   spawn: [{ x: 0, z: -9 }, { x: 0, z: 9 }],
   objective: { type: 'knockout' },
+  terrain: null, water: null,
 };
 
 const LAYOUTS = {
-  open: (r) => { const s = 26 + Math.round(r() * 8); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 6, reach: s / 2 - 5 }; },
+  open: (r) => { const s = 30 + Math.round(r() * 8); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 6, reach: s / 2 - 5 }; },
   small: (r) => { const s = 14 + Math.round(r() * 4); return { text: `a small ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 3.5, reach: s / 2 - 3.5 }; },
   bridge: (r) => {
     const w = chRound(4.5 + r() * 2.5), len = chRound(6 + r() * 4), isl = 12;
@@ -275,6 +278,51 @@ function drawCrags(L, G, r, spawnZ) {
   return { ledges: out, max, step: chRound(step) };
 }
 
+// Land, in the way a game map has land: rolling ground you can walk anywhere on, flat-topped high ground with
+// sides too steep to climb and a ramp or two up, and a river that is slow to wade except at its fords. Every
+// map is the same seen from either end, so neither starting place is the better one.
+const LANDS = {
+  valley: { text: 'The land rolls gently. A river {wide} m wide crosses the middle, {deep} m deep except at two fords. On each side stands a flat-topped hill {high} m high with steep sides and one ramp up.', river: true, hills: 'twin', roll: 0.22 },
+  highground: { text: 'The land rolls gently around a flat-topped hill in the middle, {high} m high, with steep sides and two ramps up. Whoever holds the top looks down on the other.', river: false, hills: 'middle', roll: 0.25 },
+  riverlands: { text: 'The land rolls gently. A winding river {wide} m wide crosses the middle, {deep} m deep except at two fords.', river: true, hills: null, roll: 0.3 },
+  downs: { text: 'Open rolling downs: rises and hollows up to {high} m, all of them walkable.', river: false, hills: null, roll: 0.7 },
+};
+function drawLand(L, K, r, spawnZ) {
+  const f = L.floor[0], nx = Math.round(f.w) + 1, nz = Math.round(f.d) + 1, x0 = f.x - f.w / 2, z0 = f.z - f.d / 2;
+  const sm = (a, b, v) => { let t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const period = 6 + r() * 3, lw = Math.ceil(nx / period) + 3, ld = Math.ceil(nz / period) + 3, lv = Array.from({ length: lw * ld }, () => r());
+  const noise = (x, z) => { const fx = (x - x0) / period, fz = (z - z0) / period, ix = Math.floor(fx), iz = Math.floor(fz); const u = sm(0, 1, fx - ix), t = sm(0, 1, fz - iz); const a = lv[iz * lw + ix], b = lv[iz * lw + ix + 1], c = lv[(iz + 1) * lw + ix], e = lv[(iz + 1) * lw + ix + 1]; return a * (1 - u) * (1 - t) + b * u * (1 - t) + c * (1 - u) * t + e * u * t; };
+  const BASE = 1, half = Math.min(f.w, f.d) / 2;
+  // High ground.
+  const hills = [], high = chRound(1.2 + r() * 0.5);
+  if (K.hills === 'twin') { const hx = half * (0.4 + r() * 0.2), hz = half * (0.36 + r() * 0.12), R = 2.6 + r() * 0.8, a = Math.atan2(-hx, hz - spawnZ) + (r() - 0.5) * 0.5; /* the ramp faces the hill's own end of the map */ hills.push({ x: hx, z: -hz, R, ramps: [a] }, { x: -hx, z: hz, R, ramps: [a + Math.PI] }); }
+  if (K.hills === 'middle') { const a = r() * Math.PI; hills.push({ x: 0, z: 0, R: Math.min(5, half * 0.3), ramps: [a, a + Math.PI] }); }
+  // The river runs across the map between the two starting places, and winds.
+  const wide = chRound(2.5 + r() * 1.5), deep = chRound(0.45 + r() * 0.2), amp = 1 + r() * 1.5, wave = (Math.PI * (1 + Math.floor(r() * 2))) / half, fordX = half * (0.3 + r() * 0.35), level = BASE - 0.2;
+  const heights = new Float32Array(nx * nz);
+  let max = 0;
+  for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) {
+    const x = x0 + ix, z = z0 + iz;
+    let h = BASE + K.roll * (noise(x, z) + noise(-x, -z) - 1);
+    // Level ground where each machine starts.
+    const pad = sm(5, 2.5, Math.hypot(x, Math.abs(z) - spawnZ));
+    h = h * (1 - pad) + BASE * pad;
+    for (const m of hills) {
+      const dx = x - m.x, dz = z - m.z, d = Math.hypot(dx, dz);
+      let top = 1 - sm(m.R, m.R + 1.1, d);
+      for (const a of m.ramps) { const ux = Math.sin(a), uz = Math.cos(a), along = dx * ux + dz * uz, across = Math.abs(dx * uz - dz * ux); if (along > 0) top = Math.max(top, Math.max(0, Math.min(1, 1 - (along - m.R + 0.5) / (high / 0.3))) * (1 - sm(1.4, 2.3, across))); }
+      h = h * (1 - top) + (BASE + high) * top;
+    }
+    if (K.river) {
+      const off = Math.abs(z - amp * Math.sin(wave * x)), ford = sm(2.6, 1.4, Math.abs(Math.abs(x) - fordX));
+      const bed = level - (deep * (1 - ford) + 0.1 * ford), cut = sm(wide / 2 + 2.2, wide / 2, off);
+      h = h * (1 - cut) + bed * cut;
+    }
+    heights[iz * nx + ix] = chRound(h); max = Math.max(max, h);
+  }
+  return { terrain: { cell: 1, x0, z0, nx, nz, max: chRound(max), heights: Array.from(heights) }, water: K.river ? { level: chRound(level) } : null, text: K.text.replace('{wide}', wide).replace('{deep}', deep).replace('{high}', K.hills ? high : chRound(max - BASE + K.roll)) };
+}
+
 // Draw one challenge from the family. The same seed always gives the same challenge.
 function drawChallenge(seed, force = {}) {
   const r = chRng(seed * 7919 + 13);
@@ -284,10 +332,16 @@ function drawChallenge(seed, force = {}) {
   const gravityKey = force.gravity || pick(GRAVITIES, { normal: 3, low: 1.5, high: 1 });
   const L = LAYOUTS[layoutKey](r), S = SURFACES[surfaceKey], G = GRAVITIES[gravityKey];
   const spawnZ = chRound(L.spawnZ);
-  // Ground. Most rounds are fought over broken rock. Drawn last, so it does not change the rest of a round.
-  const groundKey = force.ground || (force.layout ? 'flat' : pick({}, { crags: 3, terraces: 2, rubble: 2, flat: 1 }));
-  let floor = L.floor, groundText = '';
-  if (groundKey !== 'flat') {
+  // Ground. Most rounds are fought over land with high ground and water. Drawn last, so it does not change the
+  // rest of a round. Land needs one unbroken platform; the stepped rock kinds remain for rounds that ask for them.
+  const one = L.floor.length === 1 && !L.walls.length;
+  const groundKey = force.ground || (force.layout ? 'flat' : one ? pick({}, { valley: 3, highground: 2.5, riverlands: 2, downs: 1.5, flat: 1 }) : pick({}, { rubble: 1, flat: 2 }));
+  let floor = L.floor, groundText = '', terrain = null, water = null;
+  if (LANDS[groundKey]) {
+    const land = drawLand(L, LANDS[groundKey], r, spawnZ);
+    terrain = land.terrain; water = land.water; groundText = land.text;
+  }
+  else if (groundKey !== 'flat') {
     const c = drawCrags(L, GROUNDS[groundKey], r, spawnZ);
     floor = [...L.floor, ...c.ledges];
     groundText = GROUNDS[groundKey].text.replace('{max}', c.max).replace('{step}', c.step).replace('{q}', GROUNDS[groundKey].q);
@@ -296,7 +350,7 @@ function drawChallenge(seed, force = {}) {
   const brief = [`The arena is ${L.text}.`, groundText, S.text, G.text, text].filter(Boolean).join(' ');
   return {
     name: `Round ${seed}`, brief, keys: { layout: layoutKey, ground: groundKey, surface: surfaceKey, gravity: gravityKey },
-    floor, walls: L.walls, terrain: null, surface: { grip: S.grip, slide: S.slide }, gravity: G.g,
+    floor, walls: L.walls, terrain, water, surface: { grip: S.grip, slide: S.slide }, gravity: G.g,
     spawn: [{ x: 0, z: -spawnZ }, { x: 0, z: spawnZ }], objective: { type: 'knockout' },
   };
 }
@@ -344,17 +398,16 @@ function edgeDistance(ch, x, z) {
 // A few fixed challenges to look at by name, plus the generator for everything else.
 const NAMED = [
   OPEN,
-  { ...drawChallenge(201, { layout: 'open', ground: 'crags' }), name: 'Crags' },
-  { ...drawChallenge(202, { layout: 'open', ground: 'terraces' }), name: 'Terraces' },
-  { ...drawChallenge(203, { layout: 'open', ground: 'rubble' }), name: 'Rubble' },
-  { ...drawChallenge(204, { layout: 'small', ground: 'crags' }), name: 'Small crag' },
-  { ...drawChallenge(205, { layout: 'islands', ground: 'crags' }), name: 'Crag islands' },
+  { ...drawChallenge(401, { layout: 'open', ground: 'valley', surface: 'normal', gravity: 'normal' }), name: 'Valley' },
+  { ...drawChallenge(402, { layout: 'open', ground: 'highground', surface: 'normal', gravity: 'normal' }), name: 'High ground' },
+  { ...drawChallenge(403, { layout: 'open', ground: 'riverlands', surface: 'normal', gravity: 'normal' }), name: 'Riverlands' },
+  { ...drawChallenge(404, { layout: 'open', ground: 'downs', surface: 'normal', gravity: 'normal' }), name: 'Downs' },
+  { ...drawChallenge(405, { layout: 'open', ground: 'highground', surface: 'ice', gravity: 'normal' }), name: 'Icy heights' },
+  { ...drawChallenge(406, { layout: 'open', ground: 'valley', surface: 'normal', gravity: 'low' }), name: 'Low gravity valley' },
+  { ...drawChallenge(308, { layout: 'gap', ground: 'flat', surface: 'normal', gravity: 'normal' }), name: 'Narrow gap' },
   { ...drawChallenge(206, { layout: 'bridge', ground: 'rubble' }), name: 'Bridge' },
-  { ...drawChallenge(105, { layout: 'gap' }), name: 'The gap' },
-  { ...drawChallenge(207, { layout: 'pillars', ground: 'terraces' }), name: 'Pillars' },
-  { ...drawChallenge(208, { layout: 'open', ground: 'crags', surface: 'ice' }), name: 'Icy crags' },
-  { ...drawChallenge(209, { layout: 'open', ground: 'crags', gravity: 'low' }), name: 'Low gravity crags' },
-  { ...drawChallenge(109, { layout: 'plinth' }), name: 'The plinth' },
+  { ...drawChallenge(203, { layout: 'open', ground: 'rubble' }), name: 'Rubble' },
+  { ...drawChallenge(201, { layout: 'open', ground: 'crags' }), name: 'Crags' },
 ];
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -388,6 +441,8 @@ const LIB = {
     const u = fx - ix, v = fz - iz, H = t.heights, k = iz * t.nx + ix;
     return H[k] * (1 - u) * (1 - v) + H[k + 1] * u * (1 - v) + H[k + t.nx] * (1 - u) * v + H[k + t.nx + 1] * u * v;
   },
+  // How deep the water is at a point: 0 on dry ground.
+  depthAt(s, x, z) { const w = s.challenge.water; return w ? Math.max(0, w.level - LIB.heightAt(s, x, z)) : 0; },
   // The slope of the ground along a world direction at a point: rise over run, uphill positive.
   gradeAt(s, x, z, dx, dz) { const n = Math.hypot(dx, dz) || 1, e = 0.5; return (LIB.hillAt(s, x + (dx / n) * e, z + (dz / n) * e) - LIB.hillAt(s, x - (dx / n) * e, z - (dz / n) * e)) / (2 * e); },
   // How high a flat-topped slab stands at a point, ignoring hills: steps are what a machine has to climb in one go.
@@ -395,16 +450,18 @@ const LIB = {
   inWall(s, x, z, margin = 0) { for (const w of s.challenge.walls) if (Math.abs(x - w.x) <= w.w / 2 + margin && Math.abs(z - w.z) <= w.d / 2 + margin) return true; return false; },
   // How far the floor runs from a point along a world direction before a drop, a wall or a step up, up to max.
   // "climb" is the highest step up the machine can take in its stride.
-  run(s, x, z, dx, dz, max = 6, margin = 0.8, climb = 0.15) {
+  // "span" is the widest gap the machine can cross: a break in the floor no wider than that, with floor it can
+  // step onto on the far side, does not count as the end of the floor.
+  run(s, x, z, dx, dz, max = 6, margin = 0.8, climb = 0.15, span = 0) {
     let h0 = LIB.stepAt(s, x, z); const n = Math.hypot(dx, dz) || 1;
     // Each step up is judged from the ledge before it, so a staircase of small steps is a way through.
-    for (let d = 0.25; d <= max; d += 0.25) { const px = x + (dx / n) * d, pz = z + (dz / n) * d; if (!LIB.floorAt(s, px, pz) || LIB.inWall(s, px, pz, margin)) return d - 0.25; const h = LIB.stepAt(s, px, pz); if (h > h0 + climb) return d - 0.25; h0 = h; }
+    for (let d = 0.25; d <= max; d += 0.25) { const px = x + (dx / n) * d, pz = z + (dz / n) * d; if (LIB.inWall(s, px, pz, margin)) return d - 0.25; if (!LIB.floorAt(s, px, pz)) { let far = 0; for (let e = 0.25; e <= span + 0.01; e += 0.25) { const qx = px + (dx / n) * e, qz = pz + (dz / n) * e; if (LIB.floorAt(s, qx, qz) && !LIB.inWall(s, qx, qz, margin)) { far = e; break; } } const hf = far ? LIB.stepAt(s, px + (dx / n) * far, pz + (dz / n) * far) : 0; if (!far || hf > h0 + climb) return d - 0.25; d += far - 0.25; h0 = hf; continue; } const h = LIB.stepAt(s, px, pz); if (h > h0 + climb) return d - 0.25; h0 = h; }
     return max;
   },
   // How far the floor runs ahead of the machine along a bearing relative to its nose.
-  runAhead(s, bearing = 0, max = 6, margin = 0.8, climb = 0.15) { const a = s.self.heading + bearing; return LIB.run(s, s.self.x, s.self.z, Math.sin(a), Math.cos(a), max, margin, climb); },
+  runAhead(s, bearing = 0, max = 6, margin = 0.8, climb = 0.15, span = 0) { const a = s.self.heading + bearing; return LIB.run(s, s.self.x, s.self.z, Math.sin(a), Math.cos(a), max, margin, climb, span); },
   // Can the machine go straight from where it is to a point without leaving the floor or meeting a wall?
-  clear(s, x, z, margin = 0.8, climb = 0.15) { const d = Math.hypot(x - s.self.x, z - s.self.z); return d < 0.3 || LIB.run(s, s.self.x, s.self.z, x - s.self.x, z - s.self.z, d, margin, climb) >= d - 0.3; },
+  clear(s, x, z, margin = 0.8, climb = 0.15, span = 0) { const d = Math.hypot(x - s.self.x, z - s.self.z); return d < 0.3 || LIB.run(s, s.self.x, s.self.z, x - s.self.x, z - s.self.z, d, margin, climb, span) >= d - 0.3; },
   // A point to steer for on the way to (x, z): the point itself if the way is clear, otherwise a sidestep
   // around whatever is in the way, picked from a fan of directions by how far it gets toward the goal.
   route(s, x, z, margin = 0.8, climb = 0.15) {
@@ -429,10 +486,10 @@ const LIB = {
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (const f of ch.floor) { x0 = Math.min(x0, f.x - f.w / 2); x1 = Math.max(x1, f.x + f.w / 2); z0 = Math.min(z0, f.z - f.d / 2); z1 = Math.max(z1, f.z + f.d / 2); }
     const nx = Math.ceil((x1 - x0) / C), nz = Math.ceil((z1 - z0) / C), n = nx * nz;
-    const h = new Float32Array(n), y = new Float32Array(n), edge = new Float32Array(n).fill(99), queue = [];
+    const h = new Float32Array(n), y = new Float32Array(n), wet = new Float32Array(n), empty = new Uint8Array(n), edge = new Float32Array(n).fill(99), queue = [];
     for (let i = 0; i < n; i++) {
       const x = x0 + ((i % nx) + 0.5) * C, z = z0 + (Math.floor(i / nx) + 0.5) * C;
-      if (!LIB.floorAt(s, x, z) || LIB.inWall(s, x, z)) { h[i] = -1; edge[i] = 0; queue.push(i); } else { h[i] = LIB.stepAt(s, x, z); y[i] = LIB.hillAt(s, x, z); }
+      if (!LIB.floorAt(s, x, z) || LIB.inWall(s, x, z)) { h[i] = -1; edge[i] = 0; queue.push(i); if (!LIB.inWall(s, x, z)) empty[i] = 1; } else { h[i] = LIB.stepAt(s, x, z); y[i] = LIB.hillAt(s, x, z); wet[i] = LIB.depthAt(s, x, z); }
     }
     // Squares on the rim of the map border the void too.
     for (let i = 0; i < n; i++) if (h[i] >= 0) { const cx = i % nx, cz = Math.floor(i / nx); if (cx === 0 || cz === 0 || cx === nx - 1 || cz === nz - 1) { edge[i] = C / 2; queue.push(i); } }
@@ -444,7 +501,7 @@ const LIB = {
         if (d < edge[j]) { edge[j] = d; queue.push(j); }
       }
     }
-    g = { x0, z0, nx, nz, C, h, y, edge, steps: new Map(), cell: (x, z) => { const cx = Math.floor((x - x0) / C), cz = Math.floor((z - z0) / C); return cx < 0 || cz < 0 || cx >= nx || cz >= nz ? -1 : cz * nx + cx; }, pos: (i) => ({ x: x0 + ((i % nx) + 0.5) * C, z: z0 + (Math.floor(i / nx) + 0.5) * C }) };
+    g = { x0, z0, nx, nz, C, h, y, wet, empty, edge, steps: new Map(), cell: (x, z) => { const cx = Math.floor((x - x0) / C), cz = Math.floor((z - z0) / C); return cx < 0 || cz < 0 || cx >= nx || cz >= nz ? -1 : cz * nx + cx; }, pos: (i) => ({ x: x0 + ((i % nx) + 0.5) * C, z: z0 + (Math.floor(i / nx) + 0.5) * C }) };
     LIB_GRIDS.set(s.challenge, g);
     return g;
   },
@@ -475,8 +532,8 @@ const LIB = {
   // higher than "climb". Returns the next point to steer for, the place the plan ends, and whether that is the
   // goal itself. If the goal cannot be reached, the plan ends at the nearest place that can.
   // "grade" is the steepest slope it will take uphill (rise over run); it is cut down on a slippery surface,
-  // where wheels cannot hold a steep slope.
-  plan(s, x, z, { margin = 1.5, climb = 0.15, grade = 0.5, side = Math.min(margin, 1.5) } = {}) {
+  // where wheels cannot hold a steep slope. "wade" is the deepest water it will go into.
+  plan(s, x, z, { margin = 1.5, climb = 0.15, grade = 0.5, side = Math.min(margin, 1.5), span = 0, wade = 0.3 } = {}) {
     grade = Math.min(grade, 0.75 * s.challenge.surface.grip);
     const g = LIB.grid(s), start = g.cell(s.self.x, s.self.z);
     if (start < 0 || g.h[start] < 0) return { x, z, end: { x, z }, reachable: false, off: true, left: 0 };
@@ -493,6 +550,7 @@ const LIB = {
         const j = az * g.nx + ax;
         if (from[j] !== -2 || g.h[j] < 0 || g.h[j] - g.h[i] > climb) continue;
         if (g.y[j] - g.y[i] > grade * g.C * (dx && dz ? 1.41 : 1) && g.y[j] > g.y[start] - 0.3) continue;
+        if (g.wet[j] > wade && g.wet[j] > g.wet[i]) continue;
         // Keep the margin, except that a machine already inside it may move toward open floor.
         if (g.edge[j] < margin && !(g.edge[i] < margin && g.edge[j] > g.edge[i])) continue;
         if (step[j] < side && !(step[i] < side && step[j] > step[i])) continue;
@@ -500,17 +558,35 @@ const LIB = {
         const p = g.pos(j), d = Math.hypot(x - p.x, z - p.z);
         if (d < bestD - 1e-6) { bestD = d; best = j; }
       }
+      // A machine that can span a gap may also go straight out to an edge, over a break no wider than its span,
+      // and on to the first safe square beyond, provided there is floor to either side of it both ends.
+      if (span > 0) for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const at = (k) => { const ax = cx + dx * k, az = cz + dz * k; return ax < 0 || az < 0 || ax >= g.nx || az >= g.nz ? -1 : az * g.nx + ax; };
+        const broad = (k) => { for (const w of [-3, 3]) { const ax = cx + dx * k + dz * w, az = cz + dz * k + dx * w; if (ax < 0 || az < 0 || ax >= g.nx || az >= g.nz || g.h[az * g.nx + ax] < 0) return false; } return true; };
+        const reach = Math.ceil((margin + 1) / g.C);
+        let k = 1, last = i;
+        while (k <= reach && at(k) >= 0 && g.h[at(k)] >= 0 && g.h[at(k)] - g.h[last] <= climb) { last = at(k); k++; }
+        if (k > reach || at(k) < 0 || !g.empty[at(k)] || !broad(k - 1)) continue;
+        let wide2 = 0; while (at(k) >= 0 && g.empty[at(k)]) { k++; wide2++; }
+        if (wide2 * g.C > span || at(k) < 0 || g.h[at(k)] < 0 || g.h[at(k)] - g.h[last] > climb || !broad(k)) continue;
+        let land = at(k), steps = 0; last = land;
+        while (g.edge[land] < margin && steps < reach && at(k + 1) >= 0 && g.h[at(k + 1)] >= 0 && g.h[at(k + 1)] - g.h[last] <= climb && g.edge[at(k + 1)] > g.edge[land]) { k++; steps++; land = at(k); last = land; }
+        if (from[land] !== -2) continue;
+        from[land] = i; queue.push(land);
+        const p = g.pos(land), d = Math.hypot(x - p.x, z - p.z);
+        if (d < bestD - 1e-6) { bestD = d; best = land; }
+      }
     }
     // A goal on the floor but inside the margin counts as reached from the nearest safe spot beside it.
     const reachable = bestD < 0.6 || (LIB.floorAt(s, x, z) && !LIB.inWall(s, x, z) && bestD <= margin + 0.8 && Math.abs(LIB.stepAt(s, x, z) - g.h[best]) <= climb), end = bestD < 0.6 ? { x, z } : g.pos(best);
     // Walk the plan back from its end and steer for the furthest point on it that is in a straight clear line.
     const chain = []; for (let i = best; i !== -1 && i !== -2; i = from[i]) chain.push(i);
     // A straight run to a point on the plan must also keep its distance from steps too high to climb.
-    const wide = (p) => { const d = Math.hypot(p.x - s.self.x, p.z - s.self.z); for (let t = 1; t < d; t += 0.4) { const c = g.cell(s.self.x + ((p.x - s.self.x) * t) / d, s.self.z + ((p.z - s.self.z) * t) / d); if (c >= 0 && step[c] < side && step[c] < step[start]) return false; } if (s.challenge.terrain) for (let t = 0.5; t < d; t += 0.5) { const f0 = (t - 0.5) / d, f1 = t / d; if (LIB.hillAt(s, s.self.x + (p.x - s.self.x) * f1, s.self.z + (p.z - s.self.z) * f1) - LIB.hillAt(s, s.self.x + (p.x - s.self.x) * f0, s.self.z + (p.z - s.self.z) * f0) > grade * 0.5) return false; } return true; };
+    const wide = (p) => { const d = Math.hypot(p.x - s.self.x, p.z - s.self.z); for (let t = 1; t < d; t += 0.4) { const c = g.cell(s.self.x + ((p.x - s.self.x) * t) / d, s.self.z + ((p.z - s.self.z) * t) / d); if (c >= 0 && step[c] < side && step[c] < step[start]) return false; if (c >= 0 && g.wet[c] > wade && g.wet[c] > g.wet[start]) return false; } if (s.challenge.terrain) for (let t = 0.5; t < d; t += 0.5) { const f0 = (t - 0.5) / d, f1 = t / d; if (LIB.hillAt(s, s.self.x + (p.x - s.self.x) * f1, s.self.z + (p.z - s.self.z) * f1) - LIB.hillAt(s, s.self.x + (p.x - s.self.x) * f0, s.self.z + (p.z - s.self.z) * f0) > grade * 0.5) return false; } return true; };
     let way = end, left = 0;
     for (let k = 0; k < chain.length; k++) {
       const p = k === 0 ? end : g.pos(chain[k]);
-      if (LIB.clear(s, p.x, p.z, margin * 0.7, climb) && wide(p)) { way = p; break; }
+      if (LIB.clear(s, p.x, p.z, margin * 0.7, climb, span) && wide(p)) { way = p; break; }
       way = p;
     }
     for (let k = 1; k < chain.length; k++) { const a = g.pos(chain[k - 1]), b = g.pos(chain[k]); left += Math.hypot(a.x - b.x, a.z - b.z); }
@@ -524,19 +600,19 @@ const LIB = {
   // Take a wanted drive (-1 to 1) and return one that will not take the machine off the floor: slowed when the
   // floor ahead is short, and reversed to brake when it is already going too fast to stop, or sliding sideways
   // toward a drop. "length" is how far the machine reaches ahead of its core, "top" its top speed.
-  guard(s, want, { grip = 1, length = 1.5, top = 4, climb = 0.15, mem = null, feed = true } = {}) {
+  guard(s, want, { grip = 1, length = 1.5, top = 4, climb = 0.15, mem = null, feed = true, span = 0 } = {}) {
     const me = s.self; let drive = want, braking = false;
     let decel = 0;
     decel = LIB.braking(s, { grip });
     const safe = (room) => Math.sqrt(2 * decel * Math.max(0, room));
     const dir = drive < 0 || (drive === 0 && me.forwardSpeed < 0) ? Math.PI : 0;
     // Only drops and walls are worth braking for. A step up is something to bump into, not fall off.
-    const roomAhead = LIB.runAhead(s, dir, 9, 0, 99) - length;
+    const roomAhead = LIB.runAhead(s, dir, 9, 0, 99, span) - length;
     const along = Math.abs(me.forwardSpeed), limit = safe(roomAhead);
     if (along > limit + 0.3 && (me.forwardSpeed > 0) === (dir === 0)) { drive = me.forwardSpeed > 0 ? -1 : 1; braking = true; }
     else if (Math.abs(drive) * top > limit) drive = Math.sign(drive) * Math.min(Math.abs(drive), limit / top);
     if (!braking && me.speed > 0.8) {
-      const roomSlide = LIB.run(s, me.x, me.z, me.vx, me.vz, 9, 0, 99) - length;
+      const roomSlide = LIB.run(s, me.x, me.z, me.vx, me.vz, 9, 0, 99, span) - length;
       if (me.speed > safe(roomSlide) + 0.3) { drive = me.forwardSpeed > 0 ? -1 : 1; braking = true; }
     }
     // Feed the power in: a tyre that spins or locks grips less, so never ask the wheels to turn much faster or
@@ -551,8 +627,8 @@ const LIB = {
   // Drive to (x, z) and stay on the floor. Plans a way round gaps and walls, slows for corners and on arrival,
   // and brakes in time for an edge, allowing for how slippery the floor is and how long the machine is.
   // Returns { drive, turn, arrived, reachable, braking, left } where left is the distance still to go.
-  nav(s, x, z, { margin = 1.5, grade = 0.5, side, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null, feed = true } = {}) {
-    const me = s.self, p = LIB.plan(s, x, z, side === undefined ? { margin, climb, grade } : { margin, climb, grade, side });
+  nav(s, x, z, { margin = 1.5, grade = 0.5, side, span = 0, wade = 0.3, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null, feed = true } = {}) {
+    const me = s.self, p = LIB.plan(s, x, z, side === undefined ? { margin, climb, grade, span, wade } : { margin, climb, grade, side, span, wade });
     const w = LIB.to(s, p.x, p.z), endD = Math.hypot(p.end.x - me.x, p.end.z - me.z), last = Math.hypot(p.x - p.end.x, p.z - p.end.z) < 0.3;
     // Once arrived, stay arrived until well off the spot, so the machine does not fidget.
     const held = mem && mem._at && Math.hypot(mem._at.x - p.end.x, mem._at.z - p.end.z) < 0.5 && endD < stopAt * 3 + 0.3;
@@ -560,11 +636,11 @@ const LIB = {
     if (mem) mem._at = c.arrived && last ? (held ? mem._at : { x: p.end.x, z: p.end.z }) : null;
     // Nose jammed against something: asked to move, not moving, not turning. Back off a little and come again.
     if (mem) {
-      if (s.t < (mem._back || 0)) { const g2 = LIB.guard(s, -0.6 * (mem._backDir || 1), { grip, length, top, climb, feed }); return { drive: g2.drive, turn: LIB.clamp(c.turn * 1.5), arrived: false, reachable: p.reachable, braking: false, backing: true, left: endD, end: p.end }; }
+      if (s.t < (mem._back || 0)) { const g2 = LIB.guard(s, -0.6 * (mem._backDir || 1), { grip, length, top, climb, feed, span }); return { drive: g2.drive, turn: LIB.clamp(c.turn * 1.5), arrived: false, reachable: p.reachable, braking: false, backing: true, left: endD, end: p.end }; }
       mem._jam = !c.arrived && Math.abs(c.drive) + Math.abs(c.turn) > 0.25 && me.speed < 0.12 && Math.abs(me.turnRate) < 0.08 && s.t > 1.5 ? (mem._jam || 0) + 1 : 0;
       if (mem._jam > 30) { mem._jam = 0; mem._back = s.t + 1.1; mem._backDir = c.drive >= 0 ? 1 : -1; }
     }
-    const gd = LIB.guard(s, c.drive, { grip, length, top, climb, mem, feed }), drive = gd.drive, braking = gd.braking;
+    const gd = LIB.guard(s, c.drive, { grip, length, top, climb, mem, feed, span }), drive = gd.drive, braking = gd.braking;
     // While the wheels are being fed in gently, steer gently too, so neither side is asked to stand still.
     if (feed && Math.abs(c.drive) > 0.6 && Math.abs(drive) < Math.abs(c.drive) && !braking) c.turn = LIB.clamp(c.turn, -0.5 * Math.abs(drive), 0.5 * Math.abs(drive));
     return { drive, turn: c.turn, arrived: c.arrived && last, reachable: p.reachable, braking, left: endD, end: p.end };
@@ -591,12 +667,12 @@ const LIB = {
 // A bot's frame: +z is forward, +y is up, +x is its left side.
 // ───────────────────────────────────────────────────────────────────────────
 const CONFIG = {
-  version: 'v0.6',
+  version: 'v0.7',
   physics: { hz: 480, controlHz: 30, gravity: 9.81, solverIterations: 12 },
   // The world the fight happens in. Rolling resistance is the fraction of the load a rolling thing loses as
   // drag (a tyre on rough ground is about 0.05). Sliding grip is this fraction of grip at rest. Air is real
   // air: density in kg per cubic metre and a blunt-body drag figure. Loose pieces that have stopped stay stopped.
-  ground: { rollRubber: 0.05, rollHard: 0.06, kinetic: 0.8, slideSpeed: 0.1, airDensity: 1.2, dragShape: 1.0, restSpeed: 0.12, restSeconds: 0.6 },
+  ground: { rollRubber: 0.05, rollHard: 0.06, kinetic: 0.8, slideSpeed: 0.1, airDensity: 1.2, waterDensity: 1000, dragShape: 1.0, restSpeed: 0.12, restSeconds: 0.6 },
   arena: { size: 30, thickness: 1, grip: 1.0, slide: 0.3, ringOutDepth: 1.2, slipSpeed: 0.8, spinGrip: 0.6 },
   // A fight ends when a core leaves the arena, when a machine has lost wreckShare of its mass, when nothing has
   // moved for stalemateSeconds, or at maxSeconds. In the last two cases the more intact machine wins.
@@ -604,7 +680,7 @@ const CONFIG = {
   // the machine that has had less broken off it wins (by at least intactMargin of its mass). Otherwise a draw.
   // Nothing here rewards damage or movement for their own sake, so sitting still or shedding parts is allowed.
   match: { maxSeconds: 90, stalemateSeconds: 10, stalemateRadius: 0.35, graceSeconds: 3, wreckShare: 0.5, intactMargin: 0.05 },
-  budget: { mass: 500, cost: 300, box: [5, 4, 5], maxParts: 200 },
+  budget: { mass: 1200, cost: 800, box: [8, 5, 9], maxParts: 300 },
   // Limits on the control program itself. It may see everything, but it has to be small.
   program: { maxChars: 20000 },
   // A joint's load = impulse x share of the bot it has to drag along x leverage x sharpness.
@@ -620,10 +696,13 @@ const CONFIG = {
     rubber: { density: 110, strength: 0.8, costPerVolume: 50 },
   },
   joints: {
+    // Joint strengths below are for a part 0.12 m square in section. Thicker parts make stronger joints, by the
+    // square root of the section, up to maxThick times. Thinner parts are not weaker than the figures given.
+    section: 0.0144, maxThick: 2.5,
     fixed: { strength: 500, cost: 0 },
     // A hinge turns freely about "axis". It may set "limits": [low, high] in degrees from its built position,
     // and "spring": stiffness in N·m per radian pulling it back toward "rest" degrees (default 0).
-    hinge: { strength: 500, cost: 2, maxSpring: 4000, stopStiffness: 6000, stopDamping: 150 },
+    hinge: { strength: 500, cost: 2, maxSpring: 4000, stopStiffness: 6000, stopDamping: 150, stopRate: 60 },
     // A motor joint may set "gear": n. Speed is divided by n and torque multiplied by n (0.5 to 8).
     // Hinge and motor joints may set "pivot": [x, y, z] in the bot frame; without it they turn about the part's centre.
     // "power" from 0.02 to 1 picks the size of the motor: torque and cost scale with it. A wheel is a rubber
@@ -745,6 +824,11 @@ function validateBuild(build, cfg = CONFIG) {
         if (!Array.isArray(ax) || ax.length !== 3 || Math.hypot(...ax) < 1e-6) errors.push(`${where}: a ${jt} joint needs an "axis" such as [0, 1, 0].`);
         const pv = p.joint.pivot;
         if (pv !== undefined && (!Array.isArray(pv) || pv.length !== 3 || pv.some((x) => typeof x !== 'number'))) errors.push(`${where}: "pivot" must be three numbers [x, y, z] measured from the core.`);
+        // The pivot has to be on the part it turns. Otherwise a weight could swing about a point it is not joined to.
+        else if (pv !== undefined && Array.isArray(p.pos)) {
+          const reach = Array.isArray(p.size) ? Math.hypot(...p.size) / 2 : (p.radius || 0.3) + (p.thickness || 0) / 2;
+          if (Math.hypot(pv[0] - p.pos[0], pv[1] - p.pos[1], pv[2] - p.pos[2]) > reach + 0.1) errors.push(`${where}: the "pivot" must be on the part itself, not away from it.`);
+        }
         const g = p.joint.gear;
         if (g !== undefined && !(g >= cfg.joints.motor.minGear && g <= cfg.joints.motor.maxGear)) errors.push(`${where}: "gear" must be between ${cfg.joints.motor.minGear} and ${cfg.joints.motor.maxGear}.`);
         const pw = p.joint.power;
@@ -868,6 +952,20 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
         const dw = tmpT.length(); if (dw > 0.5 * w) tmpT.scale((0.5 * w) / dw, tmpT);
         b.angularVelocity.vadd(tmpT, b.angularVelocity);
       }
+    }
+    // Water: whatever stands in it is dragged on by the part of it that is under, and borne up by the weight
+    // of water that part pushes aside. Steel sinks and wades; rubber and plastic float.
+    if (ch.water) for (const b of world.bodies) {
+      if (b.type !== CANNON.Body.DYNAMIC || b.sleepState === CANNON.Body.SLEEPING || !b.dragArea) continue;
+      const lvl = ch.water.level;
+      if (b.position.y > lvl + 1.5 || terrainHeight(ch, b.position.x, b.position.z) >= lvl) continue;
+      b.updateAABB();
+      const lo = b.aabb.lowerBound.y, hi = b.aabb.upperBound.y; if (lo >= lvl) continue;
+      const sub = Math.min(1, (lvl - lo) / Math.max(0.05, hi - lo));
+      b.velocity.y += (G.waterDensity * cfg.physics.gravity * ch.gravity * (b.volume || 0) * sub * dt) / b.mass;
+      const v = b.velocity.length();
+      b.velocity.scale(1 - Math.min(0.5, (0.5 * G.waterDensity * G.dragShape * b.dragArea * sub * v * dt) / b.mass), b.velocity);
+      b.angularVelocity.scale(1 - Math.min(0.5, 2 * sub * dt), b.angularVelocity);
     }
     for (const b of world.bodies) {
       if (b.type !== CANNON.Body.DYNAMIC || b.sleepState === CANNON.Body.SLEEPING || !b.dragArea) continue;
@@ -1001,7 +1099,10 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       p.rel0 = p.parent.wquat.inverse().mult(p.wquat);
       p.axisParent = p.rel0.vmult(p.axisLocal);
       const base = cfg.joints[p.jointType].strength;
-      p.strength = base * Math.min(p.spec.strength, p.parent.spec.strength);
+      // A joint is as strong as the weaker of the two materials, and stronger the thicker the part it holds:
+      // a heavy beam makes a heavier joint. The thickness is the part's cross-section across its length.
+      const hs = [...p.spec.half].sort((a, b) => a - b), thick = Math.sqrt((4 * hs[0] * hs[1]) / cfg.joints.section);
+      p.strength = base * Math.min(p.spec.strength, p.parent.spec.strength) * Math.max(1, Math.min(cfg.joints.maxThick, thick));
     }
     // Parts that overlap (or all but touch) as built never collide with each other.
     bot.clash = new Set();
@@ -1064,6 +1165,7 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
         body.addShape(p.shape, p.localPos, p.localQuat);
       }
       body.dragArea = 0.7 * list.reduce((n, p) => n + faceArea(p.shape), 0);
+      body.volume = list.reduce((n, p) => n + (p.spec.volume || 0), 0);
       body.velocity.copy(vel); body.angularVelocity.copy(heavy.wang);
       body.pv = vel.clone(); body.pw = heavy.wang.clone();
       body.live = g.live; body.bot = bot; body.rootPart = g;
@@ -1219,9 +1321,17 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       const rate = hAxis.dot(B.angularVelocity) - hAxis.dot(A.angularVelocity);
       let torque = 0;
       if (p.spring) torque += -p.spring * (p.angle - p.springRest) - 0.04 * p.spring * rate;
-      if (p.limits) {
-        if (p.angle < p.limits[0]) torque += H.stopStiffness * (p.limits[0] - p.angle) - H.stopDamping * rate;
-        else if (p.angle > p.limits[1]) torque += -H.stopStiffness * (p.angle - p.limits[1]) - H.stopDamping * rate;
+      if (p.limits && (p.angle < p.limits[0] || p.angle > p.limits[1])) {
+        // A stop has to be hard enough for what hits it: a heavy arm needs a stiffer stop than a light flap, or
+        // it swings on through. Stiffness and damping follow the arm's inertia about its pivot.
+        if (p.stopBody !== B) {
+          const inv = B.invInertiaWorld.vmult(hAxis).dot(hAxis), piv = new CANNON.Vec3(); partWorld(p, piv, qC); piv.vadd(qC.vmult(p.anchorLocal), piv);
+          const d = B.position.vsub(piv), off2 = d.lengthSquared() - d.dot(hAxis) ** 2;
+          p.stopInertia = (inv > 0 ? 1 / inv : 0) + B.mass * Math.max(0, off2); p.stopBody = B;
+        }
+        const k = Math.max(H.stopStiffness, p.stopInertia * H.stopRate * H.stopRate), c = Math.max(H.stopDamping, 1.4 * p.stopInertia * H.stopRate);
+        if (p.angle < p.limits[0]) torque += k * (p.limits[0] - p.angle) - c * rate;
+        else torque += -k * (p.angle - p.limits[1]) - c * rate;
       }
       if (!torque) continue;
       hAxis.scale(torque, hT);
@@ -1257,7 +1367,7 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
   }
 
   // After each physics step, see whether any hit was hard enough to snap a joint.
-  const cp = new CANNON.Vec3(), pp = new CANNON.Vec3(), hitLog = new Map();
+  const cp = new CANNON.Vec3(), pp = new CANNON.Vec3(), pq = new CANNON.Quaternion(), hitLog = new Map();
   // Velocity of a contact point as it was just before the step, i.e. before the hit changed it.
   const pointVel = (b, r) => (b.pv ? b.pv.vadd(b.pw.cross(r)) : new CANNON.Vec3());
   const blows = new Map();
@@ -1266,6 +1376,7 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
     // One log line per hard hit between two parts. The faster part is named as the one doing the hitting.
     const noteHit = (p, q, sp, sq, J, speed) => {
       if (!p || !q || J < cfg.breakage.logImpulse || speed < 1 || (!p.live && !q.live)) return;
+      if (p.bot !== q.bot && p.live && q.live) m.lastBlow = m.t;
       const [striker, target] = (sp >= sq ? [p, q] : [q, p]);
       const key = [p.index, q.index].sort().join('-');
       if (m.t - (hitLog.get(key) ?? -9) < 0.4) return;
@@ -1273,24 +1384,45 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       const name = (x) => (x.live ? `${x.bot.name}'s ${x.id}` : `a loose ${x.id}`);
       log('hit', target.live ? target.bot.index : striker.bot.index, `${name(striker)} hit ${name(target)} (impulse ${Math.round(J)}, closing at ${Math.round(speed)} m/s).`, { striker: striker.id, target: target.id, impulse: Math.round(J), speed: r2(speed), flash: [striker.index, target.index] });
     };
-    const side = (body, shape, r, J, speed, otherShape) => {
+    const side = (body, shape, r, J, speed, otherShape, n) => {
       const part = shape && shape.partRef;
       if (!part || !part.live || !body.live) return;
       body.position.vadd(r, cp);
       const bot = part.bot;
       const op = otherShape && otherShape.partRef;
       const label = (otherShape && otherShape.label) || 'the floor';
+      // The blow as a vector, and the point where it enters the structure. Both change when it passes a pivot.
+      let Jv = n.scale(J), at = cp;
       let cur = part, best = null;
       while (cur.parent && cur.intact) {
-        partWorld(cur, pp);
-        const a = cur.body.quaternion.vmult(cur.localQuat.vmult(cur.anchorLocal)); pp.vadd(a, pp);
-        const lever = Math.min(cfg.breakage.maxLever, pp.distanceTo(cp));
+        partWorld(cur, pp, pq);
+        const a = pq.vmult(cur.anchorLocal); pp.vadd(a, pp);
+        const lever = Math.min(cfg.breakage.maxLever, pp.distanceTo(at));
         const share = (bot.liveMass - cur.subMass) / bot.liveMass;
-        const load = J * share * (1 + lever / cfg.breakage.leverLength) * Math.min(cfg.breakage.maxSharp, speed / cfg.breakage.speedRef) * (op ? 1 : cfg.breakage.floorFactor);
+        const load = Jv.length() * share * (1 + lever / cfg.breakage.leverLength) * Math.min(cfg.breakage.maxSharp, speed / cfg.breakage.speedRef) * (op ? 1 : cfg.breakage.floorFactor);
         const ratio = load / (cur.strength * cfg.breakage.scale);
         // The joint nearest the blow that cannot take it is the one that goes, so machines lose their outer
         // pieces first and come apart a piece at a time.
         if (ratio > 1) { best = { part: cur, ratio, load }; break; }
+        // A part on a hinge or a motor swings when it is struck, and what swings takes up some of the blow
+        // itself: only the rest goes through the pivot into whatever carries it. A weight on the end of an arm
+        // takes nearly all of a blow on the weight (a hammer does not hurt the hand); a balanced rotor takes
+        // none, so a spinner's mounting feels every hit. A motor holds against the swing with its torque.
+        if ((cur.jointType === 'motor' || cur.jointType === 'hinge') && cur.body !== cur.parent.body) {
+          const B = cur.body, ax = pq.vmult(cur.axisLocal);
+          let L = at.vsub(pp).cross(Jv).dot(ax);
+          const hold = cur.jointType === 'motor' ? cur.torque * cfg.breakage.window : 0;
+          L = Math.sign(L) * Math.max(0, Math.abs(L) - hold);
+          // Hard against its stop, it cannot swing any further that way.
+          const stopped = cur.limits && ((L > 0 && cur.angle >= cur.limits[1]) || (L < 0 && cur.angle <= cur.limits[0]));
+          if (L && !stopped) {
+            const d = B.position.vsub(pp), off = d.vsub(ax.scale(d.dot(ax)));
+            const inv = B.invInertiaWorld.vmult(ax).dot(ax);
+            const I = (inv > 0 ? 1 / inv : 0) + B.mass * off.lengthSquared();
+            if (I > 0) Jv = Jv.vsub(ax.cross(off).scale((B.mass * L) / I));
+          }
+          at = pp.clone();
+        }
         cur = cur.parent;
       }
       if (best) { const prev = breaks.get(best.part); if (!prev || prev.ratio < best.ratio) breaks.set(best.part, { ...best, by: op, label }); }
@@ -1311,8 +1443,8 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       const J = blow.J, speed = blow.speed;
       if (J < 20) continue;
       noteHit(P, Q, vi.length(), vj.length(), J, speed);
-      side(eq.bi, eq.si, eq.ri, J, speed, eq.sj);
-      side(eq.bj, eq.sj, eq.rj, J, speed, eq.si);
+      side(eq.bi, eq.si, eq.ri, J, speed, eq.sj, eq.ni.scale(-1));
+      side(eq.bj, eq.sj, eq.rj, J, speed, eq.si, eq.ni);
     }
     if (blows.size > 4000) for (const [k, b] of blows) if (m.t - b.last > 0.1) blows.delete(k);
     if (!breaks.size) return;
@@ -1388,10 +1520,11 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       const w = wrecked[0] ? 1 : 0;
       return end(w, 'destroyed', `${n[1 - w]} was broken apart: only ${pct(1 - w)}% of it is still attached to its core. ${n[w]} wins.`);
     }
-    const over = m.t >= cfg.match.maxSeconds, settled = still[0] && still[1];
+    // Standing still is not a stalemate while one machine is still landing blows on the other.
+    const over = m.t >= cfg.match.maxSeconds, settled = still[0] && still[1] && m.t - (m.lastBlow ?? -99) > cfg.match.stalemateSeconds;
     if (!(settled || over)) return;
     // Nobody was destroyed or put out. The machine that is more intact wins, if the difference is clear.
-    const why = settled ? `Nothing moved for ${cfg.match.stalemateSeconds} seconds.` : 'Time ran out.';
+    const why = settled ? `Neither machine has moved or landed a blow for ${cfg.match.stalemateSeconds} seconds.` : 'Time ran out.';
     const kind = settled ? 'settled' : 'time';
     if (Math.abs(whole[0] - whole[1]) < cfg.match.intactMargin) return end(null, kind + '_draw', `${why} Neither machine was destroyed or put out, and they are about equally intact. Draw.`);
     const w = whole[0] > whole[1] ? 0 : 1;
@@ -1468,21 +1601,24 @@ const LEGS_L = ['leg_l0', 'leg_l1', 'leg_l2'], LEGS_R = ['leg_r0', 'leg_r1', 'le
 // Walk: each side has a phase that advances with the wanted speed, and every hub on that side is held to it by
 // reading its angle, the way a walking animal keeps a gait. Going straight, the two sides are pulled into step
 // so the gait stays a tripod.
-function walk(s, out, mem, lib, fwd, turn) {
+function walk(s, out, mem, lib, fwd, turn, LL = LEGS_L, RR = LEGS_R) {
   const me = s.self, TURN = (2 * Math.PI) / 3;
   if (mem.pl === undefined) { mem.pl = 0; mem.pr = 0; }
+  // Spoked legs reach the ground either way up. On its back, the same hubs turned the other way walk it forward.
+  if (me.upright < 0) fwd = -fwd;
   // A walker turns badly with one side stopped: for a sharp turn, the two sides step in opposite directions.
   turn = lib.clamp(turn - me.turnRate * 0.5);
-  if (Math.abs(turn) > 0.3) fwd *= 0.1;
+  // A long machine cannot spin on the spot, its end feet would have to drag sideways: it turns on the move.
+  if (Math.abs(turn) > 0.3) fwd = mem.long ? Math.sign(fwd || 1) * Math.max(0.55, Math.abs(fwd) * 0.7) : fwd * 0.1;
   // In low gravity each step takes longer to come down, so the gait slows to match.
   const pace = 3.2 * Math.sqrt(s.challenge.gravity);
   const vl = lib.clamp(fwd - turn) * pace, vr = lib.clamp(fwd + turn) * pace;
   mem.pl += vl / 30; mem.pr += vr / 30;
   // Do not let the wanted leg position run away from the real one when the legs are held up.
   const lead = (ids, ph) => { let sum = 0, n = 0; for (const id of ids) { const j = me.joints[id]; if (j) { sum += j.angle; n++; } } return n ? lib.clamp(ph, sum / n - 0.5, sum / n + 0.5) : ph; };
-  mem.pl = lead(LEGS_L, mem.pl); mem.pr = lead(LEGS_R, mem.pr);
+  mem.pl = lead(LL, mem.pl); mem.pr = lead(RR, mem.pr);
   if (Math.abs(vl - vr) < 0.5) { let d = (mem.pl - mem.pr) % TURN; if (d > TURN / 2) d -= TURN; if (d < -TURN / 2) d += TURN; mem.pl -= d * 0.05; mem.pr += d * 0.05; }
-  for (const [ids, ph, v] of [[LEGS_L, mem.pl, vl], [LEGS_R, mem.pr, vr]]) for (const id of ids) {
+  for (const [ids, ph, v] of [[LL, mem.pl, vl], [RR, mem.pr, vr]]) for (const id of ids) {
     const j = me.joints[id]; if (!j) continue;
     out[id] = lib.clamp((v + 6 * (ph - j.angle)) / 10);
   }
@@ -1504,21 +1640,22 @@ function hunt(s, lib) {
   return { x: hit.x, z: hit.z, charge: true, say: 'closing on the enemy' };
 }
 // Walk to wherever hunt says, by a route this machine can climb, stopping short of drops.
-function stalk(s, out, mem, lib, SELF, { keep = 0 } = {}) {
+function stalk(s, out, mem, lib, SELF, { keep = 0, L = LEGS_L, R = LEGS_R } = {}) {
   const h = hunt(s, lib), foe = s.enemy;
   // If there is no way to it, the plan ends at the nearest ground I can stand on: stop there, do not press on.
   const open = lib.plan(s, h.x, h.z, SELF).reachable;
   const n = lib.nav(s, h.x, h.z, { ...SELF, stopAt: !open ? 0.8 : h.charge ? keep : 0.6, reverse: !open });
-  if (!open && n.arrived) { out.say = 'no way to it from here, waiting at the nearest ground'; walk(s, out, mem, lib, 0, 0); return n; }
+  if (!open && n.arrived) { out.say = 'no way to it from here, waiting at the nearest ground'; walk(s, out, mem, lib, 0, 0, L, R); return n; }
   out.say = n.backing ? 'jammed on a ledge, backing off to try again' : n.braking ? 'stopping short of the edge' : !n.reachable && foe.distance > 3 ? 'no way to it from here, getting as near as I can' : h.say;
-  walk(s, out, mem, lib, n.drive, n.turn);
+  walk(s, out, mem, lib, n.drive, n.turn, L, R);
   return n;
 }
-// On its back, a walker kicks both sides opposite ways to roll over.
-function righting(s, out) {
-  if (s.self.upright >= 0.2) return false;
-  out.say = 'on my back, kicking to roll over';
-  for (const id of LEGS_L) out[id] = 1; for (const id of LEGS_R) out[id] = -1;
+// A flat walker works either way up, so it only needs to do something when it is lying on its side: kick both
+// sides opposite ways to roll off it.
+function righting(s, out, L = LEGS_L, R = LEGS_R) {
+  if (Math.abs(s.self.upright) >= 0.35) return false;
+  out.say = 'on my side, kicking to roll off it';
+  for (const id of L) out[id] = 1; for (const id of R) out[id] = -1;
   return true;
 }
 
@@ -1527,9 +1664,9 @@ function righting(s, out) {
 // an edge, or by pecking pieces off one that is stuck.
 const STRIDER = {
   name: 'Strider',
-  note: 'Walks on six spoked legs and climbs ledges wheels cannot. Light and quick; it goes for machines that are stuck or near an edge, and pecks with a steel beak.',
+  note: 'Walks on six spoked legs and climbs ledges wheels cannot. It is flat, so it works either way up: tipped onto its back it just keeps walking. It goes for machines that are stuck or near an edge, and pecks with a steel beak.',
   parts: [
-    ...hexFrame(),
+    ...hexFrame({ frame: 'steel' }),
     plate('back_0', [0.9, 0.06, 0.7], [0, 0.2, -0.8], 'spine', 'plastic'),
     plate('back_1', [1.0, 0.06, 0.7], [0, 0.28, 0], 'spine', 'plastic'),
     plate('back_2', [0.9, 0.06, 0.7], [0, 0.2, 0.8], 'spine', 'plastic'),
@@ -1537,7 +1674,8 @@ const STRIDER = {
     { id: 'beak_tip', type: 'wedge', material: 'steel', size: [0.5, 0.3, 0.4], pos: [0, -0.1, 2.0], parent: 'beak' },
   ],
 };
-const WALKER = { length: 1.9, top: 2.4, margin: 2.0, side: 0.5, climb: 0.45, grip: 0.8, feed: false };
+// A walker wades: its frame rides above half a metre of water. It takes slopes up to about one in two.
+const WALKER = { length: 1.9, top: 2.4, margin: 2.0, side: 0.5, climb: 0.45, grade: 0.55, wade: 0.7, grip: 0.8, feed: false };
 function striderProgram(s, out, mem, lib) {
   const me = s.self, foe = s.enemy, SELF = { ...WALKER, mem };
   if (righting(s, out)) return;
@@ -1551,72 +1689,68 @@ function striderProgram(s, out, mem, lib) {
 // ── Mantis ─────────────────────────────────────────────────────────────────
 // A walker with two hammers. The arms lie back along the body, swing up and over, and come down in front of it.
 // Each head is 20 kg of steel on a 1.7 m arm.
+// Each hammer is one steel bar on a motor. There is no separate head to snap off: the bar is the hammer. Struck
+// about two thirds of the way along it swings without loading the pivot at all, and even at the tip only half
+// the blow reaches the mast. The pivot is ahead of the front axle, so a swing that misses comes down on the
+// ground and not on the machine's own legs.
 const hammer = (i, x) => [
-  { id: 'arm_' + i, type: 'beam', material: 'aluminium', size: [0.1, 0.1, 1.8], pos: [x, 0.75, -0.7], parent: 'yoke', joint: { type: 'motor', axis: [1, 0, 0], pivot: [x, 0.75, 0.2], gear: 5, power: 1, limits: [-6, 214] } },
-  block('head_' + i, [0.24, 0.24, 0.3], [x, 0.75, -1.5], 'arm_' + i, 'steel'),
+  { id: 'club_' + i, type: 'beam', material: 'steel', size: [0.14, 0.14, 1.9], pos: [x, 0.66, 0.2], parent: 'yoke', joint: { type: 'motor', axis: [1, 0, 0], pivot: [x, 0.66, 1.1], gear: 5, power: 1, limits: [-6, 215] } },
 ];
 const MANTIS = {
   name: 'Mantis',
-  note: 'A six-legged walker with two steel hammers. It walks up to the enemy, squares up, and brings the hammers down one after the other. A steel keel keeps it the right way up on ledges.',
+  note: 'A six-legged walker with two steel clubs on a mast at its nose. It walks up to the enemy, squares up, and brings the clubs over and down one after the other. Each club is a single bar, so there is no head to snap off, and a struck club swings and spares the mast.',
   parts: [
     ...hexFrame({ frame: 'steel' }),
-    beam('post_l', [0.14, 0.75, 0.14], [0.62, 0.38, 0.2], 'axle_1', 'steel'),
-    beam('post_r', [0.14, 0.75, 0.14], [-0.62, 0.38, 0.2], 'axle_1', 'steel'),
-    beam('stay_l', [0.08, 0.9, 0.08], [0.62, 0.32, 0.5], 'post_l', 'aluminium', { rot: [-40, 0, 0] }),
-    beam('stay_r', [0.08, 0.9, 0.08], [-0.62, 0.32, 0.5], 'post_r', 'aluminium', { rot: [-40, 0, 0] }),
-    beam('yoke', [1.38, 0.12, 0.12], [0, 0.75, 0.2], 'post_l', 'steel'),
-    ...hammer(0, 0.36), ...hammer(1, -0.36),
-    block('keel', [0.3, 0.2, 0.6], [0, -0.18, 0], 'spine', 'steel'),
+    beam('mast', [0.16, 0.66, 0.16], [0, 0.36, 1.1], 'spine', 'steel'),
+    beam('stay', [0.08, 0.85, 0.08], [0, 0.32, 0.76], 'mast', 'steel', { rot: [-50, 0, 0] }),
+    beam('yoke', [0.9, 0.12, 0.12], [0, 0.66, 1.1], 'mast', 'steel'),
+    ...hammer(0, 0.3), ...hammer(1, -0.3),
+    block('keel', [0.3, 0.2, 0.6], [0, -0.18, -0.2], 'spine', 'steel'),
   ],
 };
 function mantisProgram(s, out, mem, lib) {
-  const me = s.self, foe = s.enemy, SELF = { ...WALKER, mem }, REST = -0.05, DOWN = 3.62;
-  const arms = [0, 1].filter((i) => me.joints['arm_' + i]);
-  const hold = (i, to, max = 0.6) => { const j = me.joints['arm_' + i]; if (j) out['arm_' + i] = lib.clamp((to - j.angle) * 1.2, -max, max); };
-  if (me.upright < 0.2) { out.say = 'tipped over, pushing up with the hammers'; for (const i of arms) out['arm_' + i] = Math.sin(s.t * 2) > 0 ? 0.35 : -0.35; for (const id of LEGS_L) out[id] = 1; for (const id of LEGS_R) out[id] = -1; return; }
+  const me = s.self, foe = s.enemy, SELF = { ...WALKER, mem }, REST = -0.05, DOWN = 3.6;
+  const arms = [0, 1].filter((i) => me.joints['club_' + i]);
+  const hold = (i, to, max = 0.6) => { const j = me.joints['club_' + i]; if (j) out['club_' + i] = lib.clamp((to - j.angle) * 1.2, -max, max); };
+  if (me.upright < 0.2) { mem.down = (mem.down || 0) + 1; out.say = 'tipped over, kicking and levering up with the hammers'; for (const i of arms) out['club_' + i] = mem.down < 60 ? 0 : Math.sin(s.t * 2) > 0 ? 0.25 : -0.25; for (const id of LEGS_L) out[id] = 1; for (const id of LEGS_R) out[id] = -1; return; }
   // A swing in progress: full power down, then lift the arm back.
   if (mem.swing != null) {
-    const i = mem.swing, j = me.joints['arm_' + i];
+    const i = mem.swing, j = me.joints['club_' + i];
     if (!j) mem.swing = null;
     else if (mem.lift) { hold(i, REST, 0.8); if (j.angle < 0.4 || s.t > mem.until) { mem.swing = null; mem.lift = false; mem.next = 1 - i; } }
-    else { out['arm_' + i] = 1; if (j.angle > DOWN || s.t > mem.until) { mem.lift = true; mem.until = s.t + 2; } }
+    else { out['club_' + i] = 1; if (j.angle > DOWN || s.t > mem.until) { mem.lift = true; mem.until = s.t + 2; } }
   }
   for (const i of arms) if (mem.swing !== i) hold(i, REST);
-  // In reach and square on: stand and strike. The heads land between 1.3 and 2.2 m ahead of the core.
-  const inReach = foe.distance > 1.1 && foe.distance < 2.5 && Math.abs(foe.bearing) < 0.3;
+  // In reach and square on: stand and strike. The heads come down about 2.7 m ahead of the core.
+  const inReach = foe.distance > 1.8 && foe.distance < 3.4 && Math.abs(foe.bearing) < 0.3;
   if (inReach && arms.length) {
     out.say = 'in reach, bringing the hammers down';
     walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.4, 0.4));
     if (mem.swing == null && s.t > (mem.cool || 0)) { const i = arms.includes(mem.next) ? mem.next : arms[0]; mem.swing = i; mem.lift = false; mem.until = s.t + 0.9; mem.cool = s.t + 0.45; }
     return;
   }
-  if (foe.distance <= 1.1 && arms.length) { out.say = 'too close to swing, stepping back'; const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 2, -0.4, 0.4)); return; }
+  if (foe.distance <= 1.8 && arms.length) { out.say = 'too close to swing, stepping back'; const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 2, -0.4, 0.4)); return; }
   // Closing in: stop at striking distance, not on top of it.
-  const n = stalk(s, out, mem, lib, SELF, { keep: arms.length ? 1.7 : 0 });
+  const n = stalk(s, out, mem, lib, SELF, { keep: arms.length ? 2.6 : 0 });
   if (n.arrived && arms.length) { out.say = 'squaring up to strike'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.5, 0.5)); }
 }
 
 // ── Thresher ───────────────────────────────────────────────────────────────
-// A walker with a spinning bar across its nose, turning so that it strikes upward. It breaks what it touches
-// and throws lighter machines back.
+// A walker with a heavy steel bar spinning flat above its nose, like a rotor. The bar turns on the spine itself,
+// the strongest thing to hang a weapon from, and it sweeps a circle wider than the front legs stand.
 const THRESHER = {
   name: 'Thresher',
-  note: 'A six-legged walker with a steel bar spinning across its nose. The bar turns upward at the front, so what it hits is broken or thrown up and back. It keeps its nose on the enemy and walks into it.',
+  note: 'A six-legged walker with a steel bar spinning flat over its nose at 80 km/h at the tips. The bar is mounted on the spine, so hits do not tear it off. It keeps its nose on the enemy and walks the bar into legs and wheels.',
   parts: [
     ...hexFrame({ frame: 'steel' }),
-    beam('fork_l', [0.12, 0.12, 0.9], [0.56, 0.02, 1.55], 'axle_2', 'steel'),
-    beam('fork_r', [0.12, 0.12, 0.9], [-0.56, 0.02, 1.55], 'axle_2', 'steel'),
-    { id: 'drum', type: 'disc', material: 'steel', radius: 0.16, thickness: 0.2, pos: [0, 0.02, 1.9], rot: [0, 0, 90], parent: 'fork_l', joint: { type: 'motor', axis: [1, 0, 0], gear: 3, power: 1 } },
-    beam('bar_a', [0.9, 0.1, 0.12], [0, 0.02, 1.9 + 0.36], 'drum', 'steel'),
-    beam('bar_b', [0.9, 0.1, 0.12], [0, 0.02, 1.9 - 0.36], 'drum', 'steel'),
-    plate('back', [1.0, 0.06, 1.6], [0, 0.22, -0.2], 'spine', 'plastic'),
+    { id: 'bar', type: 'beam', material: 'steel', size: [1.7, 0.14, 0.2], pos: [0, 0.26, 1.2], parent: 'spine', joint: { type: 'motor', axis: [0, 1, 0], gear: 3, power: 1 } },
+    plate('back', [1.0, 0.06, 1.2], [0, 0.2, -0.55], 'spine', 'plastic'),
     block('tail', [0.4, 0.3, 0.4], [0, 0, -1.25], 'spine', 'steel'),
   ],
 };
 function thresherProgram(s, out, mem, lib) {
   const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 2.4, mem };
-  // The bar spins all the time it is the right way up, upward at the front.
-  out.drum = me.upright > 0.2 ? -1 : 0;
+  out.bar = 1;
   if (righting(s, out)) return;
   // After a hit, the enemy is often thrown clear. Do not chase blindly over an edge: stalk plans the way.
   if (foe.distance < 3 && Math.abs(foe.bearing) > 0.5) { out.say = 'turning the bar onto it'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.6, 0.6)); return; }
@@ -1655,7 +1789,7 @@ function slingerProgram(s, out, mem, lib) {
   const g = 9.81 * s.challenge.gravity;
   out.release = [];
   for (const i of [0, 1, 2]) { const j = me.joints['arm_' + i]; if (j && mem.firing !== i) out['arm_' + i] = lib.clamp((-0.2 - j.angle) * 0.8, -0.5, 0.5); }
-  if (me.upright < 0.2) { out.say = 'tipped over, levering up with the arms'; for (const i of [0, 1, 2]) out['arm_' + i] = Math.sin(s.t * 2) > 0 ? 0.3 : -0.3; for (const id of LEGS_L) out[id] = 1; for (const id of LEGS_R) out[id] = -1; return; }
+  if (me.upright < 0.2) { mem.down = (mem.down || 0) + 1; out.say = 'tipped over, kicking and levering up with the arms'; for (const i of [0, 1, 2]) out['arm_' + i] = mem.down < 60 ? 0 : Math.sin(s.t * 2) > 0 ? 0.25 : -0.25; for (const id of LEGS_L) out[id] = 1; for (const id of LEGS_R) out[id] = -1; return; }
   // Launch speed for a ball let go at 49 degrees, to come down d metres away on ground "drop" metres below the
   // point of release. Throwing from high ground reaches further, and the sum allows for it.
   const speedFor = (d, drop) => { const c = Math.cos(RELEASE), sn = Math.sin(RELEASE), den = 2 * c * c * (d * (sn / c) + drop); return den > 0 ? Math.sqrt((g * d * d) / den) : 99; };
@@ -1723,7 +1857,7 @@ const ROVER = {
   ],
 };
 function roverProgram(s, out, mem, lib) {
-  const me = s.self, foe = s.enemy, SELF = { length: 2.5, top: 5, margin: 2.0, side: 0.6, climb: 0.2, mem };
+  const me = s.self, foe = s.enemy, SELF = { length: 2.5, top: 5, margin: 2.0, side: 0.6, climb: 0.2, grade: 0.4, wade: 0.2, mem };
   const drive = (d, t) => { for (const id of ['wl_0', 'wl_1', 'wl_2']) out[id] = lib.clamp(d - t); for (const id of ['wr_0', 'wr_1', 'wr_2']) out[id] = lib.clamp(d + t); };
   if (me.upright < 0.2) { out.say = 'on my back, spinning the wheels to roll over'; drive(Math.sin(s.t * 5), 0.5); return; }
   // Ram, and if it does not give, back off for a run-up: a blow at speed is what breaks joints.
@@ -1735,12 +1869,142 @@ function roverProgram(s, out, mem, lib) {
   drive(n.drive, n.turn);
 }
 
+// ── Centipede ──────────────────────────────────────────────────────────────
+// Ten legs on a frame nearly five metres long. It is long enough to walk straight across a gap that stops
+// everything else: by the time its middle is over the drop, two pairs of legs are already on the far side.
+const PEDE_Z = [-1.7, -0.85, 0, 0.85, 1.7];
+const PEDE_L = PEDE_Z.map((_, i) => 'leg_l' + i), PEDE_R = PEDE_Z.map((_, i) => 'leg_r' + i);
+const CENTIPEDE = {
+  name: 'Centipede',
+  note: 'Ten spoked legs on a frame nearly five metres long, with a steel ram at each end. It walks straight across gaps up to about 1.9 m wide, because some of its legs are always on the ground on one side or the other, and it works either way up.',
+  parts: [
+    { id: 'core', type: 'core' },
+    beam('spine_f', [0.2, 0.18, 1.9], [0, 0, 0.95], 'core', 'steel'),
+    beam('spine_b', [0.2, 0.18, 1.9], [0, 0, -0.95], 'core', 'steel'),
+    ...PEDE_Z.flatMap((z, i) => { const x = i % 2 ? 1.3 : 1.04, parent = z > 0 ? 'spine_f' : z < 0 ? 'spine_b' : 'core'; return [
+      beam('axle_' + i, [Math.min(2.4, x * 2 - 0.18), 0.12, 0.12], [0, 0, z], parent, 'steel'),
+      ...leg('leg_l' + i, x, z, i % 2 ? 60 : 0, 'axle_' + i, { reach: 0.7 }), ...leg('leg_r' + i, -x, z, i % 2 ? 0 : 60, 'axle_' + i, { reach: 0.7 }),
+    ]; }),
+    { id: 'ram_f', type: 'wedge', material: 'steel', size: [0.9, 0.3, 0.4], pos: [0, 0, 2.1], parent: 'spine_f' },
+    { id: 'ram_b', type: 'wedge', material: 'steel', size: [0.9, 0.3, 0.4], pos: [0, 0, -2.1], rot: [0, 180, 0], parent: 'spine_b' },
+  ],
+};
+function centipedeProgram(s, out, mem, lib) {
+  mem.long = true;
+  const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 2.7, margin: 2.4, span: 1.9, mem }, legs = { L: PEDE_L, R: PEDE_R };
+  if (righting(s, out, PEDE_L, PEDE_R)) return;
+  if (s.t < (mem.back || 0)) { out.say = 'stepping back for another run at it'; const g = lib.guard(s, -1, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 1.5, -0.3, 0.3), PEDE_L, PEDE_R); return; }
+  mem.press = foe.distance < 4 && Math.abs(foe.bearing) < 0.6 && me.speed < 0.5 ? (mem.press || 0) + 1 : 0;
+  if (mem.press > 30) { mem.press = 0; mem.back = s.t + 1.1; }
+  const n = stalk(s, out, mem, lib, SELF, legs);
+  // Say so when the way to the enemy goes over a gap.
+  if (n.reachable && !lib.plan(s, foe.x, foe.z, { ...SELF, span: 0 }).reachable && foe.distance > 4) out.say = 'walking across the gap to get at it';
+}
+
+// ── Scorpion ───────────────────────────────────────────────────────────────
+// A large machine: ten legs, two claws that snap shut across its front, and a tail that comes over the top.
+// The claws are steel bars on upright pivots ahead of the front legs. Open, they stand wide; snapped shut they
+// meet in front of the nose, and whatever is between them takes a bar from each side. The tail is a long club
+// on a mast, lying back along the body until something is in front of it.
+const pedeFrame = (frame = 'steel', power = 1, sp = 0.26) => [
+  { id: 'core', type: 'core' },
+  // The backbone is two heavy beams, thick enough that the machine does not snap in half at the core.
+  beam('spine_f', [sp, sp, 1.9], [0, 0, 0.95], 'core', frame),
+  beam('spine_b', [sp, sp, 1.9], [0, 0, -0.95], 'core', frame),
+  ...PEDE_Z.flatMap((z, i) => { const x = i % 2 ? 1.3 : 1.04, parent = z > 0 ? 'spine_f' : z < 0 ? 'spine_b' : 'core'; return [
+    beam('axle_' + i, [Math.min(2.4, x * 2 - 0.18), 0.12, 0.12], [0, 0, z], parent, frame),
+    ...leg('leg_l' + i, x, z, i % 2 ? 60 : 0, 'axle_' + i, { reach: 0.7, power }), ...leg('leg_r' + i, -x, z, i % 2 ? 0 : 60, 'axle_' + i, { reach: 0.7, power }),
+  ]; }),
+];
+const claw = (side, x) => ({ id: 'claw_' + side, type: 'beam', material: 'steel', size: [0.17, 0.17, 1.5], pos: [x, 0, 3.4], parent: 'brow', joint: { type: 'motor', axis: [0, 1, 0], pivot: [x, 0, 2.68], gear: 8, power: 1, limits: side === 'l' ? [-14, 62] : [-62, 14] } });
+const SCORPION = {
+  name: 'Scorpion',
+  note: 'A large machine on ten legs, nearly seven metres from tail to claw tips. Two steel claws stand open across its front and snap shut on whatever comes between them, and a tail club comes over the top onto anything held there. It weighs about twice what the six-legged walkers do.',
+  parts: [
+    ...pedeFrame(),
+    beam('neck', [0.2, 0.2, 0.8], [0, 0, 2.3], 'spine_f', 'steel'),
+    beam('brow', [1.4, 0.16, 0.16], [0, 0, 2.68], 'neck', 'steel'),
+    claw('l', 0.55), claw('r', -0.55),
+    beam('mast', [0.22, 0.66, 0.22], [0, 0.44, 1.3], 'spine_f', 'steel'),
+    beam('stay', [0.08, 0.9, 0.08], [0, 0.36, 0.95], 'mast', 'steel', { rot: [-50, 0, 0] }),
+    { id: 'tail', type: 'beam', material: 'steel', size: [0.14, 0.14, 2.4], pos: [0, 0.82, 0.2], parent: 'mast', joint: { type: 'motor', axis: [1, 0, 0], pivot: [0, 0.82, 1.3], gear: 6, power: 1, limits: [-4, 192] } },
+    plate('shell_l', [0.6, 0.06, 2.4], [0.5, 0.24, -0.7], 'spine_b', 'aluminium', { rot: [0, 0, -12] }),
+    plate('shell_r', [0.6, 0.06, 2.4], [-0.5, 0.24, -0.7], 'spine_b', 'aluminium', { rot: [0, 0, 12] }),
+    block('sting', [0.3, 0.3, 0.5], [0, 0.05, -2.1], 'spine_b', 'steel'),
+  ],
+};
+function scorpionProgram(s, out, mem, lib) {
+  mem.long = true;
+  const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 3.2, margin: 2.6, span: 1.9, mem }, legs = { L: PEDE_L, R: PEDE_R };
+  const OPEN = 0.9, SHUT = -0.12;
+  const set = (id, to, max) => { const j = me.joints[id]; if (j) out[id] = lib.clamp((to - j.angle) * 2, -max, max); };
+  const claws = (l, r, max) => { set('claw_l', l, max); set('claw_r', -r, max); };
+  if (righting(s, out, PEDE_L, PEDE_R)) { claws(OPEN, OPEN, 0.3); return; }
+  const tail = me.joints.tail, flat = me.upright > 0.5;
+  // The tail: over and down at full power, then back.
+  if (tail) {
+    if (mem.strike === 'down') { out.tail = 1; if (tail.angle > 3.2 || s.t > mem.until) { mem.strike = 'up'; mem.until = s.t + 2.5; } }
+    else if (mem.strike === 'up') { out.tail = lib.clamp((-0.05 - tail.angle) * 1.2, -0.7, 0.7); if (tail.angle < 0.4 || s.t > mem.until) mem.strike = null; }
+    else out.tail = lib.clamp((-0.05 - tail.angle) * 1.2, -0.5, 0.5);
+  }
+  const front = Math.abs(foe.bearing) < 0.3, inClaws = foe.distance > 2.2 && foe.distance < 4.6 && front, underTail = foe.distance > 2.4 && foe.distance < 4.3 && Math.abs(foe.bearing) < 0.22;
+  // The claws: wide open on the way in, then snap, hold a moment, and open again.
+  if (mem.snap > s.t) claws(SHUT, SHUT, 1);
+  else if (inClaws && s.t > (mem.reopen || 0)) { mem.snap = s.t + 0.45; mem.reopen = s.t + 1.3; claws(SHUT, SHUT, 1); }
+  else claws(OPEN, OPEN, 0.35);
+  if (inClaws || underTail) {
+    out.say = underTail && tail ? 'it is between the claws, bringing the tail over' : 'snapping the claws shut on it';
+    walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.4, 0.4), PEDE_L, PEDE_R);
+    if (underTail && tail && flat && !mem.strike && s.t > (mem.cool || 0)) { mem.strike = 'down'; mem.until = s.t + 1.1; mem.cool = s.t + 1.6; }
+    return;
+  }
+  if (foe.distance <= 2.2) { out.say = 'too close for the claws, stepping back'; const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 2, -0.4, 0.4), PEDE_L, PEDE_R); return; }
+  const n = stalk(s, out, mem, lib, SELF, { keep: 3.4, ...legs });
+  if (n.arrived) { out.say = 'turning the claws onto it'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.5, 0.5), PEDE_L, PEDE_R); }
+}
+
+// ── Dreadnought ────────────────────────────────────────────────────────────
+// A large machine: ten legs under an armoured shell, with a rotor bar at each end. It does not need to turn to
+// face anything, and it is long enough to walk across gaps.
+const rotor = (id, z, parent) => ({ id, type: 'beam', material: 'steel', size: [1.7, 0.14, 0.2], pos: [0, 0.26, z], parent, joint: { type: 'motor', axis: [0, 1, 0], gear: 3, power: 1 } });
+const DREADNOUGHT = {
+  name: 'Dreadnought',
+  note: 'A large machine on ten legs under a shell of plates, with a spinning steel bar at each end. Either end is the front. It walks into the enemy with whichever rotor is nearer and crosses gaps the six-legged machines cannot.',
+  parts: [
+    ...pedeFrame(),
+    rotor('rotor_f', 1.95, 'spine_f'), rotor('rotor_b', -1.95, 'spine_b'),
+    // The shell stands on two posts and rides clear above the legs; the skirts hang outside them.
+    beam('post_f', [0.14, 0.8, 0.14], [0, 0.5, 0.45], 'spine_f', 'steel'),
+    beam('post_b', [0.14, 0.8, 0.14], [0, 0.5, -0.45], 'spine_b', 'steel'),
+    beam('rib_f', [2.4, 0.1, 0.1], [0, 0.92, 0.45], 'post_f', 'steel'),
+    beam('rib_b', [2.4, 0.1, 0.1], [0, 0.92, -0.45], 'post_b', 'steel'),
+    plate('roof', [2.0, 0.06, 2.4], [0, 1.0, 0], 'rib_f', 'aluminium'),
+    plate('skirt_l', [0.06, 0.6, 2.4], [1.62, 0.62, 0], 'rib_f', 'aluminium', { rot: [0, 0, 18] }),
+    plate('skirt_r', [0.06, 0.6, 2.4], [-1.62, 0.62, 0], 'rib_f', 'aluminium', { rot: [0, 0, -18] }),
+    beam('tower', [0.3, 0.4, 0.3], [0, 1.23, 0], 'roof', 'aluminium'),
+  ],
+};
+function dreadnoughtProgram(s, out, mem, lib) {
+  mem.long = true;
+  const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 2.9, margin: 2.5, span: 1.9, mem }, legs = { L: PEDE_L, R: PEDE_R };
+  out.rotor_f = 1; out.rotor_b = -1;
+  if (righting(s, out, PEDE_L, PEDE_R)) return;
+  // Close up, whichever end is nearer goes in first: if the enemy is behind, back into it.
+  if (foe.distance < 5 && Math.abs(foe.bearing) > 2.0) { out.say = 'backing the rear rotor into it'; const turn = lib.clamp((foe.bearing > 0 ? foe.bearing - Math.PI : foe.bearing + Math.PI) * 2, -0.5, 0.5); const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, turn, PEDE_L, PEDE_R); return; }
+  if (foe.distance < 3.5 && Math.abs(foe.bearing) > 0.5) { out.say = 'turning a rotor onto it'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.6, 0.6), PEDE_L, PEDE_R); return; }
+  stalk(s, out, mem, lib, SELF, legs);
+  if (foe.distance < 3.5) out.say = 'walking the rotor into it';
+}
+
 const ALL = [
   { build: STRIDER, program: striderProgram },
   { build: MANTIS, program: mantisProgram },
   { build: THRESHER, program: thresherProgram },
   { build: SLINGER, program: slingerProgram },
   { build: ROVER, program: roverProgram },
+  { build: CENTIPEDE, program: centipedeProgram },
+  { build: SCORPION, program: scorpionProgram },
+  { build: DREADNOUGHT, program: dreadnoughtProgram },
 ];
 const ROSTER = ALL;
 
@@ -1804,21 +2068,48 @@ function buildArena() {
     for (let z = Math.ceil(z0 / 2) * 2; z <= z1; z += 2) { if (!hill) { grid.push(x0, g, z, x1, g, z); continue; } for (let x = x0; x < x1; x += 0.5) { const xb = Math.min(x1, x + 0.5); if (yy(x, z) + yy(xb, z) < 0.05) grid.push(x, g, z, xb, g, z); } }
     edge.push(x0, e, z0, x1, e, z0, x1, e, z0, x1, e, z1, x1, e, z1, x0, e, z1, x0, e, z1, x0, e, z0);
   }
-  // Topography: a surface over the grid of heights, shaded by height, drawn only where the ground rises.
+  // The land: a surface over the grid of heights, coloured the way a game map is. Grass on walkable ground,
+  // paler on the heights, bare rock where it is too steep to climb, sand under and beside the water.
   if (ch.terrain) {
-    const t = ch.terrain, pos = [], col = [], idx = [];
-    const lo = new THREE.Color(css('--floor')), hi = new THREE.Color(css('--hill'));
-    for (let iz = 0; iz < t.nz; iz++) for (let ix = 0; ix < t.nx; ix++) { const h = t.heights[iz * t.nx + ix]; pos.push(t.x0 + ix * t.cell, h + 0.004, t.z0 + iz * t.cell); const c = lo.clone().lerp(hi, Math.min(1, h / Math.max(1.2, t.max))); col.push(c.r, c.g, c.b); }
-    for (let iz = 0; iz < t.nz - 1; iz++) for (let ix = 0; ix < t.nx - 1; ix++) { const a = iz * t.nx + ix, b = a + 1, c = a + t.nx, d = c + 1; if (Math.max(t.heights[a], t.heights[b], t.heights[c], t.heights[d]) < 0.01) continue; idx.push(a, c, b, b, c, d); }
+    const t = ch.terrain, pos = [], col = [], idx = [], H = (ix, iz) => t.heights[Math.max(0, Math.min(t.nz - 1, iz)) * t.nx + Math.max(0, Math.min(t.nx - 1, ix))];
+    const grass = new THREE.Color(css('--grass')), top = new THREE.Color(css('--hill')), rock = new THREE.Color(css('--rock')), sand = new THREE.Color(css('--sand'));
+    const lvl = ch.water ? ch.water.level : -9, base = H(0, 0);
+    for (let iz = 0; iz < t.nz; iz++) for (let ix = 0; ix < t.nx; ix++) {
+      const h = H(ix, iz), steep = Math.hypot(H(ix + 1, iz) - H(ix - 1, iz), H(ix, iz + 1) - H(ix, iz - 1)) / (2 * t.cell);
+      pos.push(t.x0 + ix * t.cell, h + 0.004, t.z0 + iz * t.cell);
+      const c = grass.clone().lerp(top, Math.max(0, Math.min(1, (h - base) / Math.max(0.8, t.max - base))));
+      c.lerp(rock, Math.max(0, Math.min(1, (steep - 0.45) / 0.3)));
+      if (h < lvl + 0.12) c.lerp(sand, Math.min(1, (lvl + 0.12 - h) / 0.2));
+      col.push(c.r, c.g, c.b);
+    }
+    for (let iz = 0; iz < t.nz - 1; iz++) for (let ix = 0; ix < t.nx - 1; ix++) { const a = iz * t.nx + ix, b = a + 1, c = a + t.nx, d = c + 1; idx.push(a, c, b, b, c, d); }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); geo.setIndex(idx); geo.computeVertexNormals();
     const land = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 }));
     land.receiveShadow = true; land.castShadow = true; arena.add(land);
-    // Contour lines every quarter metre, cut from the same triangles the physics uses.
+    // The cut edge of the land, down to the slab it stands on.
+    const sp = [], si = [], rim = [];
+    for (let ix = 0; ix < t.nx; ix++) rim.push([ix, 0]); for (let iz = 1; iz < t.nz; iz++) rim.push([t.nx - 1, iz]);
+    for (let ix = t.nx - 2; ix >= 0; ix--) rim.push([ix, t.nz - 1]); for (let iz = t.nz - 2; iz >= 0; iz--) rim.push([0, iz]);
+    rim.forEach(([ix, iz], k) => { const x = t.x0 + ix * t.cell, z = t.z0 + iz * t.cell; sp.push(x, H(ix, iz), z, x, 0, z); if (k < rim.length - 1) si.push(k * 2, k * 2 + 1, k * 2 + 2, k * 2 + 2, k * 2 + 1, k * 2 + 3); });
+    const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3)); sg.setIndex(si); sg.computeVertexNormals();
+    arena.add(new THREE.Mesh(sg, new THREE.MeshStandardMaterial({ color: css('--rock'), roughness: 1, side: THREE.DoubleSide })));
+    // Water lies level wherever the ground is lower than it.
+    if (ch.water) {
+      const wp = [], wi = [];
+      for (let iz = 0; iz < t.nz - 1; iz++) for (let ix = 0; ix < t.nx - 1; ix++) {
+        if (Math.min(H(ix, iz), H(ix + 1, iz), H(ix, iz + 1), H(ix + 1, iz + 1)) >= lvl) continue;
+        const k = wp.length / 3, x = t.x0 + ix * t.cell, z = t.z0 + iz * t.cell;
+        wp.push(x, lvl, z, x + t.cell, lvl, z, x, lvl, z + t.cell, x + t.cell, lvl, z + t.cell); wi.push(k, k + 2, k + 1, k + 1, k + 2, k + 3);
+      }
+      const wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(wp, 3)); wg.setIndex(wi); wg.computeVertexNormals();
+      arena.add(new THREE.Mesh(wg, new THREE.MeshStandardMaterial({ color: css('--water'), transparent: true, opacity: 0.62, roughness: 0.15, metalness: 0.1 })));
+    }
+    // Contour lines every half metre, cut from the same triangles the physics uses.
     const cont = [], P = (i) => [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]];
     for (let k = 0; k < idx.length; k += 3) {
       const tri = [P(idx[k]), P(idx[k + 1]), P(idx[k + 2])], lo2 = Math.min(tri[0][1], tri[1][1], tri[2][1]), hi2 = Math.max(tri[0][1], tri[1][1], tri[2][1]);
-      for (let lv = Math.ceil(lo2 / 0.25) * 0.25 + 0.001; lv < hi2; lv += 0.25) {
+      for (let lv = Math.ceil(lo2 / 0.5) * 0.5 + 0.001; lv < hi2; lv += 0.5) {
         const cut = [];
         for (let e = 0; e < 3; e++) { const a = tri[e], b = tri[(e + 1) % 3]; if ((a[1] - lv) * (b[1] - lv) < 0) { const f = (lv - a[1]) / (b[1] - a[1]); cut.push(a[0] + (b[0] - a[0]) * f, lv + 0.015, a[2] + (b[2] - a[2]) * f); } }
         if (cut.length === 6) cont.push(...cut);
@@ -2064,14 +2355,15 @@ for (const [id, def] of [['botA', 2], ['botB', 0]]) {
 }
 // Curated fights, each picked to show one idea. Choosing a machine, challenge or seed by hand leaves the showcase.
 const SHOWS = [
-  { label: 'Hammers', a: 'Mantis', b: 'Strider', ch: 'Rubble', seed: 1, watch: 'Mantis walks up, squares on, and brings two steel hammers down in turn. A machine loses when more than half of it has been broken off its core.' },
-  { label: 'The bar', a: 'Thresher', b: 'Slinger', ch: 'Terraces', seed: 1, watch: 'Thresher carries a steel bar spinning across its nose, turning upward at the front. Slinger wants to stay at range and throw. On terraced rock neither gets the fight it wants.' },
-  { label: 'Ranging shots', a: 'Slinger', b: 'Strider', ch: 'Terraces', seed: 1, watch: 'Slinger works out the swing for the range, the gravity and the difference in height, and aims where the target will be when the ball lands.' },
-  { label: 'Wheels on crags', a: 'Strider', b: 'Rover', ch: 'Crags', seed: 1, watch: 'Rover has the biggest tyres the kit allows and is the fastest machine here on a flat floor. Watch what the ledges do to it, and read its label: it says when it can find no way its wheels can take.' },
-  { label: 'Wheels on the flat', a: 'Rover', b: 'Mantis', ch: 'Open floor', seed: 1, watch: 'The same wheeled machine on flat ground, where it can ram at speed and push a walker toward the edge.' },
-  { label: 'Walker against walker', a: 'Mantis', b: 'Thresher', ch: 'Crags', seed: 1, watch: 'Two walkers with different weapons on craggy rock. Each plans a route it can climb and stops short of drops.' },
-  { label: 'Low gravity', a: 'Slinger', b: 'Thresher', ch: 'Low gravity crags', seed: 1, watch: 'A third of normal gravity. Throws carry three times as far, steps take longer to land, and a hit sends things a long way.' },
-  { label: 'Ice', a: 'Mantis', b: 'Rover', ch: 'Icy crags', seed: 1, watch: 'Crags with a quarter of the usual grip.' },
+  { label: 'Claws and tail', a: 'Scorpion', b: 'Strider', ch: 'Downs', seed: 1, watch: 'Scorpion is one of the two large machines: ten legs, two claws that snap shut across its front, and a tail club that comes over the top onto whatever the claws have caught.' },
+  { label: 'Two giants', a: 'Scorpion', b: 'Dreadnought', ch: 'Riverlands', seed: 1, watch: 'Dreadnought carries a spinning bar at each end under an armoured shell. Both machines wade the river and meet in the middle.' },
+  { label: 'Clubs at the river', a: 'Mantis', b: 'Slinger', ch: 'Riverlands', seed: 1, watch: 'Slinger throws from range. Mantis wades straight across and brings two steel clubs over and down.' },
+  { label: 'Wheels in the valley', a: 'Mantis', b: 'Rover', ch: 'Valley', seed: 1, watch: 'A river crosses the valley, shallow only at the two fords. Rubber tyres float, so Rover keeps to the fords; walkers wade.' },
+  { label: 'High ground', a: 'Slinger', b: 'Centipede', ch: 'High ground', seed: 1, watch: 'A flat-topped hill with steep sides and two ramps. Slinger allows for the difference in height when it throws; Centipede has to come to it.' },
+  { label: 'The rotor', a: 'Thresher', b: 'Rover', ch: 'Downs', seed: 1, watch: 'Thresher carries a steel bar spinning flat over its nose and walks it into wheels and legs.' },
+  { label: 'Across the gap', a: 'Centipede', b: 'Rover', ch: 'Narrow gap', seed: 1, watch: 'A 1.5 m gap separates the two machines, and neither wheels nor six legs can cross it. Centipede is long enough to walk straight over.' },
+  { label: 'Icy heights', a: 'Dreadnought', b: 'Mantis', ch: 'Icy heights', seed: 1, watch: 'The hill again with a quarter of the usual grip. Ramps that were easy are now a slide.' },
+  { label: 'Low gravity', a: 'Slinger', b: 'Thresher', ch: 'Low gravity valley', seed: 1, watch: 'A third of normal gravity. Throws carry three times as far and a hit sends a machine a long way.' },
 ];
 let showing = -1;
 function markShow(i) { showing = i; document.querySelectorAll('#shows button').forEach((b, k) => b.setAttribute('aria-pressed', String(k === i))); $('watch').textContent = i >= 0 ? SHOWS[i].watch : ''; }

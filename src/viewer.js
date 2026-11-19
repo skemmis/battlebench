@@ -58,21 +58,48 @@ function buildArena() {
     for (let z = Math.ceil(z0 / 2) * 2; z <= z1; z += 2) { if (!hill) { grid.push(x0, g, z, x1, g, z); continue; } for (let x = x0; x < x1; x += 0.5) { const xb = Math.min(x1, x + 0.5); if (yy(x, z) + yy(xb, z) < 0.05) grid.push(x, g, z, xb, g, z); } }
     edge.push(x0, e, z0, x1, e, z0, x1, e, z0, x1, e, z1, x1, e, z1, x0, e, z1, x0, e, z1, x0, e, z0);
   }
-  // Topography: a surface over the grid of heights, shaded by height, drawn only where the ground rises.
+  // The land: a surface over the grid of heights, coloured the way a game map is. Grass on walkable ground,
+  // paler on the heights, bare rock where it is too steep to climb, sand under and beside the water.
   if (ch.terrain) {
-    const t = ch.terrain, pos = [], col = [], idx = [];
-    const lo = new THREE.Color(css('--floor')), hi = new THREE.Color(css('--hill'));
-    for (let iz = 0; iz < t.nz; iz++) for (let ix = 0; ix < t.nx; ix++) { const h = t.heights[iz * t.nx + ix]; pos.push(t.x0 + ix * t.cell, h + 0.004, t.z0 + iz * t.cell); const c = lo.clone().lerp(hi, Math.min(1, h / Math.max(1.2, t.max))); col.push(c.r, c.g, c.b); }
-    for (let iz = 0; iz < t.nz - 1; iz++) for (let ix = 0; ix < t.nx - 1; ix++) { const a = iz * t.nx + ix, b = a + 1, c = a + t.nx, d = c + 1; if (Math.max(t.heights[a], t.heights[b], t.heights[c], t.heights[d]) < 0.01) continue; idx.push(a, c, b, b, c, d); }
+    const t = ch.terrain, pos = [], col = [], idx = [], H = (ix, iz) => t.heights[Math.max(0, Math.min(t.nz - 1, iz)) * t.nx + Math.max(0, Math.min(t.nx - 1, ix))];
+    const grass = new THREE.Color(css('--grass')), top = new THREE.Color(css('--hill')), rock = new THREE.Color(css('--rock')), sand = new THREE.Color(css('--sand'));
+    const lvl = ch.water ? ch.water.level : -9, base = H(0, 0);
+    for (let iz = 0; iz < t.nz; iz++) for (let ix = 0; ix < t.nx; ix++) {
+      const h = H(ix, iz), steep = Math.hypot(H(ix + 1, iz) - H(ix - 1, iz), H(ix, iz + 1) - H(ix, iz - 1)) / (2 * t.cell);
+      pos.push(t.x0 + ix * t.cell, h + 0.004, t.z0 + iz * t.cell);
+      const c = grass.clone().lerp(top, Math.max(0, Math.min(1, (h - base) / Math.max(0.8, t.max - base))));
+      c.lerp(rock, Math.max(0, Math.min(1, (steep - 0.45) / 0.3)));
+      if (h < lvl + 0.12) c.lerp(sand, Math.min(1, (lvl + 0.12 - h) / 0.2));
+      col.push(c.r, c.g, c.b);
+    }
+    for (let iz = 0; iz < t.nz - 1; iz++) for (let ix = 0; ix < t.nx - 1; ix++) { const a = iz * t.nx + ix, b = a + 1, c = a + t.nx, d = c + 1; idx.push(a, c, b, b, c, d); }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); geo.setIndex(idx); geo.computeVertexNormals();
     const land = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 }));
     land.receiveShadow = true; land.castShadow = true; arena.add(land);
-    // Contour lines every quarter metre, cut from the same triangles the physics uses.
+    // The cut edge of the land, down to the slab it stands on.
+    const sp = [], si = [], rim = [];
+    for (let ix = 0; ix < t.nx; ix++) rim.push([ix, 0]); for (let iz = 1; iz < t.nz; iz++) rim.push([t.nx - 1, iz]);
+    for (let ix = t.nx - 2; ix >= 0; ix--) rim.push([ix, t.nz - 1]); for (let iz = t.nz - 2; iz >= 0; iz--) rim.push([0, iz]);
+    rim.forEach(([ix, iz], k) => { const x = t.x0 + ix * t.cell, z = t.z0 + iz * t.cell; sp.push(x, H(ix, iz), z, x, 0, z); if (k < rim.length - 1) si.push(k * 2, k * 2 + 1, k * 2 + 2, k * 2 + 2, k * 2 + 1, k * 2 + 3); });
+    const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3)); sg.setIndex(si); sg.computeVertexNormals();
+    arena.add(new THREE.Mesh(sg, new THREE.MeshStandardMaterial({ color: css('--rock'), roughness: 1, side: THREE.DoubleSide })));
+    // Water lies level wherever the ground is lower than it.
+    if (ch.water) {
+      const wp = [], wi = [];
+      for (let iz = 0; iz < t.nz - 1; iz++) for (let ix = 0; ix < t.nx - 1; ix++) {
+        if (Math.min(H(ix, iz), H(ix + 1, iz), H(ix, iz + 1), H(ix + 1, iz + 1)) >= lvl) continue;
+        const k = wp.length / 3, x = t.x0 + ix * t.cell, z = t.z0 + iz * t.cell;
+        wp.push(x, lvl, z, x + t.cell, lvl, z, x, lvl, z + t.cell, x + t.cell, lvl, z + t.cell); wi.push(k, k + 2, k + 1, k + 1, k + 2, k + 3);
+      }
+      const wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(wp, 3)); wg.setIndex(wi); wg.computeVertexNormals();
+      arena.add(new THREE.Mesh(wg, new THREE.MeshStandardMaterial({ color: css('--water'), transparent: true, opacity: 0.62, roughness: 0.15, metalness: 0.1 })));
+    }
+    // Contour lines every half metre, cut from the same triangles the physics uses.
     const cont = [], P = (i) => [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]];
     for (let k = 0; k < idx.length; k += 3) {
       const tri = [P(idx[k]), P(idx[k + 1]), P(idx[k + 2])], lo2 = Math.min(tri[0][1], tri[1][1], tri[2][1]), hi2 = Math.max(tri[0][1], tri[1][1], tri[2][1]);
-      for (let lv = Math.ceil(lo2 / 0.25) * 0.25 + 0.001; lv < hi2; lv += 0.25) {
+      for (let lv = Math.ceil(lo2 / 0.5) * 0.5 + 0.001; lv < hi2; lv += 0.5) {
         const cut = [];
         for (let e = 0; e < 3; e++) { const a = tri[e], b = tri[(e + 1) % 3]; if ((a[1] - lv) * (b[1] - lv) < 0) { const f = (lv - a[1]) / (b[1] - a[1]); cut.push(a[0] + (b[0] - a[0]) * f, lv + 0.015, a[2] + (b[2] - a[2]) * f); } }
         if (cut.length === 6) cont.push(...cut);
@@ -318,15 +345,15 @@ for (const [id, def] of [['botA', 2], ['botB', 0]]) {
 }
 // Curated fights, each picked to show one idea. Choosing a machine, challenge or seed by hand leaves the showcase.
 const SHOWS = [
-  { label: 'Hammers', a: 'Mantis', b: 'Strider', ch: 'Rubble', seed: 1, watch: 'Mantis walks up, squares on, and brings two steel hammers down in turn. Strider is flat and works either way up, so being tipped over does not stop it. A machine loses when more than half of it has been broken off its core.' },
-  { label: 'The bar', a: 'Thresher', b: 'Slinger', ch: 'Terraces', seed: 1, watch: 'Thresher carries a steel bar spinning across its nose, turning upward at the front. Slinger wants to stay at range and throw. On terraced rock neither gets the fight it wants.' },
-  { label: 'Ranging shots', a: 'Slinger', b: 'Strider', ch: 'Terraces', seed: 1, watch: 'Slinger works out the swing for the range, the gravity and the difference in height, and aims where the target will be when the ball lands.' },
-  { label: 'Wheels on crags', a: 'Strider', b: 'Rover', ch: 'Crags', seed: 1, watch: 'Rover has the biggest tyres the kit allows and is the fastest machine here on a flat floor. Watch what the ledges do to it, and read its label: it says when it can find no way its wheels can take.' },
-  { label: 'Across the gap', a: 'Centipede', b: 'Rover', ch: 'Narrow gap', seed: 1, watch: 'A 1.5 m gap separates the two machines, and neither wheels nor six legs can cross it. Centipede is long enough to walk straight over: some of its ten legs are always on the ground on one side or the other.' },
-  { label: 'Wheels on the flat', a: 'Rover', b: 'Mantis', ch: 'Open floor', seed: 1, watch: 'The same wheeled machine on flat ground, where it can ram at speed and push a walker toward the edge.' },
-  { label: 'Walker against walker', a: 'Mantis', b: 'Thresher', ch: 'Crags', seed: 1, watch: 'Two walkers with different weapons on craggy rock. Each plans a route it can climb and stops short of drops.' },
-  { label: 'Low gravity', a: 'Slinger', b: 'Thresher', ch: 'Low gravity crags', seed: 1, watch: 'A third of normal gravity. Throws carry three times as far, steps take longer to land, and a hit sends things a long way.' },
-  { label: 'Ice', a: 'Mantis', b: 'Rover', ch: 'Icy crags', seed: 1, watch: 'Crags with a quarter of the usual grip.' },
+  { label: 'Claws and tail', a: 'Scorpion', b: 'Strider', ch: 'Downs', seed: 1, watch: 'Scorpion is one of the two large machines: ten legs, two claws that snap shut across its front, and a tail club that comes over the top onto whatever the claws have caught.' },
+  { label: 'Two giants', a: 'Scorpion', b: 'Dreadnought', ch: 'Riverlands', seed: 1, watch: 'Dreadnought carries a spinning bar at each end under an armoured shell. Both machines wade the river and meet in the middle.' },
+  { label: 'Clubs at the river', a: 'Mantis', b: 'Slinger', ch: 'Riverlands', seed: 1, watch: 'Slinger throws from range. Mantis wades straight across and brings two steel clubs over and down.' },
+  { label: 'Wheels in the valley', a: 'Mantis', b: 'Rover', ch: 'Valley', seed: 1, watch: 'A river crosses the valley, shallow only at the two fords. Rubber tyres float, so Rover keeps to the fords; walkers wade.' },
+  { label: 'High ground', a: 'Slinger', b: 'Centipede', ch: 'High ground', seed: 1, watch: 'A flat-topped hill with steep sides and two ramps. Slinger allows for the difference in height when it throws; Centipede has to come to it.' },
+  { label: 'The rotor', a: 'Thresher', b: 'Rover', ch: 'Downs', seed: 1, watch: 'Thresher carries a steel bar spinning flat over its nose and walks it into wheels and legs.' },
+  { label: 'Across the gap', a: 'Centipede', b: 'Rover', ch: 'Narrow gap', seed: 1, watch: 'A 1.5 m gap separates the two machines, and neither wheels nor six legs can cross it. Centipede is long enough to walk straight over.' },
+  { label: 'Icy heights', a: 'Dreadnought', b: 'Mantis', ch: 'Icy heights', seed: 1, watch: 'The hill again with a quarter of the usual grip. Ramps that were easy are now a slide.' },
+  { label: 'Low gravity', a: 'Slinger', b: 'Thresher', ch: 'Low gravity valley', seed: 1, watch: 'A third of normal gravity. Throws carry three times as far and a hit sends a machine a long way.' },
 ];
 let showing = -1;
 function markShow(i) { showing = i; document.querySelectorAll('#shows button').forEach((b, k) => b.setAttribute('aria-pressed', String(k === i))); $('watch').textContent = i >= 0 ? SHOWS[i].watch : ''; }

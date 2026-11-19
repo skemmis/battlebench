@@ -29,6 +29,8 @@ export const LIB = {
     const u = fx - ix, v = fz - iz, H = t.heights, k = iz * t.nx + ix;
     return H[k] * (1 - u) * (1 - v) + H[k + 1] * u * (1 - v) + H[k + t.nx] * (1 - u) * v + H[k + t.nx + 1] * u * v;
   },
+  // How deep the water is at a point: 0 on dry ground.
+  depthAt(s, x, z) { const w = s.challenge.water; return w ? Math.max(0, w.level - LIB.heightAt(s, x, z)) : 0; },
   // The slope of the ground along a world direction at a point: rise over run, uphill positive.
   gradeAt(s, x, z, dx, dz) { const n = Math.hypot(dx, dz) || 1, e = 0.5; return (LIB.hillAt(s, x + (dx / n) * e, z + (dz / n) * e) - LIB.hillAt(s, x - (dx / n) * e, z - (dz / n) * e)) / (2 * e); },
   // How high a flat-topped slab stands at a point, ignoring hills: steps are what a machine has to climb in one go.
@@ -72,10 +74,10 @@ export const LIB = {
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (const f of ch.floor) { x0 = Math.min(x0, f.x - f.w / 2); x1 = Math.max(x1, f.x + f.w / 2); z0 = Math.min(z0, f.z - f.d / 2); z1 = Math.max(z1, f.z + f.d / 2); }
     const nx = Math.ceil((x1 - x0) / C), nz = Math.ceil((z1 - z0) / C), n = nx * nz;
-    const h = new Float32Array(n), y = new Float32Array(n), empty = new Uint8Array(n), edge = new Float32Array(n).fill(99), queue = [];
+    const h = new Float32Array(n), y = new Float32Array(n), wet = new Float32Array(n), empty = new Uint8Array(n), edge = new Float32Array(n).fill(99), queue = [];
     for (let i = 0; i < n; i++) {
       const x = x0 + ((i % nx) + 0.5) * C, z = z0 + (Math.floor(i / nx) + 0.5) * C;
-      if (!LIB.floorAt(s, x, z) || LIB.inWall(s, x, z)) { h[i] = -1; edge[i] = 0; queue.push(i); if (!LIB.inWall(s, x, z)) empty[i] = 1; } else { h[i] = LIB.stepAt(s, x, z); y[i] = LIB.hillAt(s, x, z); }
+      if (!LIB.floorAt(s, x, z) || LIB.inWall(s, x, z)) { h[i] = -1; edge[i] = 0; queue.push(i); if (!LIB.inWall(s, x, z)) empty[i] = 1; } else { h[i] = LIB.stepAt(s, x, z); y[i] = LIB.hillAt(s, x, z); wet[i] = LIB.depthAt(s, x, z); }
     }
     // Squares on the rim of the map border the void too.
     for (let i = 0; i < n; i++) if (h[i] >= 0) { const cx = i % nx, cz = Math.floor(i / nx); if (cx === 0 || cz === 0 || cx === nx - 1 || cz === nz - 1) { edge[i] = C / 2; queue.push(i); } }
@@ -87,7 +89,7 @@ export const LIB = {
         if (d < edge[j]) { edge[j] = d; queue.push(j); }
       }
     }
-    g = { x0, z0, nx, nz, C, h, y, empty, edge, steps: new Map(), cell: (x, z) => { const cx = Math.floor((x - x0) / C), cz = Math.floor((z - z0) / C); return cx < 0 || cz < 0 || cx >= nx || cz >= nz ? -1 : cz * nx + cx; }, pos: (i) => ({ x: x0 + ((i % nx) + 0.5) * C, z: z0 + (Math.floor(i / nx) + 0.5) * C }) };
+    g = { x0, z0, nx, nz, C, h, y, wet, empty, edge, steps: new Map(), cell: (x, z) => { const cx = Math.floor((x - x0) / C), cz = Math.floor((z - z0) / C); return cx < 0 || cz < 0 || cx >= nx || cz >= nz ? -1 : cz * nx + cx; }, pos: (i) => ({ x: x0 + ((i % nx) + 0.5) * C, z: z0 + (Math.floor(i / nx) + 0.5) * C }) };
     LIB_GRIDS.set(s.challenge, g);
     return g;
   },
@@ -118,8 +120,8 @@ export const LIB = {
   // higher than "climb". Returns the next point to steer for, the place the plan ends, and whether that is the
   // goal itself. If the goal cannot be reached, the plan ends at the nearest place that can.
   // "grade" is the steepest slope it will take uphill (rise over run); it is cut down on a slippery surface,
-  // where wheels cannot hold a steep slope.
-  plan(s, x, z, { margin = 1.5, climb = 0.15, grade = 0.5, side = Math.min(margin, 1.5), span = 0 } = {}) {
+  // where wheels cannot hold a steep slope. "wade" is the deepest water it will go into.
+  plan(s, x, z, { margin = 1.5, climb = 0.15, grade = 0.5, side = Math.min(margin, 1.5), span = 0, wade = 0.3 } = {}) {
     grade = Math.min(grade, 0.75 * s.challenge.surface.grip);
     const g = LIB.grid(s), start = g.cell(s.self.x, s.self.z);
     if (start < 0 || g.h[start] < 0) return { x, z, end: { x, z }, reachable: false, off: true, left: 0 };
@@ -136,6 +138,7 @@ export const LIB = {
         const j = az * g.nx + ax;
         if (from[j] !== -2 || g.h[j] < 0 || g.h[j] - g.h[i] > climb) continue;
         if (g.y[j] - g.y[i] > grade * g.C * (dx && dz ? 1.41 : 1) && g.y[j] > g.y[start] - 0.3) continue;
+        if (g.wet[j] > wade && g.wet[j] > g.wet[i]) continue;
         // Keep the margin, except that a machine already inside it may move toward open floor.
         if (g.edge[j] < margin && !(g.edge[i] < margin && g.edge[j] > g.edge[i])) continue;
         if (step[j] < side && !(step[i] < side && step[j] > step[i])) continue;
@@ -167,7 +170,7 @@ export const LIB = {
     // Walk the plan back from its end and steer for the furthest point on it that is in a straight clear line.
     const chain = []; for (let i = best; i !== -1 && i !== -2; i = from[i]) chain.push(i);
     // A straight run to a point on the plan must also keep its distance from steps too high to climb.
-    const wide = (p) => { const d = Math.hypot(p.x - s.self.x, p.z - s.self.z); for (let t = 1; t < d; t += 0.4) { const c = g.cell(s.self.x + ((p.x - s.self.x) * t) / d, s.self.z + ((p.z - s.self.z) * t) / d); if (c >= 0 && step[c] < side && step[c] < step[start]) return false; } if (s.challenge.terrain) for (let t = 0.5; t < d; t += 0.5) { const f0 = (t - 0.5) / d, f1 = t / d; if (LIB.hillAt(s, s.self.x + (p.x - s.self.x) * f1, s.self.z + (p.z - s.self.z) * f1) - LIB.hillAt(s, s.self.x + (p.x - s.self.x) * f0, s.self.z + (p.z - s.self.z) * f0) > grade * 0.5) return false; } return true; };
+    const wide = (p) => { const d = Math.hypot(p.x - s.self.x, p.z - s.self.z); for (let t = 1; t < d; t += 0.4) { const c = g.cell(s.self.x + ((p.x - s.self.x) * t) / d, s.self.z + ((p.z - s.self.z) * t) / d); if (c >= 0 && step[c] < side && step[c] < step[start]) return false; if (c >= 0 && g.wet[c] > wade && g.wet[c] > g.wet[start]) return false; } if (s.challenge.terrain) for (let t = 0.5; t < d; t += 0.5) { const f0 = (t - 0.5) / d, f1 = t / d; if (LIB.hillAt(s, s.self.x + (p.x - s.self.x) * f1, s.self.z + (p.z - s.self.z) * f1) - LIB.hillAt(s, s.self.x + (p.x - s.self.x) * f0, s.self.z + (p.z - s.self.z) * f0) > grade * 0.5) return false; } return true; };
     let way = end, left = 0;
     for (let k = 0; k < chain.length; k++) {
       const p = k === 0 ? end : g.pos(chain[k]);
@@ -212,8 +215,8 @@ export const LIB = {
   // Drive to (x, z) and stay on the floor. Plans a way round gaps and walls, slows for corners and on arrival,
   // and brakes in time for an edge, allowing for how slippery the floor is and how long the machine is.
   // Returns { drive, turn, arrived, reachable, braking, left } where left is the distance still to go.
-  nav(s, x, z, { margin = 1.5, grade = 0.5, side, span = 0, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null, feed = true } = {}) {
-    const me = s.self, p = LIB.plan(s, x, z, side === undefined ? { margin, climb, grade, span } : { margin, climb, grade, side, span });
+  nav(s, x, z, { margin = 1.5, grade = 0.5, side, span = 0, wade = 0.3, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null, feed = true } = {}) {
+    const me = s.self, p = LIB.plan(s, x, z, side === undefined ? { margin, climb, grade, span, wade } : { margin, climb, grade, side, span, wade });
     const w = LIB.to(s, p.x, p.z), endD = Math.hypot(p.end.x - me.x, p.end.z - me.z), last = Math.hypot(p.x - p.end.x, p.z - p.end.z) < 0.3;
     // Once arrived, stay arrived until well off the spot, so the machine does not fidget.
     const held = mem && mem._at && Math.hypot(mem._at.x - p.end.x, mem._at.z - p.end.z) < 0.5 && endD < stopAt * 3 + 0.3;

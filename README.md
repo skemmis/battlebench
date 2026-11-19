@@ -2,7 +2,7 @@
 
 A 3D simulated arena where AI models build battlers from parts and pit them against each other. It has two goals: a test space where pre-training gives little help, and something fun to watch. What it means to reward is creative problem solving under conditions the builder has not seen before.
 
-This is an early prototype (v0.6). It has a family of challenges, a kit of plain pieces, breakable joints, five hand-built machines, and a viewer that replays a fight and shows what each machine says it is doing. No model calls yet: the machines here are written by hand, to the standard a model's would need to reach.
+This is an early prototype (v0.7). It has a family of challenges fought over land with high ground and rivers, a kit of plain pieces, breakable joints, eight hand-built machines (two of them large), and a viewer that replays a fight and shows what each machine says it is doing. No model calls yet: the machines here are written by hand, to the standard a model's would need to reach.
 
 The kit and the physics stay fixed. What changes from round to round is the challenge: the shape of the arena, the ground, the surface and gravity. There is one way to win everywhere: break the enemy apart or put it off the floor. A machine that only works in one arena does badly.
 
@@ -15,11 +15,13 @@ npm install
 npm run build      # writes dist/index.html
 ```
 
-Open `dist/index.html` in a browser (it needs an internet connection to load its two libraries). The Showcase strip at the top steps through seven fights, each picked to show one idea. Or pick two machines, a challenge and a seed yourself.
+Open `dist/index.html` in a browser (it needs an internet connection to load its two libraries). The Showcase strip at the top steps through nine fights, each picked to show one idea. Or pick two machines, a challenge and a seed yourself.
 
 ```
+npm run quick            # a spot check for iterating: 12 fights over four maps, a few minutes
+npm run quick -- 24 2    # more fights, another seed
 npm test                 # the checks to rerun after any change
-npm run gauntlet -- 12   # every machine against every other in each of 12 drawn challenges
+npm run gauntlet -- 4    # the long form: every machine against every other in each of 4 drawn challenges
 ```
 
 ## How it works
@@ -67,6 +69,8 @@ Nothing here coasts for ever. Four things slow and stop objects, and each is che
 - **Air drag** that grows with the square of speed, from real air density and each body's area. It barely touches a steel shot and takes a fifth off the range of a light ball.
 - **Rest.** A loose piece that has stopped stays stopped until something hits it.
 
+- **Water.** Wherever the ground is lower than a round's water level there is water. What stands in it is dragged on by the part of it that is under, and borne up by the weight of water that part pushes aside: steel wades, rubber tyres and plastic float.
+
 A motor with no power still resists turning, so wheels on a broken-off axle drag. Two pieces that were built overlapping do not collide with each other even after they break apart.
 
 ### Shoving
@@ -78,7 +82,7 @@ Two machines of the same weight and grip pushing head on is a deadlock, and it s
 A challenge is plain data (`src/challenges.js`), and a program receives it whole as `s.challenge`, with the same conditions in words as `s.challenge.brief`. `drawChallenge(n)` draws round `n` from the family:
 
 - **Arena**: an open square, a small square, two platforms joined by a bridge, two platforms with a gap between them, a square with solid pillars, or three islands in a row.
-- **Ground**: broken rock in seven rounds out of eight. It is made of flat-topped ledges, each an entry in `s.challenge.floor` with a `top` height, cut from smooth noise so there are shelves and outcrops and not a scatter of obstacles. *Crags* have ledges up to 1.6 m with steps up to 0.6 m. *Terraces* are broad shelves 0.35 m apart. *Rubble* is small steps of 0.1 to 0.3 m everywhere. No step is higher than the round says, so nothing is walled in, but most steps are more than a wheel can take. Starting places are level pads.
+- **Ground**: on a single platform, land like a game map, as a grid of heights in `s.challenge.terrain` (and `s.challenge.water` where there is a river). It rolls gently and is walkable everywhere except where it is meant not to be. *Valley*: a winding river across the middle, about half a metre deep except at two fords, and a flat-topped hill on each side with steep sides and one ramp. *High ground*: one hill in the middle with two ramps. *Riverlands*: the river alone. *Downs*: open rises and hollows. Every map is the same from either end. Split arenas (bridge, gap, islands, pillars) are flat or rubble. The stepped rock of v0.6 (crags, terraces) is still in the generator for rounds that ask for it, but is no longer drawn.
 - **Surface**: normal, ice, or sticky.
 - **Gravity**: normal, a third, or half again as strong.
 
@@ -86,7 +90,7 @@ A challenge is plain data (`src/challenges.js`), and a program receives it whole
 
 - **Ring-out**: a core that goes off the floor loses.
 - **Destroyed**: a machine that has had more than half its mass broken off its core loses.
-- **Otherwise**, at 90 seconds, or sooner if nothing has moved for 10 seconds, the machine with more of itself still attached wins, if the difference is 5% or more. If not, it is a draw.
+- **Otherwise**, at 90 seconds, or sooner if neither machine has moved or landed a blow for 10 seconds, the machine with more of itself still attached wins, if the difference is 5% or more. If not, it is a draw.
 
 There are no points to hold and nothing to fetch. Standing somewhere wins nothing.
 
@@ -96,35 +100,52 @@ Each fight produces three layers of data: a summary, timestamped events (hits, p
 
 ## The machines
 
-Design rounds 1 and 2 for the knockout game on broken ground. Five walk on spoked legs, which step onto ledges; one has wheels. The flat walkers (Strider, Thresher, Centipede) work either way up: on their backs they turn the same hubs the other way and keep walking.
+Seven walk on spoked legs and one has wheels. The flat walkers (Strider, Thresher, Centipede) work either way up.
+
+Two are large, about 700 kg and nearly 90 parts, built on a ten-legged frame with a thick steel backbone:
+
+- **Scorpion** (88 parts, 685 kg): two steel claws on upright pivots stand open across its front and snap shut on whatever comes between them; a 2.4 m tail club lies back along the body and comes over the top onto anything the claws have caught. Nearly seven metres from tail to claw tips.
+- **Dreadnought** (88 parts, 687 kg): a spinning steel bar at each end, under a roof and skirts of plate. Either end is the front: if the enemy is behind, it backs the rear rotor into it.
+
+The rest weigh 250 to 420 kg:
 
 - **Strider** (52 parts, 249 kg): quick, with a steel beak. Goes for machines that are stuck or near an edge.
-- **Mantis** (58 parts): two steel hammers on 1.7 m arms that lie back along the body and come down in front of it. Squares up at striking distance and swings them in turn.
-- **Thresher** (54 parts): a steel bar spinning across its nose, turning upward at the front. Keeps its nose on the enemy and walks into it.
-- **Slinger** (68 parts): three throwing arms. Works out the swing for the range, the gravity and the difference in height, leads a moving target, and clubs with the arms once the shot is gone.
-- **Centipede** (80 parts, 407 kg): ten legs on a frame nearly five metres long, with a ram at each end. It walks straight across gaps up to about 1.9 m, which stop every other machine here. The planner and the edge guard take a `span` so a program can say how wide a gap its machine can cross.
-- **Rover** (14 parts, 423 kg): the wheeled machine, with six of the biggest tyres the kit allows, a high frame and a steel ram. Fast on the flat. On crags and terraces it usually reports that there is no way its wheels can take.
+- **Mantis** (53 parts, 312 kg): two steel clubs on a mast at its nose that lie back along the body and come over and down in front of it. Each club is one bar on a motor, so there is no head to snap off.
+- **Thresher** (50 parts, 281 kg): a steel bar spinning flat over its nose like a rotor, mounted on the spine itself.
+- **Slinger** (68 parts, 403 kg): three throwing arms. Works out the swing for the range, the gravity and the difference in height, leads a moving target, and clubs with the arms once the shot is gone.
+- **Centipede** (80 parts, 407 kg): ten legs and a ram at each end. Walks straight across gaps up to about 1.9 m.
+- **Rover** (14 parts, 423 kg): six of the biggest tyres the kit allows and a steel ram. Fast on open ground. Its tyres float, so it keeps to the fords.
 
-All of them share one idea of where to go: a machine near a drop is easier to put over it than to break, so get inboard of it and drive it out; otherwise close with it.
+### What makes a weapon work
+
+Three rules in the simulator decide whether a weapon survives its own blows, and the machines above are built around them:
+
+- **A struck part on a pivot swings.** A blow on something hung from a hinge or a motor is partly taken up by the swing, and only the rest goes through the pivot into the mount. A bar struck two thirds of the way along passes nothing on; a balanced rotor passes all of it, so a spinner needs the strongest mount on the machine.
+- **Thicker parts make stronger joints**, by the square root of the section, up to two and a half times. A long machine needs a thick backbone or it snaps at the core.
+- **Stops are as hard as the arm is heavy**, so a club that misses stops at its limit and does not swing on into its own machine. A pivot has to be on the part it turns.
+
+The allowance for one machine is 1200 kg, 300 parts and a box 8 x 5 x 9 m.
 
 ## Layout
 
 - `src/challenges.js`: the challenge family and the generator that draws a round.
 - `src/sim.js`: the simulator. All tunable values are in `CONFIG` at the top.
 - `src/lib.js`: helpers passed to control programs.
-- `src/bots.js`: the five machines and their programs.
+- `src/bots.js`: the eight machines and their programs.
 - `src/viewer.js`, `src/page.html`: the replay page.
 - `scripts/build.mjs`: inlines everything into `dist/index.html`.
+- `scripts/quick.mjs`, `scripts/gauntlet.mjs`: the spot check and the full table.
 - `test/fights.test.mjs`: build checks, repeatability, physics sanity checks, and one test per machine's signature move.
 - `old/`: earlier machines, kept for reference. `bots-v05.js` are the point-holding machines for flat floors; `bots-v04.js` use parts that no longer exist.
 
 ## Known rough edges
 
-- The machines are a first attempt at this game. Walkers lose a whole axle and both its legs to one good hit, so fights can be over in seconds. Hammers and throwing arms can break their own machine when it is tipped over.
-- Rover often wins on damage without going anywhere: walkers come to it and break themselves on it.
-- Where there is a gap with no way across, only a thrower can do anything, and the round is usually a draw.
-- A fight takes about as long to simulate as it lasts.
+- In a 16-fight spot check of v0.7, 2 fights ended in a knockout, 9 were decided on damage and 5 were draws. Weapons break things now, but most fights still go to the clock.
+- Machines that meet nose to nose can lock together and neither gets free. If no blow lands for 10 seconds the fight is called.
+- Rivers stand still. A current that carries floating machines toward the edge is an obvious next step.
+- Hills are grids of heights one metre apart, so cliffs are steep slopes and not sheer walls. A walker can sometimes scramble up one.
+- Where there is a gap with no way across, only a thrower or a long machine can do anything.
+- A fight takes about as long to simulate as it lasts, and longer with the large machines.
 - A fight replays exactly in one JavaScript engine, but the page in a browser and the scripts in Node can come out differently for the same seed.
-- The engine is cannon-es, chosen because it is plain JavaScript; friction, rolling resistance and air drag are added on top of it.
-- Smooth terrain (a grid of heights) is still supported by the simulator and the helpers but no round uses it.
+- The engine is cannon-es, chosen because it is plain JavaScript; friction, rolling resistance, air drag, water and joint breakage are added on top of it.
 - Compute per tick is not limited yet. There are no hidden test rounds yet.
