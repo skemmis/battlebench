@@ -34,9 +34,11 @@ const LEGS_L = ['leg_l0', 'leg_l1', 'leg_l2'], LEGS_R = ['leg_r0', 'leg_r1', 'le
 // Walk: each side has a phase that advances with the wanted speed, and every hub on that side is held to it by
 // reading its angle, the way a walking animal keeps a gait. Going straight, the two sides are pulled into step
 // so the gait stays a tripod.
-function walk(s, out, mem, lib, fwd, turn) {
+function walk(s, out, mem, lib, fwd, turn, LL = LEGS_L, RR = LEGS_R) {
   const me = s.self, TURN = (2 * Math.PI) / 3;
   if (mem.pl === undefined) { mem.pl = 0; mem.pr = 0; }
+  // Spoked legs reach the ground either way up. On its back, the same hubs turned the other way walk it forward.
+  if (me.upright < 0) fwd = -fwd;
   // A walker turns badly with one side stopped: for a sharp turn, the two sides step in opposite directions.
   turn = lib.clamp(turn - me.turnRate * 0.5);
   if (Math.abs(turn) > 0.3) fwd *= 0.1;
@@ -46,9 +48,9 @@ function walk(s, out, mem, lib, fwd, turn) {
   mem.pl += vl / 30; mem.pr += vr / 30;
   // Do not let the wanted leg position run away from the real one when the legs are held up.
   const lead = (ids, ph) => { let sum = 0, n = 0; for (const id of ids) { const j = me.joints[id]; if (j) { sum += j.angle; n++; } } return n ? lib.clamp(ph, sum / n - 0.5, sum / n + 0.5) : ph; };
-  mem.pl = lead(LEGS_L, mem.pl); mem.pr = lead(LEGS_R, mem.pr);
+  mem.pl = lead(LL, mem.pl); mem.pr = lead(RR, mem.pr);
   if (Math.abs(vl - vr) < 0.5) { let d = (mem.pl - mem.pr) % TURN; if (d > TURN / 2) d -= TURN; if (d < -TURN / 2) d += TURN; mem.pl -= d * 0.05; mem.pr += d * 0.05; }
-  for (const [ids, ph, v] of [[LEGS_L, mem.pl, vl], [LEGS_R, mem.pr, vr]]) for (const id of ids) {
+  for (const [ids, ph, v] of [[LL, mem.pl, vl], [RR, mem.pr, vr]]) for (const id of ids) {
     const j = me.joints[id]; if (!j) continue;
     out[id] = lib.clamp((v + 6 * (ph - j.angle)) / 10);
   }
@@ -70,21 +72,22 @@ function hunt(s, lib) {
   return { x: hit.x, z: hit.z, charge: true, say: 'closing on the enemy' };
 }
 // Walk to wherever hunt says, by a route this machine can climb, stopping short of drops.
-function stalk(s, out, mem, lib, SELF, { keep = 0 } = {}) {
+function stalk(s, out, mem, lib, SELF, { keep = 0, L = LEGS_L, R = LEGS_R } = {}) {
   const h = hunt(s, lib), foe = s.enemy;
   // If there is no way to it, the plan ends at the nearest ground I can stand on: stop there, do not press on.
   const open = lib.plan(s, h.x, h.z, SELF).reachable;
   const n = lib.nav(s, h.x, h.z, { ...SELF, stopAt: !open ? 0.8 : h.charge ? keep : 0.6, reverse: !open });
-  if (!open && n.arrived) { out.say = 'no way to it from here, waiting at the nearest ground'; walk(s, out, mem, lib, 0, 0); return n; }
+  if (!open && n.arrived) { out.say = 'no way to it from here, waiting at the nearest ground'; walk(s, out, mem, lib, 0, 0, L, R); return n; }
   out.say = n.backing ? 'jammed on a ledge, backing off to try again' : n.braking ? 'stopping short of the edge' : !n.reachable && foe.distance > 3 ? 'no way to it from here, getting as near as I can' : h.say;
-  walk(s, out, mem, lib, n.drive, n.turn);
+  walk(s, out, mem, lib, n.drive, n.turn, L, R);
   return n;
 }
-// On its back, a walker kicks both sides opposite ways to roll over.
-function righting(s, out) {
-  if (s.self.upright >= 0.2) return false;
-  out.say = 'on my back, kicking to roll over';
-  for (const id of LEGS_L) out[id] = 1; for (const id of LEGS_R) out[id] = -1;
+// A flat walker works either way up, so it only needs to do something when it is lying on its side: kick both
+// sides opposite ways to roll off it.
+function righting(s, out, L = LEGS_L, R = LEGS_R) {
+  if (Math.abs(s.self.upright) >= 0.35) return false;
+  out.say = 'on my side, kicking to roll off it';
+  for (const id of L) out[id] = 1; for (const id of R) out[id] = -1;
   return true;
 }
 
@@ -93,9 +96,9 @@ function righting(s, out) {
 // an edge, or by pecking pieces off one that is stuck.
 export const STRIDER = {
   name: 'Strider',
-  note: 'Walks on six spoked legs and climbs ledges wheels cannot. Light and quick; it goes for machines that are stuck or near an edge, and pecks with a steel beak.',
+  note: 'Walks on six spoked legs and climbs ledges wheels cannot. It is flat, so it works either way up: tipped onto its back it just keeps walking. It goes for machines that are stuck or near an edge, and pecks with a steel beak.',
   parts: [
-    ...hexFrame(),
+    ...hexFrame({ frame: 'steel' }),
     plate('back_0', [0.9, 0.06, 0.7], [0, 0.2, -0.8], 'spine', 'plastic'),
     plate('back_1', [1.0, 0.06, 0.7], [0, 0.28, 0], 'spine', 'plastic'),
     plate('back_2', [0.9, 0.06, 0.7], [0, 0.2, 0.8], 'spine', 'plastic'),
@@ -139,7 +142,7 @@ export function mantisProgram(s, out, mem, lib) {
   const me = s.self, foe = s.enemy, SELF = { ...WALKER, mem }, REST = -0.05, DOWN = 3.62;
   const arms = [0, 1].filter((i) => me.joints['arm_' + i]);
   const hold = (i, to, max = 0.6) => { const j = me.joints['arm_' + i]; if (j) out['arm_' + i] = lib.clamp((to - j.angle) * 1.2, -max, max); };
-  if (me.upright < 0.2) { out.say = 'tipped over, pushing up with the hammers'; for (const i of arms) out['arm_' + i] = Math.sin(s.t * 2) > 0 ? 0.35 : -0.35; for (const id of LEGS_L) out[id] = 1; for (const id of LEGS_R) out[id] = -1; return; }
+  if (me.upright < 0.2) { mem.down = (mem.down || 0) + 1; out.say = 'tipped over, kicking and levering up with the hammers'; for (const i of arms) out['arm_' + i] = mem.down < 60 ? 0 : Math.sin(s.t * 2) > 0 ? 0.25 : -0.25; for (const id of LEGS_L) out[id] = 1; for (const id of LEGS_R) out[id] = -1; return; }
   // A swing in progress: full power down, then lift the arm back.
   if (mem.swing != null) {
     const i = mem.swing, j = me.joints['arm_' + i];
@@ -181,8 +184,8 @@ export const THRESHER = {
 };
 export function thresherProgram(s, out, mem, lib) {
   const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 2.4, mem };
-  // The bar spins all the time it is the right way up, upward at the front.
-  out.drum = me.upright > 0.2 ? -1 : 0;
+  // The bar always turns upward at the front, whichever way up the machine is.
+  out.drum = me.upright > 0 ? -1 : 1;
   if (righting(s, out)) return;
   // After a hit, the enemy is often thrown clear. Do not chase blindly over an edge: stalk plans the way.
   if (foe.distance < 3 && Math.abs(foe.bearing) > 0.5) { out.say = 'turning the bar onto it'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.6, 0.6)); return; }
@@ -221,7 +224,7 @@ export function slingerProgram(s, out, mem, lib) {
   const g = 9.81 * s.challenge.gravity;
   out.release = [];
   for (const i of [0, 1, 2]) { const j = me.joints['arm_' + i]; if (j && mem.firing !== i) out['arm_' + i] = lib.clamp((-0.2 - j.angle) * 0.8, -0.5, 0.5); }
-  if (me.upright < 0.2) { out.say = 'tipped over, levering up with the arms'; for (const i of [0, 1, 2]) out['arm_' + i] = Math.sin(s.t * 2) > 0 ? 0.3 : -0.3; for (const id of LEGS_L) out[id] = 1; for (const id of LEGS_R) out[id] = -1; return; }
+  if (me.upright < 0.2) { mem.down = (mem.down || 0) + 1; out.say = 'tipped over, kicking and levering up with the arms'; for (const i of [0, 1, 2]) out['arm_' + i] = mem.down < 60 ? 0 : Math.sin(s.t * 2) > 0 ? 0.25 : -0.25; for (const id of LEGS_L) out[id] = 1; for (const id of LEGS_R) out[id] = -1; return; }
   // Launch speed for a ball let go at 49 degrees, to come down d metres away on ground "drop" metres below the
   // point of release. Throwing from high ground reaches further, and the sum allows for it.
   const speedFor = (d, drop) => { const c = Math.cos(RELEASE), sn = Math.sin(RELEASE), den = 2 * c * c * (d * (sn / c) + drop); return den > 0 ? Math.sqrt((g * d * d) / den) : 99; };
@@ -301,11 +304,43 @@ export function roverProgram(s, out, mem, lib) {
   drive(n.drive, n.turn);
 }
 
+// ── Centipede ──────────────────────────────────────────────────────────────
+// Ten legs on a frame nearly five metres long. It is long enough to walk straight across a gap that stops
+// everything else: by the time its middle is over the drop, two pairs of legs are already on the far side.
+const PEDE_Z = [-1.7, -0.85, 0, 0.85, 1.7];
+const PEDE_L = PEDE_Z.map((_, i) => 'leg_l' + i), PEDE_R = PEDE_Z.map((_, i) => 'leg_r' + i);
+export const CENTIPEDE = {
+  name: 'Centipede',
+  note: 'Ten spoked legs on a frame nearly five metres long, with a steel ram at each end. It walks straight across gaps up to about 1.9 m wide, because some of its legs are always on the ground on one side or the other, and it works either way up.',
+  parts: [
+    { id: 'core', type: 'core' },
+    beam('spine_f', [0.2, 0.18, 1.9], [0, 0, 0.95], 'core', 'steel'),
+    beam('spine_b', [0.2, 0.18, 1.9], [0, 0, -0.95], 'core', 'steel'),
+    ...PEDE_Z.flatMap((z, i) => { const x = i % 2 ? 1.3 : 1.04, parent = z > 0 ? 'spine_f' : z < 0 ? 'spine_b' : 'core'; return [
+      beam('axle_' + i, [Math.min(2.4, x * 2 - 0.18), 0.12, 0.12], [0, 0, z], parent, 'steel'),
+      ...leg('leg_l' + i, x, z, i % 2 ? 60 : 0, 'axle_' + i, { reach: 0.7 }), ...leg('leg_r' + i, -x, z, i % 2 ? 0 : 60, 'axle_' + i, { reach: 0.7 }),
+    ]; }),
+    { id: 'ram_f', type: 'wedge', material: 'steel', size: [0.9, 0.3, 0.4], pos: [0, 0, 2.1], parent: 'spine_f' },
+    { id: 'ram_b', type: 'wedge', material: 'steel', size: [0.9, 0.3, 0.4], pos: [0, 0, -2.1], rot: [0, 180, 0], parent: 'spine_b' },
+  ],
+};
+export function centipedeProgram(s, out, mem, lib) {
+  const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 2.7, margin: 2.4, span: 1.9, mem }, legs = { L: PEDE_L, R: PEDE_R };
+  if (righting(s, out, PEDE_L, PEDE_R)) return;
+  if (s.t < (mem.back || 0)) { out.say = 'stepping back for another run at it'; const g = lib.guard(s, -1, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 1.5, -0.3, 0.3), PEDE_L, PEDE_R); return; }
+  mem.press = foe.distance < 4 && Math.abs(foe.bearing) < 0.6 && me.speed < 0.5 ? (mem.press || 0) + 1 : 0;
+  if (mem.press > 30) { mem.press = 0; mem.back = s.t + 1.1; }
+  const n = stalk(s, out, mem, lib, SELF, legs);
+  // Say so when the way to the enemy goes over a gap.
+  if (n.reachable && !lib.plan(s, foe.x, foe.z, { ...SELF, span: 0 }).reachable && foe.distance > 4) out.say = 'walking across the gap to get at it';
+}
+
 export const ALL = [
   { build: STRIDER, program: striderProgram },
   { build: MANTIS, program: mantisProgram },
   { build: THRESHER, program: thresherProgram },
   { build: SLINGER, program: slingerProgram },
   { build: ROVER, program: roverProgram },
+  { build: CENTIPEDE, program: centipedeProgram },
 ];
 export const ROSTER = ALL;

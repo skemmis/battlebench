@@ -203,6 +203,7 @@ export const NAMED = [
   { ...drawChallenge(205, { layout: 'islands', ground: 'crags' }), name: 'Crag islands' },
   { ...drawChallenge(206, { layout: 'bridge', ground: 'rubble' }), name: 'Bridge' },
   { ...drawChallenge(105, { layout: 'gap' }), name: 'The gap' },
+  { ...drawChallenge(308, { layout: 'gap', ground: 'flat', surface: 'normal', gravity: 'normal' }), name: 'Narrow gap' },
   { ...drawChallenge(207, { layout: 'pillars', ground: 'terraces' }), name: 'Pillars' },
   { ...drawChallenge(208, { layout: 'open', ground: 'crags', surface: 'ice' }), name: 'Icy crags' },
   { ...drawChallenge(209, { layout: 'open', ground: 'crags', gravity: 'low' }), name: 'Low gravity crags' },

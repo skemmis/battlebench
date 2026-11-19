@@ -36,16 +36,18 @@ export const LIB = {
   inWall(s, x, z, margin = 0) { for (const w of s.challenge.walls) if (Math.abs(x - w.x) <= w.w / 2 + margin && Math.abs(z - w.z) <= w.d / 2 + margin) return true; return false; },
   // How far the floor runs from a point along a world direction before a drop, a wall or a step up, up to max.
   // "climb" is the highest step up the machine can take in its stride.
-  run(s, x, z, dx, dz, max = 6, margin = 0.8, climb = 0.15) {
+  // "span" is the widest gap the machine can cross: a break in the floor no wider than that, with floor it can
+  // step onto on the far side, does not count as the end of the floor.
+  run(s, x, z, dx, dz, max = 6, margin = 0.8, climb = 0.15, span = 0) {
     let h0 = LIB.stepAt(s, x, z); const n = Math.hypot(dx, dz) || 1;
     // Each step up is judged from the ledge before it, so a staircase of small steps is a way through.
-    for (let d = 0.25; d <= max; d += 0.25) { const px = x + (dx / n) * d, pz = z + (dz / n) * d; if (!LIB.floorAt(s, px, pz) || LIB.inWall(s, px, pz, margin)) return d - 0.25; const h = LIB.stepAt(s, px, pz); if (h > h0 + climb) return d - 0.25; h0 = h; }
+    for (let d = 0.25; d <= max; d += 0.25) { const px = x + (dx / n) * d, pz = z + (dz / n) * d; if (LIB.inWall(s, px, pz, margin)) return d - 0.25; if (!LIB.floorAt(s, px, pz)) { let far = 0; for (let e = 0.25; e <= span + 0.01; e += 0.25) { const qx = px + (dx / n) * e, qz = pz + (dz / n) * e; if (LIB.floorAt(s, qx, qz) && !LIB.inWall(s, qx, qz, margin)) { far = e; break; } } const hf = far ? LIB.stepAt(s, px + (dx / n) * far, pz + (dz / n) * far) : 0; if (!far || hf > h0 + climb) return d - 0.25; d += far - 0.25; h0 = hf; continue; } const h = LIB.stepAt(s, px, pz); if (h > h0 + climb) return d - 0.25; h0 = h; }
     return max;
   },
   // How far the floor runs ahead of the machine along a bearing relative to its nose.
-  runAhead(s, bearing = 0, max = 6, margin = 0.8, climb = 0.15) { const a = s.self.heading + bearing; return LIB.run(s, s.self.x, s.self.z, Math.sin(a), Math.cos(a), max, margin, climb); },
+  runAhead(s, bearing = 0, max = 6, margin = 0.8, climb = 0.15, span = 0) { const a = s.self.heading + bearing; return LIB.run(s, s.self.x, s.self.z, Math.sin(a), Math.cos(a), max, margin, climb, span); },
   // Can the machine go straight from where it is to a point without leaving the floor or meeting a wall?
-  clear(s, x, z, margin = 0.8, climb = 0.15) { const d = Math.hypot(x - s.self.x, z - s.self.z); return d < 0.3 || LIB.run(s, s.self.x, s.self.z, x - s.self.x, z - s.self.z, d, margin, climb) >= d - 0.3; },
+  clear(s, x, z, margin = 0.8, climb = 0.15, span = 0) { const d = Math.hypot(x - s.self.x, z - s.self.z); return d < 0.3 || LIB.run(s, s.self.x, s.self.z, x - s.self.x, z - s.self.z, d, margin, climb, span) >= d - 0.3; },
   // A point to steer for on the way to (x, z): the point itself if the way is clear, otherwise a sidestep
   // around whatever is in the way, picked from a fan of directions by how far it gets toward the goal.
   route(s, x, z, margin = 0.8, climb = 0.15) {
@@ -70,10 +72,10 @@ export const LIB = {
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (const f of ch.floor) { x0 = Math.min(x0, f.x - f.w / 2); x1 = Math.max(x1, f.x + f.w / 2); z0 = Math.min(z0, f.z - f.d / 2); z1 = Math.max(z1, f.z + f.d / 2); }
     const nx = Math.ceil((x1 - x0) / C), nz = Math.ceil((z1 - z0) / C), n = nx * nz;
-    const h = new Float32Array(n), y = new Float32Array(n), edge = new Float32Array(n).fill(99), queue = [];
+    const h = new Float32Array(n), y = new Float32Array(n), empty = new Uint8Array(n), edge = new Float32Array(n).fill(99), queue = [];
     for (let i = 0; i < n; i++) {
       const x = x0 + ((i % nx) + 0.5) * C, z = z0 + (Math.floor(i / nx) + 0.5) * C;
-      if (!LIB.floorAt(s, x, z) || LIB.inWall(s, x, z)) { h[i] = -1; edge[i] = 0; queue.push(i); } else { h[i] = LIB.stepAt(s, x, z); y[i] = LIB.hillAt(s, x, z); }
+      if (!LIB.floorAt(s, x, z) || LIB.inWall(s, x, z)) { h[i] = -1; edge[i] = 0; queue.push(i); if (!LIB.inWall(s, x, z)) empty[i] = 1; } else { h[i] = LIB.stepAt(s, x, z); y[i] = LIB.hillAt(s, x, z); }
     }
     // Squares on the rim of the map border the void too.
     for (let i = 0; i < n; i++) if (h[i] >= 0) { const cx = i % nx, cz = Math.floor(i / nx); if (cx === 0 || cz === 0 || cx === nx - 1 || cz === nz - 1) { edge[i] = C / 2; queue.push(i); } }
@@ -85,7 +87,7 @@ export const LIB = {
         if (d < edge[j]) { edge[j] = d; queue.push(j); }
       }
     }
-    g = { x0, z0, nx, nz, C, h, y, edge, steps: new Map(), cell: (x, z) => { const cx = Math.floor((x - x0) / C), cz = Math.floor((z - z0) / C); return cx < 0 || cz < 0 || cx >= nx || cz >= nz ? -1 : cz * nx + cx; }, pos: (i) => ({ x: x0 + ((i % nx) + 0.5) * C, z: z0 + (Math.floor(i / nx) + 0.5) * C }) };
+    g = { x0, z0, nx, nz, C, h, y, empty, edge, steps: new Map(), cell: (x, z) => { const cx = Math.floor((x - x0) / C), cz = Math.floor((z - z0) / C); return cx < 0 || cz < 0 || cx >= nx || cz >= nz ? -1 : cz * nx + cx; }, pos: (i) => ({ x: x0 + ((i % nx) + 0.5) * C, z: z0 + (Math.floor(i / nx) + 0.5) * C }) };
     LIB_GRIDS.set(s.challenge, g);
     return g;
   },
@@ -117,7 +119,7 @@ export const LIB = {
   // goal itself. If the goal cannot be reached, the plan ends at the nearest place that can.
   // "grade" is the steepest slope it will take uphill (rise over run); it is cut down on a slippery surface,
   // where wheels cannot hold a steep slope.
-  plan(s, x, z, { margin = 1.5, climb = 0.15, grade = 0.5, side = Math.min(margin, 1.5) } = {}) {
+  plan(s, x, z, { margin = 1.5, climb = 0.15, grade = 0.5, side = Math.min(margin, 1.5), span = 0 } = {}) {
     grade = Math.min(grade, 0.75 * s.challenge.surface.grip);
     const g = LIB.grid(s), start = g.cell(s.self.x, s.self.z);
     if (start < 0 || g.h[start] < 0) return { x, z, end: { x, z }, reachable: false, off: true, left: 0 };
@@ -141,6 +143,24 @@ export const LIB = {
         const p = g.pos(j), d = Math.hypot(x - p.x, z - p.z);
         if (d < bestD - 1e-6) { bestD = d; best = j; }
       }
+      // A machine that can span a gap may also go straight out to an edge, over a break no wider than its span,
+      // and on to the first safe square beyond, provided there is floor to either side of it both ends.
+      if (span > 0) for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const at = (k) => { const ax = cx + dx * k, az = cz + dz * k; return ax < 0 || az < 0 || ax >= g.nx || az >= g.nz ? -1 : az * g.nx + ax; };
+        const broad = (k) => { for (const w of [-3, 3]) { const ax = cx + dx * k + dz * w, az = cz + dz * k + dx * w; if (ax < 0 || az < 0 || ax >= g.nx || az >= g.nz || g.h[az * g.nx + ax] < 0) return false; } return true; };
+        const reach = Math.ceil((margin + 1) / g.C);
+        let k = 1, last = i;
+        while (k <= reach && at(k) >= 0 && g.h[at(k)] >= 0 && g.h[at(k)] - g.h[last] <= climb) { last = at(k); k++; }
+        if (k > reach || at(k) < 0 || !g.empty[at(k)] || !broad(k - 1)) continue;
+        let wide2 = 0; while (at(k) >= 0 && g.empty[at(k)]) { k++; wide2++; }
+        if (wide2 * g.C > span || at(k) < 0 || g.h[at(k)] < 0 || g.h[at(k)] - g.h[last] > climb || !broad(k)) continue;
+        let land = at(k), steps = 0; last = land;
+        while (g.edge[land] < margin && steps < reach && at(k + 1) >= 0 && g.h[at(k + 1)] >= 0 && g.h[at(k + 1)] - g.h[last] <= climb && g.edge[at(k + 1)] > g.edge[land]) { k++; steps++; land = at(k); last = land; }
+        if (from[land] !== -2) continue;
+        from[land] = i; queue.push(land);
+        const p = g.pos(land), d = Math.hypot(x - p.x, z - p.z);
+        if (d < bestD - 1e-6) { bestD = d; best = land; }
+      }
     }
     // A goal on the floor but inside the margin counts as reached from the nearest safe spot beside it.
     const reachable = bestD < 0.6 || (LIB.floorAt(s, x, z) && !LIB.inWall(s, x, z) && bestD <= margin + 0.8 && Math.abs(LIB.stepAt(s, x, z) - g.h[best]) <= climb), end = bestD < 0.6 ? { x, z } : g.pos(best);
@@ -151,7 +171,7 @@ export const LIB = {
     let way = end, left = 0;
     for (let k = 0; k < chain.length; k++) {
       const p = k === 0 ? end : g.pos(chain[k]);
-      if (LIB.clear(s, p.x, p.z, margin * 0.7, climb) && wide(p)) { way = p; break; }
+      if (LIB.clear(s, p.x, p.z, margin * 0.7, climb, span) && wide(p)) { way = p; break; }
       way = p;
     }
     for (let k = 1; k < chain.length; k++) { const a = g.pos(chain[k - 1]), b = g.pos(chain[k]); left += Math.hypot(a.x - b.x, a.z - b.z); }
@@ -165,19 +185,19 @@ export const LIB = {
   // Take a wanted drive (-1 to 1) and return one that will not take the machine off the floor: slowed when the
   // floor ahead is short, and reversed to brake when it is already going too fast to stop, or sliding sideways
   // toward a drop. "length" is how far the machine reaches ahead of its core, "top" its top speed.
-  guard(s, want, { grip = 1, length = 1.5, top = 4, climb = 0.15, mem = null, feed = true } = {}) {
+  guard(s, want, { grip = 1, length = 1.5, top = 4, climb = 0.15, mem = null, feed = true, span = 0 } = {}) {
     const me = s.self; let drive = want, braking = false;
     let decel = 0;
     decel = LIB.braking(s, { grip });
     const safe = (room) => Math.sqrt(2 * decel * Math.max(0, room));
     const dir = drive < 0 || (drive === 0 && me.forwardSpeed < 0) ? Math.PI : 0;
     // Only drops and walls are worth braking for. A step up is something to bump into, not fall off.
-    const roomAhead = LIB.runAhead(s, dir, 9, 0, 99) - length;
+    const roomAhead = LIB.runAhead(s, dir, 9, 0, 99, span) - length;
     const along = Math.abs(me.forwardSpeed), limit = safe(roomAhead);
     if (along > limit + 0.3 && (me.forwardSpeed > 0) === (dir === 0)) { drive = me.forwardSpeed > 0 ? -1 : 1; braking = true; }
     else if (Math.abs(drive) * top > limit) drive = Math.sign(drive) * Math.min(Math.abs(drive), limit / top);
     if (!braking && me.speed > 0.8) {
-      const roomSlide = LIB.run(s, me.x, me.z, me.vx, me.vz, 9, 0, 99) - length;
+      const roomSlide = LIB.run(s, me.x, me.z, me.vx, me.vz, 9, 0, 99, span) - length;
       if (me.speed > safe(roomSlide) + 0.3) { drive = me.forwardSpeed > 0 ? -1 : 1; braking = true; }
     }
     // Feed the power in: a tyre that spins or locks grips less, so never ask the wheels to turn much faster or
@@ -192,8 +212,8 @@ export const LIB = {
   // Drive to (x, z) and stay on the floor. Plans a way round gaps and walls, slows for corners and on arrival,
   // and brakes in time for an edge, allowing for how slippery the floor is and how long the machine is.
   // Returns { drive, turn, arrived, reachable, braking, left } where left is the distance still to go.
-  nav(s, x, z, { margin = 1.5, grade = 0.5, side, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null, feed = true } = {}) {
-    const me = s.self, p = LIB.plan(s, x, z, side === undefined ? { margin, climb, grade } : { margin, climb, grade, side });
+  nav(s, x, z, { margin = 1.5, grade = 0.5, side, span = 0, climb = 0.15, stopAt = 0.35, reverse = false, speed = 1, grip = 1, length = 1.5, top = 4, mem = null, feed = true } = {}) {
+    const me = s.self, p = LIB.plan(s, x, z, side === undefined ? { margin, climb, grade, span } : { margin, climb, grade, side, span });
     const w = LIB.to(s, p.x, p.z), endD = Math.hypot(p.end.x - me.x, p.end.z - me.z), last = Math.hypot(p.x - p.end.x, p.z - p.end.z) < 0.3;
     // Once arrived, stay arrived until well off the spot, so the machine does not fidget.
     const held = mem && mem._at && Math.hypot(mem._at.x - p.end.x, mem._at.z - p.end.z) < 0.5 && endD < stopAt * 3 + 0.3;
@@ -201,11 +221,11 @@ export const LIB = {
     if (mem) mem._at = c.arrived && last ? (held ? mem._at : { x: p.end.x, z: p.end.z }) : null;
     // Nose jammed against something: asked to move, not moving, not turning. Back off a little and come again.
     if (mem) {
-      if (s.t < (mem._back || 0)) { const g2 = LIB.guard(s, -0.6 * (mem._backDir || 1), { grip, length, top, climb, feed }); return { drive: g2.drive, turn: LIB.clamp(c.turn * 1.5), arrived: false, reachable: p.reachable, braking: false, backing: true, left: endD, end: p.end }; }
+      if (s.t < (mem._back || 0)) { const g2 = LIB.guard(s, -0.6 * (mem._backDir || 1), { grip, length, top, climb, feed, span }); return { drive: g2.drive, turn: LIB.clamp(c.turn * 1.5), arrived: false, reachable: p.reachable, braking: false, backing: true, left: endD, end: p.end }; }
       mem._jam = !c.arrived && Math.abs(c.drive) + Math.abs(c.turn) > 0.25 && me.speed < 0.12 && Math.abs(me.turnRate) < 0.08 && s.t > 1.5 ? (mem._jam || 0) + 1 : 0;
       if (mem._jam > 30) { mem._jam = 0; mem._back = s.t + 1.1; mem._backDir = c.drive >= 0 ? 1 : -1; }
     }
-    const gd = LIB.guard(s, c.drive, { grip, length, top, climb, mem, feed }), drive = gd.drive, braking = gd.braking;
+    const gd = LIB.guard(s, c.drive, { grip, length, top, climb, mem, feed, span }), drive = gd.drive, braking = gd.braking;
     // While the wheels are being fed in gently, steer gently too, so neither side is asked to stand still.
     if (feed && Math.abs(c.drive) > 0.6 && Math.abs(drive) < Math.abs(c.drive) && !braking) c.turn = LIB.clamp(c.turn, -0.5 * Math.abs(drive), 0.5 * Math.abs(drive));
     return { drive, turn: c.turn, arrived: c.arrived && last, reachable: p.reachable, braking, left: endD, end: p.end };

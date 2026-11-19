@@ -96,12 +96,13 @@ Each fight produces three layers of data: a summary, timestamped events (hits, p
 
 ## The machines
 
-Design round 1 for the knockout game on broken ground. Four walk on six spoked legs, which step onto ledges; one has wheels.
+Design rounds 1 and 2 for the knockout game on broken ground. Five walk on spoked legs, which step onto ledges; one has wheels. The flat walkers (Strider, Thresher, Centipede) work either way up: on their backs they turn the same hubs the other way and keep walking.
 
-- **Strider** (52 parts, 165 kg): light and quick, with a steel beak. Goes for machines that are stuck or near an edge.
+- **Strider** (52 parts, 249 kg): quick, with a steel beak. Goes for machines that are stuck or near an edge.
 - **Mantis** (58 parts): two steel hammers on 1.7 m arms that lie back along the body and come down in front of it. Squares up at striking distance and swings them in turn.
 - **Thresher** (54 parts): a steel bar spinning across its nose, turning upward at the front. Keeps its nose on the enemy and walks into it.
 - **Slinger** (68 parts): three throwing arms. Works out the swing for the range, the gravity and the difference in height, leads a moving target, and clubs with the arms once the shot is gone.
+- **Centipede** (80 parts, 407 kg): ten legs on a frame nearly five metres long, with a ram at each end. It walks straight across gaps up to about 1.9 m, which stop every other machine here. The planner and the edge guard take a `span` so a program can say how wide a gap its machine can cross.
 - **Rover** (14 parts, 423 kg): the wheeled machine, with six of the biggest tyres the kit allows, a high frame and a steel ram. Fast on the flat. On crags and terraces it usually reports that there is no way its wheels can take.
 
 All of them share one idea of where to go: a machine near a drop is easier to put over it than to break, so get inboard of it and drive it out; otherwise close with it.

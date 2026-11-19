@@ -318,10 +318,11 @@ for (const [id, def] of [['botA', 2], ['botB', 0]]) {
 }
 // Curated fights, each picked to show one idea. Choosing a machine, challenge or seed by hand leaves the showcase.
 const SHOWS = [
-  { label: 'Hammers', a: 'Mantis', b: 'Strider', ch: 'Rubble', seed: 1, watch: 'Mantis walks up, squares on, and brings two steel hammers down in turn. A machine loses when more than half of it has been broken off its core.' },
+  { label: 'Hammers', a: 'Mantis', b: 'Strider', ch: 'Rubble', seed: 1, watch: 'Mantis walks up, squares on, and brings two steel hammers down in turn. Strider is flat and works either way up, so being tipped over does not stop it. A machine loses when more than half of it has been broken off its core.' },
   { label: 'The bar', a: 'Thresher', b: 'Slinger', ch: 'Terraces', seed: 1, watch: 'Thresher carries a steel bar spinning across its nose, turning upward at the front. Slinger wants to stay at range and throw. On terraced rock neither gets the fight it wants.' },
   { label: 'Ranging shots', a: 'Slinger', b: 'Strider', ch: 'Terraces', seed: 1, watch: 'Slinger works out the swing for the range, the gravity and the difference in height, and aims where the target will be when the ball lands.' },
   { label: 'Wheels on crags', a: 'Strider', b: 'Rover', ch: 'Crags', seed: 1, watch: 'Rover has the biggest tyres the kit allows and is the fastest machine here on a flat floor. Watch what the ledges do to it, and read its label: it says when it can find no way its wheels can take.' },
+  { label: 'Across the gap', a: 'Centipede', b: 'Rover', ch: 'Narrow gap', seed: 1, watch: 'A 1.5 m gap separates the two machines, and neither wheels nor six legs can cross it. Centipede is long enough to walk straight over: some of its ten legs are always on the ground on one side or the other.' },
   { label: 'Wheels on the flat', a: 'Rover', b: 'Mantis', ch: 'Open floor', seed: 1, watch: 'The same wheeled machine on flat ground, where it can ram at speed and push a walker toward the edge.' },
   { label: 'Walker against walker', a: 'Mantis', b: 'Thresher', ch: 'Crags', seed: 1, watch: 'Two walkers with different weapons on craggy rock. Each plans a route it can climb and stops short of drops.' },
   { label: 'Low gravity', a: 'Slinger', b: 'Thresher', ch: 'Low gravity crags', seed: 1, watch: 'A third of normal gravity. Throws carry three times as far, steps take longer to land, and a hit sends things a long way.' },

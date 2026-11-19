@@ -239,3 +239,12 @@ test('air slows a light thrown ball and barely touches a heavy one', () => {
   assert.ok(light < vacuum * 0.88 && light > vacuum * 0.6, `plastic ball went ${light.toFixed(1)} m of ${vacuum.toFixed(1)}`);
   assert.ok(heavy > vacuum * 0.93, `steel ball went ${heavy.toFixed(1)} m of ${vacuum.toFixed(1)}`);
 });
+
+test('the long walker crosses a gap that stops the others, and refuses one that is too wide', () => {
+  const find = (want) => { for (let n = 300; n < 400; n++) { const ch = drawChallenge(n, { layout: 'gap', ground: 'flat', surface: 'normal', gravity: 'normal' }); const g = Number(ch.brief.match(/([\d.]+) m gap/)[1]); if (Math.abs(g - want) < 0.15) return ch; } };
+  const cross = (name, ch) => { const r = byName(name), m = createMatch({ builds: [r.build, BRICK], programs: [r.program, idle], challenge: ch }); while (!m.done && m.t < 25) m.step(); return { z: m.bots[0].core.body.position.z, lost: m.bots[0].parts.filter((p) => !p.live).length, out: m.result && m.result.reason === 'ring_out' }; };
+  const narrow = find(1.6), wide = find(2.8);
+  const a = cross('Centipede', narrow); assert.ok(a.z > 2 && a.lost === 0, `Centipede ended at z=${a.z.toFixed(1)} having lost ${a.lost} parts`);
+  const b = cross('Strider', narrow); assert.ok(b.z < 0 && !b.out, `Strider ended at z=${b.z.toFixed(1)}`);
+  const c = cross('Centipede', wide); assert.ok(c.z < 0 && !c.out, `Centipede tried a 2.8 m gap and ended at z=${c.z.toFixed(1)}`);
+});
