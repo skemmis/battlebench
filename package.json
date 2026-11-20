@@ -10,12 +10,14 @@
     "sweep": "node scripts/sweep.mjs",
     "tournament": "node scripts/tournament.mjs",
     "gauntlet": "node scripts/gauntlet.mjs",
-    "quick": "node scripts/quick.mjs"
+    "quick": "node scripts/quick.mjs",
+    "round": "node scripts/round.mjs"
   },
   "dependencies": {
     "cannon-es": "0.20.0"
   },
   "devDependencies": {
-    "three": "0.160.0"
+    "three": "0.160.0",
+    "@anthropic-ai/sdk": "*"
   }
 }
