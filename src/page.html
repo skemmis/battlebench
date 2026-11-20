@@ -1,0 +1,149 @@
+<title>BattleBotBench</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: a workbench. The arena is the bench top on the left; the clipboard (log, builds, settings) hangs on the right. */
+:root {
+  --bg: #e9ecf1; --surface: #f7f8fa; --raised: #ffffff; --ink: #18202c; --muted: #5b6676; --line: #cfd5de;
+  --team-a: #d9530b; --team-b: #1763c6; --warn: #b4290f; --stage: #dfe4ec; --floor: #aeb7c4; --grass: #7fa35a; --hill: #b5c27a; --rock: #8a8172; --sand: #cdbb8a; --water: #2f7fc4; --contour: #4a6040; --grid: #8d98a8; --pit: #c9d0db;
+  --display: 'Space Grotesk', 'Avenir Next', system-ui, sans-serif;
+  --body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12161d; --surface: #1a2029; --raised: #222a35; --ink: #e8ecf2; --muted: #98a3b3; --line: #323c4a;
+  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --grass: #4f7240; --hill: #869a58; --rock: #6f685c; --sand: #94875f; --water: #3b8bd0; --contour: #b4cc9c; --grid: #566273; --pit: #07090c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #12161d; --surface: #1a2029; --raised: #222a35; --ink: #e8ecf2; --muted: #98a3b3; --line: #323c4a;
+  --team-a: #ff8a3d; --team-b: #5aa5ff; --warn: #ff7a5c; --stage: #0c0f14; --floor: #3a4452; --grass: #4f7240; --hill: #869a58; --rock: #6f685c; --sand: #94875f; --water: #3b8bd0; --contour: #b4cc9c; --grid: #566273; --pit: #07090c; color-scheme: dark }
+* { box-sizing: border-box }
+[hidden] { display: none !important }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.5 }
+.wrap { max-width: 1320px; margin: 0 auto; padding-block: 20px 32px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 16px }
+.says { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; font-size: 13px }
+.says div { padding: 6px 10px; border-left: 3px solid var(--muted); background: var(--panel, transparent); min-height: 2.6em }
+.says div.a { border-color: var(--team-a) } .says div.b { border-color: var(--team-b) }
+.says b { display: block; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted) }
+li.intent span { color: var(--muted); font-style: italic }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px }
+h1 { font-family: var(--display); font-size: 26px; font-weight: 700; letter-spacing: -0.01em; margin: 0 }
+.shows { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin: 4px 0 6px }
+.shows .lbl { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted) }
+.shows #shows { display: flex; gap: 6px; flex-wrap: wrap }
+.shows button { font-size: 13px; padding: 3px 10px }
+.shows button[aria-pressed="true"] { border-color: var(--accent, currentColor); font-weight: 600 }
+.watch { margin: 0 0 10px; font-size: 14px; color: var(--muted); max-width: 90ch; min-height: 1.4em }
+.tag { font-family: var(--mono); font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px }
+.versus { margin-left: auto; font-family: var(--display); font-weight: 500; font-size: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap }
+.dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; margin-right: 6px }
+.a { color: var(--team-a) } .b { color: var(--team-b) } .dot.a { background: var(--team-a) } .dot.b { background: var(--team-b) }
+main { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 16px; align-items: start }
+@media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr) } .versus { margin-left: 0 } }
+.stage { position: relative; background: var(--stage); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; aspect-ratio: 16 / 10; max-width: 100% }
+.stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab }
+.hud { position: absolute; left: 12px; right: 12px; top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; pointer-events: none; font-size: 12px }
+.hud div { min-width: 0 } .hud b { font-family: var(--display); font-weight: 600; font-size: 14px } .hud span { float: right; color: var(--ink); font-family: var(--mono) }
+.hud .bar { clear: both; position: relative; height: 8px; margin-top: 3px; background: color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 2px }
+.hud .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: currentColor; border-radius: 2px }
+.hud .bar u { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 2px; background: var(--ink) }
+.hud small { color: var(--muted) }
+.caption { position: absolute; left: 12px; right: 12px; bottom: 30px; text-align: center; pointer-events: none; font-family: var(--display); font-weight: 500; font-size: 15px; text-shadow: 0 1px 0 var(--stage), 0 -1px 0 var(--stage) }
+.verdict { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); width: min(460px, calc(100% - 32px)); box-sizing: border-box; padding: 14px 18px; background: color-mix(in srgb, var(--stage) 90%, transparent); border: 1px solid var(--line); border-radius: 6px; pointer-events: none }
+.verdict h3 { margin: 0 0 4px; font-family: var(--display); font-size: 20px } .verdict p { margin: 0 0 8px } .verdict ul { margin: 0; padding-left: 18px; font-size: 13px } .verdict li { margin: 2px 0 } .verdict time { font-family: var(--mono); color: var(--muted); margin-right: 6px }
+.busy { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: var(--stage); text-align: center; padding: 16px }
+.busy[hidden], .verdict[hidden] { display: none }
+.busy b { font-family: var(--display); font-size: 20px } .busy span { color: var(--muted); font-size: 13px }
+.busy .bar { width: min(320px, 80%); height: 8px; background: color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 2px; overflow: hidden } .busy .bar i { display: block; height: 100%; background: var(--ink) }
+.hint { position: absolute; right: 10px; bottom: 8px; font-size: 11px; color: var(--muted); pointer-events: none }
+.transport { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px }
+.track { position: relative; flex: 1 1 220px; min-width: 0; height: 28px; display: flex; align-items: center }
+.track input { width: 100%; margin: 0; accent-color: var(--ink) }
+.ticks { position: absolute; left: 8px; right: 8px; top: 0; height: 6px; pointer-events: none }
+.ticks i { position: absolute; top: 0; width: 2px; height: 6px; background: var(--muted); opacity: .55 }
+.ticks i.lost { background: var(--warn); opacity: 1; height: 8px }
+button, select, input[type="number"] { font: inherit; color: var(--ink); background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 5px 10px }
+button { cursor: pointer; font-weight: 500 } button:hover { border-color: var(--muted) }
+button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink) }
+:focus-visible { outline: 2px solid var(--team-b); outline-offset: 2px }
+input[type="number"] { width: 5.5em }
+.clock { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; min-width: 9ch }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; min-width: 0; display: flex; flex-direction: column }
+.tabs { display: flex; border-bottom: 1px solid var(--line) }
+.tabs button { border: 0; background: none; border-radius: 0; padding: 10px 14px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink) }
+.pane { padding: 14px; display: flex; flex-direction: column; gap: 14px; max-height: 640px; overflow-y: auto; min-width: 0 }
+h2 { font-family: var(--display); font-size: 13px; font-weight: 500; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 }
+.result { font-family: var(--display); font-size: 17px; font-weight: 500; text-wrap: balance; margin: 0 }
+.cond { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px }
+.cond div { border-left: 3px solid var(--line); padding-left: 10px; min-width: 0 } .cond .a { border-color: var(--team-a) } .cond .b { border-color: var(--team-b) }
+.cond b { font-family: var(--display); font-weight: 500; display: block } .cond span { color: var(--ink); font-size: 13px; display: block }
+.events { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column }
+.events li { display: grid; grid-template-columns: 5ch minmax(0, 1fr); gap: 10px; padding: 5px 6px; border-radius: 4px; cursor: pointer; font-size: 13px; color: var(--ink) }
+.events li:hover { background: var(--raised) } .events li.now { background: var(--raised); box-shadow: inset 2px 0 0 var(--ink) }
+.events time { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); text-align: right }
+.events li.part_lost { font-weight: 600 } .events li.end { font-weight: 600 }
+.events .who { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; background: var(--line) }
+.events .who.a { background: var(--team-a) } .events .who.b { background: var(--team-b) }
+pre { font-family: var(--mono); font-size: 12px; line-height: 1.45; background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 10px; margin: 0; overflow-x: auto; max-height: 320px; color: var(--ink) }
+details summary { cursor: pointer; font-weight: 500 } details[open] summary { margin-bottom: 8px }
+.bot h3 { font-family: var(--display); font-size: 17px; margin: 0 0 2px } .bot p { margin: 0 0 8px; color: var(--muted) }
+.bot { display: flex; flex-direction: column; gap: 8px; min-width: 0 }
+.meter { display: flex; gap: 16px; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums }
+.ok { color: var(--muted) } .bad { color: var(--warn) }
+.knob { display: grid; grid-template-columns: minmax(0, 1fr) 6ch; gap: 2px 10px; align-items: center }
+.knob label { grid-column: 1 / -1; font-weight: 500 } .knob small { grid-column: 1 / -1; color: var(--muted) }
+.knob input { width: 100%; accent-color: var(--ink) } .knob output { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right }
+.note { color: var(--muted); font-size: 13px; margin: 0 }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center }
+</style>
+<div class="wrap">
+  <header>
+    <h1>BattleBotBench</h1><span class="tag" id="version">prototype</span>
+    <div class="versus"><span><i class="dot a"></i><select id="botA" aria-label="First bot"></select></span><span style="color:var(--muted)">against</span><span><i class="dot b"></i><select id="botB" aria-label="Second bot"></select></span><span style="color:var(--muted)">in</span><span><select id="challenge" aria-label="Challenge"></select></span></div>
+  </header>
+  <nav class="shows" aria-label="Showcase fights"><span class="lbl">Showcase</span><span id="shows"></span></nav>
+  <p class="watch" id="watch"></p>
+  <main>
+    <section>
+      <div class="stage"><canvas id="view" aria-label="3D replay of the fight"></canvas><div class="hud" id="hud"></div><div class="caption" id="caption"></div><div class="verdict" id="verdict" hidden></div><div class="busy" id="busy" hidden></div><div class="hint">Drag to orbit, scroll to zoom</div></div>
+      <div class="says" id="says" aria-live="off"></div>
+      <div class="transport">
+        <button id="play" class="primary">Pause</button>
+        <div class="track"><div class="ticks" id="ticks"></div><input id="scrub" type="range" min="0" max="1" step="0.001" value="0" aria-label="Fight time"></div>
+        <span class="clock" id="clock">0.0 / 0.0 s</span>
+        <select id="speed" aria-label="Playback speed"><option value="0.25">0.25x</option><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select>
+        <label class="row">Seed <input id="seed" type="number" min="1" step="1" value="1"></label>
+        <button id="next">Next fight</button>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-tab="log">Fight log</button>
+        <button role="tab" aria-selected="false" data-tab="bots">Bots</button>
+        <button role="tab" aria-selected="false" data-tab="settings">Settings</button>
+      </div>
+      <div class="pane" id="tab-log">
+        <p class="note" id="brief"></p>
+        <p class="result" id="result">Simulating the fight.</p>
+        <div class="cond" id="cond"></div>
+        <h2>What happened</h2>
+        <ol class="events" id="events"></ol>
+        <details><summary>The same fight as data, the way a model would receive it</summary>
+          <p class="note">Three layers: a summary, timestamped events, and a motion track sampled 5 times a second. The log says what happened and leaves the why to the model.</p>
+          <div class="row" style="margin:8px 0"><button id="copy">Copy JSON</button><span class="note" id="copied"></span></div>
+          <pre id="json"></pre></details>
+      </div>
+      <div class="pane" id="tab-bots" hidden></div>
+      <div class="pane" id="tab-settings" hidden>
+        <p class="note">Change a value and rerun the same seed to see what it does. These four are the ones we expect to tune most; the full list is below.</p>
+        <div class="knob"><label for="k-break">Joint strength</label><input id="k-break" type="range" min="0.3" max="3" step="0.1" value="1"><output id="o-break">1.0x</output><small>Lower means parts come off more easily.</small></div>
+        <div class="knob"><label for="k-grav">Gravity</label><input id="k-grav" type="range" min="2" max="20" step="0.5" value="9.81"><output id="o-grav">9.8</output><small>Metres per second squared. Earth is 9.8.</small></div>
+        <div class="knob"><label for="k-grip">Floor grip</label><input id="k-grip" type="range" min="0.1" max="1.6" step="0.05" value="1"><output id="o-grip">1.00</output><small>How well wheels hold the floor. Low values feel like ice.</small></div>
+        <div class="knob"><label for="k-power">Weapon power</label><input id="k-power" type="range" min="0.5" max="3" step="0.1" value="1"><output id="o-power">1.0x</output><small>Speed and torque of motor joints (not wheels or pistons).</small></div>
+        <div class="row"><button id="rerun" class="primary">Rerun this seed</button><button id="reset">Reset</button></div>
+        <h2>All settings</h2>
+        <pre id="config"></pre>
+      </div>
+    </section>
+  </main>
+</div>

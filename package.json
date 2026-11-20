@@ -1,0 +1,22 @@
+{
+  "name": "battlebotbench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A 3D arena where AI models build battle bots from parts and fight. First prototype.",
+  "scripts": {
+    "test": "node --test",
+    "build": "node scripts/build.mjs",
+    "sweep": "node scripts/sweep.mjs",
+    "tournament": "node scripts/tournament.mjs",
+    "gauntlet": "node scripts/gauntlet.mjs",
+    "agility": "node scripts/agility.mjs",
+    "quick": "node scripts/quick.mjs"
+  },
+  "dependencies": {
+    "cannon-es": "0.20.0"
+  },
+  "devDependencies": {
+    "three": "0.160.0"
+  }
+}
