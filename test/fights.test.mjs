@@ -148,7 +148,7 @@ test('the route planner goes round a gap when it can and says so when it cannot'
 
 test('the only ways to win are to break the enemy apart or put it off the floor; otherwise damage decides', () => {
   // A machine that sheds over half its mass has lost.
-  const weak = structuredClone(CONFIG); weak.breakage.scale = 0.004;
+  const weak = structuredClone(CONFIG); weak.breakage.scale = 0.004; weak.breakage.minSpeed = 0;
   const a = createMatch({ builds: [ROVER, BRICK], programs: [byName('Rover').program, idle], config: weak }).run();
   assert.equal(a.result.reason, 'destroyed'); assert.equal(a.result.winner, 1);
   // A core that goes off the floor has lost.
@@ -194,7 +194,7 @@ test('machines stop for edges: across a gap on ice in low gravity nobody walks o
 
 test('broken-off wheels come to rest instead of rolling away', () => {
   // Joints made so weak that the machine sheds its wheels as soon as it drives.
-  const config = structuredClone(CONFIG); config.breakage.scale = 0.004; config.match.stalemateSeconds = 99; config.match.wreckShare = 2;
+  const config = structuredClone(CONFIG); config.breakage.scale = 0.004; config.breakage.minSpeed = 0; config.match.stalemateSeconds = 99; config.match.wreckShare = 2;
   const m = createMatch({ builds: [byName('Rover').build, BRICK], programs: [(st, out) => { if (st.t < 4) for (const id of ['wl_0', 'wl_1', 'wl_2', 'wr_0', 'wr_1', 'wr_2']) out[id] = 0.6; }, idle], config });
   // It drives for four seconds, shedding pieces, then cuts its power. Ten seconds later nothing should be moving.
   while (!m.done && m.t < 14) m.step();
