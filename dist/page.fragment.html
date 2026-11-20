@@ -1864,7 +1864,7 @@ const ROVER = {
     plate('deck', [1.4, 0.06, 2.2], [0, 0.14, 0], 'spine'),
     beam('horn', [0.2, 0.2, 0.8], [0, 0.0, 1.6], 'spine', 'steel'),
     // The ram is on a piston: in contact, it shoves the enemy a further half metre, which is often the edge.
-    { id: 'ram', type: 'wedge', material: 'steel', size: [1.8, 0.45, 0.5], pos: [0, -0.08, 2.2], parent: 'horn', joint: { type: 'piston', axis: [0, 0, 1], stroke: 0.6, gear: 2 } },
+    { id: 'ram', type: 'wedge', material: 'steel', size: [1.8, 0.4, 0.5], pos: [0, -0.05, 2.2], parent: 'horn', joint: { type: 'piston', axis: [0, 0, 1], stroke: 0.6, gear: 2 } },
   ],
 };
 function roverProgram(s, out, mem, lib) {
