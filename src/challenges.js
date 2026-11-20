@@ -35,7 +35,7 @@ export const OPEN = {
 };
 
 const LAYOUTS = {
-  open: (r) => { const s = 22 + Math.round(r() * 6); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 4.5, reach: s / 2 - 5 }; },
+  open: (r) => { const s = 24 + Math.round(r() * 4); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 4.5, reach: s / 2 - 5 }; },
   small: (r) => { const s = 14 + Math.round(r() * 4); return { text: `a small ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 3.5, reach: s / 2 - 3.5 }; },
   bridge: (r) => {
     const w = chRound(4.5 + r() * 2.5), len = chRound(6 + r() * 4), isl = 12;
@@ -148,7 +148,7 @@ function drawLand(L, K, r, spawnZ) {
   // High ground.
   const hills = [], high = chRound(1.2 + r() * 0.5);
   if (K.hills === 'twin') { const hx = half * (0.4 + r() * 0.2), hz = half * (0.36 + r() * 0.12), R = Math.min(2.6 + r() * 0.8, half * 0.22), a = Math.atan2(-hx, hz - spawnZ) + (r() - 0.5) * 0.5; /* the ramp faces the hill's own end of the map */ hills.push({ x: hx, z: -hz, R, ramps: [a] }, { x: -hx, z: hz, R, ramps: [a + Math.PI] }); }
-  if (K.hills === 'middle') { const a = r() * Math.PI; hills.push({ x: 0, z: 0, R: Math.min(5, half * 0.3), ramps: [a, a + Math.PI] }); }
+  if (K.hills === 'middle') { const a = r() * Math.PI; hills.push({ x: 0, z: 0, R: Math.max(1.8, Math.min(4.5, spawnZ - 5.4)), ramps: [a, a + Math.PI] }); }
   // The river runs across the map between the two starting places, and winds.
   const wide = chRound(2.5 + r() * 1.5), deep = chRound(0.45 + r() * 0.2), amp = 1 + r() * 1.5, wave = (Math.PI * (1 + Math.floor(r() * 2))) / half, fordX = half * (0.3 + r() * 0.35), level = BASE - 0.2;
   const heights = new Float32Array(nx * nz);

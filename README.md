@@ -82,7 +82,7 @@ Two machines of the same weight and grip pushing head on is a deadlock, and it s
 A challenge is plain data (`src/challenges.js`), and a program receives it whole as `s.challenge`, with the same conditions in words as `s.challenge.brief`. `drawChallenge(n)` draws round `n` from the family:
 
 - **Arena**: an open square, a small square, two platforms joined by a bridge, two platforms with a gap between them, a square with solid pillars, or three islands in a row.
-- **Ground**: on a single platform 22 to 28 m across, land like a game map, as a grid of heights in `s.challenge.terrain` (and `s.challenge.water` where there is a river). It rolls gently and is walkable everywhere except where it is meant not to be. *Valley*: a winding river across the middle, about half a metre deep except at two fords, and a flat-topped hill on each side with steep sides and one ramp. *High ground*: one hill in the middle with two ramps. *Riverlands*: the river alone. *Downs*: open rises and hollows. Every map is the same from either end. Split arenas (bridge, gap, islands, pillars) are flat or rubble. The stepped rock of v0.6 (crags, terraces) is still in the generator for rounds that ask for it, but is no longer drawn.
+- **Ground**: on a single platform 24 to 28 m across, land like a game map, as a grid of heights in `s.challenge.terrain` (and `s.challenge.water` where there is a river). It rolls gently and is walkable everywhere except where it is meant not to be. *Valley*: a winding river across the middle, about half a metre deep except at two fords, and a flat-topped hill on each side with steep sides and one ramp. *High ground*: one hill in the middle with two ramps. *Riverlands*: the river alone. *Downs*: open rises and hollows. Every map is the same from either end. Split arenas (bridge, gap, islands, pillars) are flat or rubble. The stepped rock of v0.6 (crags, terraces) is still in the generator for rounds that ask for it, but is no longer drawn.
 - **Surface**: normal, ice, or sticky.
 - **Gravity**: normal, a third, or half again as strong.
 
@@ -121,7 +121,9 @@ The rest weigh 250 to 420 kg:
 On maps this size two machines spend about 85% of a fight within 3.5 m of each other, usually locked together with legs in legs, where a weapon built for arm's length does nothing. Two machines are built around that:
 
 - **Bramble** (52 parts, 378 kg): a flat rotor at each end and an upright saw bar outboard of the legs on each flank. It has no safe side to lock onto and does not try to get free: it leans the nearest weapon in.
-- **Warden** (59 parts, 532 kg): Mantis with steel fenders ahead of the front legs, so an enemy meets a bar and not the spokes, and a piston fist in the nose that punches it back out to where the clubs land.
+- **Warden** (58 parts, 585 kg): fights at arm's length and keeps it that way. Two tall steel shields stand ahead of its front legs, high enough and thick enough to stop a rotor; a piston fist in the nose punches an enemy back out; two long clubs come down over the shields onto whatever is held there.
+
+The three kinds check each other. Blows from above beat Bramble, whose weapons are all at leg height: Mantis broke it apart. Shields and a fist beat Mantis. Bramble beats most things that close with it.
 
 Mantis and Scorpion also keep striking when something is inside their reach, where before they tried to step back. `npm run quick` reports the seconds spent at close quarters and how often something broke there.
 
@@ -149,9 +151,9 @@ The allowance for one machine is 1200 kg, 300 parts and a box 8 x 5 x 9 m.
 
 ## Known rough edges
 
-- In a 20-fight spot check, 6 fights ended in a knockout, 11 were decided on damage and 3 were draws. Something broke every 7.4 s at close quarters, against every 11.5 s before the close-quarters changes.
-- Bramble won all four of its fights and lost almost nothing. It may simply be too good; nothing here has an answer to it yet.
-- Warden's fist and fenders work as built, but it lost to plain Mantis and to Bramble. Keeping the enemy out is not yet worth the weight.
+- In the last 20-fight spot check, 5 fights ended in a knockout, 11 were decided on damage and 4 were draws. Most fights still go to the clock.
+- The spot checks are small. Which machine beats which is from a handful of fights each, and browser and Node can disagree.
+- Large machines need room: on the smallest maps a ring-out can come from a tumble near the start.
 - Rivers stand still. A current that carries floating machines toward the edge is an obvious next step.
 - Hills are grids of heights one metre apart, so cliffs are steep slopes and not sheer walls. A walker can sometimes scramble up one.
 - Where there is a gap with no way across, only a thrower or a long machine can do anything.

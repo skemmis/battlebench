@@ -397,7 +397,10 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const y = (def.pos ? def.pos[1] : 0) - (def.rot ? Math.max(...specs[k].half) : specs[k].half[1]);
       lowest = Math.min(lowest, y);
     });
-    let ground = 0; for (let ax = -2.5; ax <= 2.5; ax += 0.5) for (let az = -2.5; az <= 2.5; az += 0.5) ground = Math.max(ground, floorHeight(geo, sp.x + ax, sp.z + az));   // clear of any ledge under the machine
+    // Start clear of the highest ground under the machine, measured over its own length and width.
+    let rx = 2.5, rz = 2.5;
+    build.parts.forEach((def, k) => { const r = Math.max(...specs[k].half), px = def.pos ? def.pos[0] : 0, pz = def.pos ? def.pos[2] : 0; rx = Math.max(rx, Math.abs(px) + r); rz = Math.max(rz, Math.abs(pz) + r); });
+    let ground = 0; for (let ax = -rx; ax <= rx; ax += 0.5) for (let az = -rz; az <= rz; az += 0.5) { const c = Math.cos(sp.yaw), sn = Math.sin(sp.yaw); ground = Math.max(ground, floorHeight(geo, sp.x + ax * c + az * sn, sp.z - ax * sn + az * c)); }
     const origin = new CANNON.Vec3(sp.x, -lowest + 0.02 + ground, sp.z);
     build.parts.forEach((def, k) => {
       const spec = specs[k];

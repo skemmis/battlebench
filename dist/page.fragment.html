@@ -176,7 +176,7 @@ const OPEN = {
 };
 
 const LAYOUTS = {
-  open: (r) => { const s = 22 + Math.round(r() * 6); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 4.5, reach: s / 2 - 5 }; },
+  open: (r) => { const s = 24 + Math.round(r() * 4); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 4.5, reach: s / 2 - 5 }; },
   small: (r) => { const s = 14 + Math.round(r() * 4); return { text: `a small ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 3.5, reach: s / 2 - 3.5 }; },
   bridge: (r) => {
     const w = chRound(4.5 + r() * 2.5), len = chRound(6 + r() * 4), isl = 12;
@@ -289,7 +289,7 @@ function drawLand(L, K, r, spawnZ) {
   // High ground.
   const hills = [], high = chRound(1.2 + r() * 0.5);
   if (K.hills === 'twin') { const hx = half * (0.4 + r() * 0.2), hz = half * (0.36 + r() * 0.12), R = Math.min(2.6 + r() * 0.8, half * 0.22), a = Math.atan2(-hx, hz - spawnZ) + (r() - 0.5) * 0.5; /* the ramp faces the hill's own end of the map */ hills.push({ x: hx, z: -hz, R, ramps: [a] }, { x: -hx, z: hz, R, ramps: [a + Math.PI] }); }
-  if (K.hills === 'middle') { const a = r() * Math.PI; hills.push({ x: 0, z: 0, R: Math.min(5, half * 0.3), ramps: [a, a + Math.PI] }); }
+  if (K.hills === 'middle') { const a = r() * Math.PI; hills.push({ x: 0, z: 0, R: Math.max(1.8, Math.min(4.5, spawnZ - 5.4)), ramps: [a, a + Math.PI] }); }
   // The river runs across the map between the two starting places, and winds.
   const wide = chRound(2.5 + r() * 1.5), deep = chRound(0.45 + r() * 0.2), amp = 1 + r() * 1.5, wave = (Math.PI * (1 + Math.floor(r() * 2))) / half, fordX = half * (0.3 + r() * 0.35), level = BASE - 0.2;
   const heights = new Float32Array(nx * nz);
@@ -1049,7 +1049,10 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       const y = (def.pos ? def.pos[1] : 0) - (def.rot ? Math.max(...specs[k].half) : specs[k].half[1]);
       lowest = Math.min(lowest, y);
     });
-    let ground = 0; for (let ax = -2.5; ax <= 2.5; ax += 0.5) for (let az = -2.5; az <= 2.5; az += 0.5) ground = Math.max(ground, floorHeight(geo, sp.x + ax, sp.z + az));   // clear of any ledge under the machine
+    // Start clear of the highest ground under the machine, measured over its own length and width.
+    let rx = 2.5, rz = 2.5;
+    build.parts.forEach((def, k) => { const r = Math.max(...specs[k].half), px = def.pos ? def.pos[0] : 0, pz = def.pos ? def.pos[2] : 0; rx = Math.max(rx, Math.abs(px) + r); rz = Math.max(rz, Math.abs(pz) + r); });
+    let ground = 0; for (let ax = -rx; ax <= rx; ax += 0.5) for (let az = -rz; az <= rz; az += 0.5) { const c = Math.cos(sp.yaw), sn = Math.sin(sp.yaw); ground = Math.max(ground, floorHeight(geo, sp.x + ax * c + az * sn, sp.z - ax * sn + az * c)); }
     const origin = new CANNON.Vec3(sp.x, -lowest + 0.02 + ground, sp.z);
     build.parts.forEach((def, k) => {
       const spec = specs[k];
@@ -2021,24 +2024,25 @@ function brambleProgram(s, out, mem, lib) {
 }
 
 // ── Warden ─────────────────────────────────────────────────────────────────
-// The other answer to the tangle: do not let it happen. Warden is Mantis with a steel fender ahead of each front
-// leg, so an enemy meets a bar and not the spokes, and a piston fist in its nose. When something gets inside the
-// clubs' reach the fist punches it back out to where they land.
+// The other answer to the tangle: do not let it happen. Warden carries a tall steel shield ahead of each front
+// leg, so an enemy (or its rotor) meets a plate and not the spokes, and a piston fist in its nose. When something
+// gets inside the clubs' reach the fist punches it back out to where they land.
+const longClub = (i, x) => ({ id: 'club_' + i, type: 'beam', material: 'steel', size: [0.16, 0.16, 2.2], pos: [x, 0.66, 0.05], parent: 'yoke', joint: { type: 'motor', axis: [1, 0, 0], pivot: [x, 0.66, 1.1], gear: 5, power: 1, limits: [-6, 215] } });
 const WARDEN = {
   name: 'Warden',
-  note: 'Mantis with two additions against tangling: steel fenders ahead of the front legs, so nothing gets in among the spokes, and a piston fist in the nose that punches an enemy back out to where the two clubs come down.',
+  note: 'A walker that fights at arm\'s length and keeps it that way. Two tall steel shields stand ahead of its front legs, high enough to stop a rotor; a piston fist in the nose punches an enemy back out; and two long clubs come down over the shields onto whatever is held there.',
   parts: [
-    ...hexFrame({ frame: 'steel' }),
+    ...hexFrame({ frame: 'steel', power: 1 }),
     beam('mast', [0.22, 0.66, 0.22], [0, 0.36, 1.1], 'spine', 'steel'),
     beam('stay', [0.08, 0.85, 0.08], [0, 0.32, 0.76], 'mast', 'steel', { rot: [-50, 0, 0] }),
     beam('yoke', [0.9, 0.2, 0.2], [0, 0.66, 1.1], 'mast', 'steel'),
-    ...hammer(0, 0.3), ...hammer(1, -0.3),
-    block('keel', [0.3, 0.2, 0.6], [0, -0.18, -0.4], 'spine', 'steel'),
+    longClub(0, 0.3), longClub(1, -0.3),
     beam('bow', [1.5, 0.2, 0.2], [0, 0, 1.3], 'spine', 'steel'),
     beam('strut_l', [0.2, 0.2, 0.9], [0.65, 0, 1.75], 'bow', 'steel'),
     beam('strut_r', [0.2, 0.2, 0.9], [-0.65, 0, 1.75], 'bow', 'steel'),
-    beam('fender_l', [0.95, 0.2, 0.2], [0.98, 0, 2.1], 'strut_l', 'steel'),
-    beam('fender_r', [0.95, 0.2, 0.2], [-0.98, 0, 2.1], 'strut_r', 'steel'),
+    // The shields stand from below the hubs to above a rotor's height, and are thick enough to take one.
+    plate('shield_l', [0.95, 0.15, 0.5], [0.98, 0.1, 2.15], 'strut_l', 'steel', { rot: [90, 0, 0] }),
+    plate('shield_r', [0.95, 0.15, 0.5], [-0.98, 0.1, 2.15], 'strut_r', 'steel', { rot: [90, 0, 0] }),
     { id: 'fist', type: 'block', material: 'steel', size: [0.4, 0.3, 0.3], pos: [0, -0.02, 1.85], parent: 'bow', joint: { type: 'piston', axis: [0, 0, 1], stroke: 0.6, gear: 1 } },
   ],
 };
@@ -2058,8 +2062,8 @@ function wardenProgram(s, out, mem, lib) {
   for (const i of arms) if (mem.swing !== i) hold(i, REST);
   const front = Math.abs(foe.bearing) < 0.5;
   // Inside the clubs' reach: punch it back out. The fist needs a couple of seconds to recharge between punches.
-  if (fist && foe.distance < 2.5 && front && fist.charge > 0.95 && fist.extension < 0.05) mem.punch = s.t + 0.3;
-  const inReach = foe.distance < 3.5 && Math.abs(foe.bearing) < (foe.distance < 2 ? 0.6 : 0.3);
+  if (fist && foe.distance < 2.9 && front && fist.charge > 0.95 && fist.extension < 0.05) mem.punch = s.t + 0.3;
+  const inReach = foe.distance < 4.0 && Math.abs(foe.bearing) < (foe.distance < 2 ? 0.6 : 0.3);
   if (inReach && arms.length) {
     out.say = s.t < (mem.punch || 0) + 0.4 ? 'punching it back to where the clubs land' : 'in reach, bringing the clubs down';
     walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.4, 0.4));
@@ -2069,7 +2073,7 @@ function wardenProgram(s, out, mem, lib) {
   if (foe.distance <= 1.8 && Math.abs(foe.bearing) > 1.2) { out.say = 'it is on my flank, stepping clear'; const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 2, -0.4, 0.4)); return; }
   // With the clubs gone the fist is the weapon: keep the nose on it and keep punching.
   if (!arms.length && fist && foe.distance < 2.8) { out.say = 'clubs gone, punching with the fist'; walk(s, out, mem, lib, front ? 0.4 : 0, lib.clamp(foe.bearing * 2, -0.5, 0.5)); return; }
-  const n = stalk(s, out, mem, lib, SELF, { keep: arms.length ? 2.8 : 0 });
+  const n = stalk(s, out, mem, lib, SELF, { keep: arms.length ? 3.2 : 0 });
   if (n.arrived && arms.length) { out.say = 'squaring up to strike'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.5, 0.5)); }
 }
 

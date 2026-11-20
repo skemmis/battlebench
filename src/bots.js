@@ -461,24 +461,25 @@ export function brambleProgram(s, out, mem, lib) {
 }
 
 // ── Warden ─────────────────────────────────────────────────────────────────
-// The other answer to the tangle: do not let it happen. Warden is Mantis with a steel fender ahead of each front
-// leg, so an enemy meets a bar and not the spokes, and a piston fist in its nose. When something gets inside the
-// clubs' reach the fist punches it back out to where they land.
+// The other answer to the tangle: do not let it happen. Warden carries a tall steel shield ahead of each front
+// leg, so an enemy (or its rotor) meets a plate and not the spokes, and a piston fist in its nose. When something
+// gets inside the clubs' reach the fist punches it back out to where they land.
+const longClub = (i, x) => ({ id: 'club_' + i, type: 'beam', material: 'steel', size: [0.16, 0.16, 2.2], pos: [x, 0.66, 0.05], parent: 'yoke', joint: { type: 'motor', axis: [1, 0, 0], pivot: [x, 0.66, 1.1], gear: 5, power: 1, limits: [-6, 215] } });
 export const WARDEN = {
   name: 'Warden',
-  note: 'Mantis with two additions against tangling: steel fenders ahead of the front legs, so nothing gets in among the spokes, and a piston fist in the nose that punches an enemy back out to where the two clubs come down.',
+  note: 'A walker that fights at arm\'s length and keeps it that way. Two tall steel shields stand ahead of its front legs, high enough to stop a rotor; a piston fist in the nose punches an enemy back out; and two long clubs come down over the shields onto whatever is held there.',
   parts: [
-    ...hexFrame({ frame: 'steel' }),
+    ...hexFrame({ frame: 'steel', power: 1 }),
     beam('mast', [0.22, 0.66, 0.22], [0, 0.36, 1.1], 'spine', 'steel'),
     beam('stay', [0.08, 0.85, 0.08], [0, 0.32, 0.76], 'mast', 'steel', { rot: [-50, 0, 0] }),
     beam('yoke', [0.9, 0.2, 0.2], [0, 0.66, 1.1], 'mast', 'steel'),
-    ...hammer(0, 0.3), ...hammer(1, -0.3),
-    block('keel', [0.3, 0.2, 0.6], [0, -0.18, -0.4], 'spine', 'steel'),
+    longClub(0, 0.3), longClub(1, -0.3),
     beam('bow', [1.5, 0.2, 0.2], [0, 0, 1.3], 'spine', 'steel'),
     beam('strut_l', [0.2, 0.2, 0.9], [0.65, 0, 1.75], 'bow', 'steel'),
     beam('strut_r', [0.2, 0.2, 0.9], [-0.65, 0, 1.75], 'bow', 'steel'),
-    beam('fender_l', [0.95, 0.2, 0.2], [0.98, 0, 2.1], 'strut_l', 'steel'),
-    beam('fender_r', [0.95, 0.2, 0.2], [-0.98, 0, 2.1], 'strut_r', 'steel'),
+    // The shields stand from below the hubs to above a rotor's height, and are thick enough to take one.
+    plate('shield_l', [0.95, 0.15, 0.5], [0.98, 0.1, 2.15], 'strut_l', 'steel', { rot: [90, 0, 0] }),
+    plate('shield_r', [0.95, 0.15, 0.5], [-0.98, 0.1, 2.15], 'strut_r', 'steel', { rot: [90, 0, 0] }),
     { id: 'fist', type: 'block', material: 'steel', size: [0.4, 0.3, 0.3], pos: [0, -0.02, 1.85], parent: 'bow', joint: { type: 'piston', axis: [0, 0, 1], stroke: 0.6, gear: 1 } },
   ],
 };
@@ -498,8 +499,8 @@ export function wardenProgram(s, out, mem, lib) {
   for (const i of arms) if (mem.swing !== i) hold(i, REST);
   const front = Math.abs(foe.bearing) < 0.5;
   // Inside the clubs' reach: punch it back out. The fist needs a couple of seconds to recharge between punches.
-  if (fist && foe.distance < 2.5 && front && fist.charge > 0.95 && fist.extension < 0.05) mem.punch = s.t + 0.3;
-  const inReach = foe.distance < 3.5 && Math.abs(foe.bearing) < (foe.distance < 2 ? 0.6 : 0.3);
+  if (fist && foe.distance < 2.9 && front && fist.charge > 0.95 && fist.extension < 0.05) mem.punch = s.t + 0.3;
+  const inReach = foe.distance < 4.0 && Math.abs(foe.bearing) < (foe.distance < 2 ? 0.6 : 0.3);
   if (inReach && arms.length) {
     out.say = s.t < (mem.punch || 0) + 0.4 ? 'punching it back to where the clubs land' : 'in reach, bringing the clubs down';
     walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.4, 0.4));
@@ -509,7 +510,7 @@ export function wardenProgram(s, out, mem, lib) {
   if (foe.distance <= 1.8 && Math.abs(foe.bearing) > 1.2) { out.say = 'it is on my flank, stepping clear'; const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 2, -0.4, 0.4)); return; }
   // With the clubs gone the fist is the weapon: keep the nose on it and keep punching.
   if (!arms.length && fist && foe.distance < 2.8) { out.say = 'clubs gone, punching with the fist'; walk(s, out, mem, lib, front ? 0.4 : 0, lib.clamp(foe.bearing * 2, -0.5, 0.5)); return; }
-  const n = stalk(s, out, mem, lib, SELF, { keep: arms.length ? 2.8 : 0 });
+  const n = stalk(s, out, mem, lib, SELF, { keep: arms.length ? 3.2 : 0 });
   if (n.arrived && arms.length) { out.say = 'squaring up to strike'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.5, 0.5)); }
 }
 
