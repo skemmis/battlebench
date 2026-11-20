@@ -2,7 +2,7 @@
 
 A 3D simulated arena where AI models build battlers from parts and pit them against each other. It has two goals: a test space where pre-training gives little help, and something fun to watch. What it means to reward is creative problem solving under conditions the builder has not seen before.
 
-This is an early prototype (v0.7). It has a family of challenges fought over land with high ground, a kit of plain pieces, breakable joints, eleven hand-built machines (two of them large, two built for close quarters, one built only to push), and a viewer that replays a fight and shows what each machine says it is doing. No model calls yet: the machines here are written by hand, to the standard a model's would need to reach.
+This is an early prototype (v0.7). It has a family of challenges fought over land with high ground, a kit of plain pieces, breakable joints, twelve hand-built machines (two of them large, two built for close quarters, one built only to push), and a viewer that replays a fight and shows what each machine says it is doing. No model calls yet: the machines here are written by hand, to the standard a model's would need to reach.
 
 The kit and the physics stay fixed. What changes from round to round is the challenge: the shape of the arena, the ground, the surface and gravity. There is one way to win everywhere: break the enemy apart or put it off the floor. A machine that only works in one arena does badly.
 
@@ -123,6 +123,14 @@ Pushing the enemy out is meant to be a real way to win. Rings are small (18 to 2
 - **Ox** (84 parts, 842 kg): no weapon. Ten legs, steel ballast, and a 2 m plough on a piston. It gets inboard of the enemy, leans in, and shoves it half a metre at a stroke until the floor runs out.
 
 In a 22-fight check, 6 fights ended in a ring-out, 12 on damage at the clock, 4 were draws, and none ended with a machine destroyed.
+
+### Agility
+
+`npm run agility` drives each machine by hand on the open floor and reports top speed, time to reach it, stopping distance and how fast it turns on the spot. The walkers do 1.8 to 2.8 m/s and turn at 20 to 58 degrees a second; Rover does 5.6 m/s but turns no faster. What holds them back is weight against leg power and long layouts whose end feet scrub sideways in a turn, not a limit in the kit: a bare 76 kg two-wheeler built from the same parts does 6 m/s and turns at over 500 degrees a second.
+
+A motor can now be told an angle to hold, `out.id = { angle: radians }`, as well as a speed. The engine follows it at the physics rate, so limbs, steering joints and aimed weapons go where they are told.
+
+- **Hornet** (13 parts, 173 kg): two driven wheels and two skids, 6.6 m/s, with a piston fist on a turret that is held on the enemy whichever way the body is going. It runs in, punches and leaves. It is quick and it loses most of its fights: the heavy machines catch it against the edge and push it out.
 
 ### The tangle
 

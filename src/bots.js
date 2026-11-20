@@ -4,13 +4,13 @@
 // The builds are written with a few small helpers to save typing; what the simulator receives is the plain list.
 // The machines from before the game changed (point holding on flat floors) are in old/bots-v05.js.
 
-const beam = (id, size, pos, parent, material = 'aluminium', extra = {}) => ({ id, type: 'beam', material, size, pos, parent, ...extra });
-const plate = (id, size, pos, parent, material = 'aluminium', extra = {}) => ({ id, type: 'plate', material, size, pos, parent, ...extra });
-const block = (id, size, pos, parent, material = 'aluminium', extra = {}) => ({ id, type: 'block', material, size, pos, parent, ...extra });
+export const beam = (id, size, pos, parent, material = 'aluminium', extra = {}) => ({ id, type: 'beam', material, size, pos, parent, ...extra });
+export const plate = (id, size, pos, parent, material = 'aluminium', extra = {}) => ({ id, type: 'plate', material, size, pos, parent, ...extra });
+export const block = (id, size, pos, parent, material = 'aluminium', extra = {}) => ({ id, type: 'block', material, size, pos, parent, ...extra });
 
 // A spoked leg: a hub on a motor with three spokes and rubber feet. It steps onto a ledge that a wheel of the
 // same size would only bump against.
-function leg(name, x, z, offsetDeg, parent, { reach = 0.74, power = 0.6 } = {}) {
+export function leg(name, x, z, offsetDeg, parent, { reach = 0.74, power = 0.6 } = {}) {
   const parts = [{ id: name, type: 'disc', material: 'aluminium', radius: 0.18, thickness: 0.14, pos: [x, 0, z], rot: [0, 0, 90], parent, joint: { type: 'motor', axis: [1, 0, 0], gear: 8, power } }];
   for (let k = 0; k < 3; k++) {
     const deg = offsetDeg + k * 120, a = (deg * Math.PI) / 180, dy = -Math.sin(a), dz = Math.cos(a), mid = (reach + 0.1) / 2;
@@ -21,7 +21,7 @@ function leg(name, x, z, offsetDeg, parent, { reach = 0.74, power = 0.6 } = {}) 
 }
 // A six-legged frame: a spine, three axles, and legs built a sixth of a turn apart so that three feet are always
 // coming down as three lift. The middle legs sit further out so the spokes pass each other.
-function hexFrame({ spread = 1.0, half = 1.04, reach = 0.74, power = 0.6, frame = 'aluminium', mid = 0.2 } = {}) {
+export function hexFrame({ spread = 1.0, half = 1.04, reach = 0.74, power = 0.6, frame = 'aluminium', mid = 0.2 } = {}) {
   return [
     { id: 'core', type: 'core' },
     // The chassis is built heavy: a thick spine, and axles of thick aluminium, which make a stronger joint than
@@ -31,12 +31,12 @@ function hexFrame({ spread = 1.0, half = 1.04, reach = 0.74, power = 0.6, frame 
     ...[-1, 0, 1].flatMap((i) => { const x = i === 0 ? half + 0.26 : half; return [...leg('leg_l' + (i + 1), x, i * spread, i === 0 ? 60 : 0, 'axle_' + (i + 1), { reach, power }), ...leg('leg_r' + (i + 1), -x, i * spread, i === 0 ? 0 : 60, 'axle_' + (i + 1), { reach, power })]; }),
   ];
 }
-const LEGS_L = ['leg_l0', 'leg_l1', 'leg_l2'], LEGS_R = ['leg_r0', 'leg_r1', 'leg_r2'];
+export const LEGS_L = ['leg_l0', 'leg_l1', 'leg_l2'], LEGS_R = ['leg_r0', 'leg_r1', 'leg_r2'];
 
 // Walk: each side has a phase that advances with the wanted speed, and every hub on that side is held to it by
 // reading its angle, the way a walking animal keeps a gait. Going straight, the two sides are pulled into step
 // so the gait stays a tripod.
-function walk(s, out, mem, lib, fwd, turn, LL = LEGS_L, RR = LEGS_R) {
+export function walk(s, out, mem, lib, fwd, turn, LL = LEGS_L, RR = LEGS_R) {
   const me = s.self, TURN = (2 * Math.PI) / 3;
   if (mem.pl === undefined) { mem.pl = 0; mem.pr = 0; }
   // Spoked legs reach the ground either way up. On its back, the same hubs turned the other way walk it forward.
@@ -46,7 +46,7 @@ function walk(s, out, mem, lib, fwd, turn, LL = LEGS_L, RR = LEGS_R) {
   // A long machine cannot spin on the spot, its end feet would have to drag sideways: it turns on the move.
   if (Math.abs(turn) > 0.3) fwd = mem.long ? Math.sign(fwd || 1) * Math.max(0.55, Math.abs(fwd) * 0.7) : fwd * 0.1;
   // In low gravity each step takes longer to come down, so the gait slows to match.
-  const pace = 3.2 * Math.sqrt(s.challenge.gravity);
+  const pace = (mem.pace || 3.2) * Math.sqrt(s.challenge.gravity);
   const vl = lib.clamp(fwd - turn) * pace, vr = lib.clamp(fwd + turn) * pace;
   mem.pl += vl / 30; mem.pr += vr / 30;
   // Do not let the wanted leg position run away from the real one when the legs are held up.
@@ -61,7 +61,7 @@ function walk(s, out, mem, lib, fwd, turn, LL = LEGS_L, RR = LEGS_R) {
 
 // Where to go to win. A machine near a drop is easier to put over it than to break, so if the enemy is within
 // reach of an edge, get on the inboard side of it and drive it out. Otherwise close with it.
-function hunt(s, lib) {
+export function hunt(s, lib) {
   const me = s.self, foe = s.enemy;
   let best = null;
   for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2, dx = Math.sin(a), dz = Math.cos(a), d = lib.run(s, foe.x, foe.z, dx, dz, 8, 0, 99); if (!best || d < best.d) best = { d, dx, dz }; }
@@ -75,7 +75,7 @@ function hunt(s, lib) {
   return { x: hit.x, z: hit.z, charge: true, say: 'closing on the enemy' };
 }
 // Walk to wherever hunt says, by a route this machine can climb, stopping short of drops.
-function stalk(s, out, mem, lib, SELF, { keep = 0, L = LEGS_L, R = LEGS_R } = {}) {
+export function stalk(s, out, mem, lib, SELF, { keep = 0, L = LEGS_L, R = LEGS_R } = {}) {
   const h = hunt(s, lib), foe = s.enemy;
   // If there is no way to it, the plan ends at the nearest ground I can stand on: stop there, do not press on.
   const open = lib.plan(s, h.x, h.z, SELF).reachable;
@@ -87,7 +87,7 @@ function stalk(s, out, mem, lib, SELF, { keep = 0, L = LEGS_L, R = LEGS_R } = {}
 }
 // A flat walker works either way up, so it only needs to do something when it is lying on its side: kick both
 // sides opposite ways to roll off it.
-function righting(s, out, L = LEGS_L, R = LEGS_R) {
+export function righting(s, out, L = LEGS_L, R = LEGS_R) {
   if (Math.abs(s.self.upright) >= 0.35) return false;
   out.say = 'on my side, kicking to roll off it';
   for (const id of L) out[id] = 1; for (const id of R) out[id] = -1;
@@ -110,7 +110,7 @@ export const STRIDER = {
   ],
 };
 // A walker wades: its frame rides above half a metre of water. It takes slopes up to about one in two.
-const WALKER = { length: 1.9, top: 2.4, margin: 2.0, side: 0.5, climb: 0.45, grade: 0.55, wade: 0.7, grip: 0.8, feed: false };
+export const WALKER = { length: 1.9, top: 2.4, margin: 2.0, side: 0.5, climb: 0.45, grade: 0.55, wade: 0.7, grip: 0.8, feed: false };
 export function striderProgram(s, out, mem, lib) {
   const me = s.self, foe = s.enemy, SELF = { ...WALKER, mem };
   if (righting(s, out)) return;
@@ -279,7 +279,7 @@ export function slingerProgram(s, out, mem, lib) {
 // ── Rover ──────────────────────────────────────────────────────────────────
 // The wheeled machine, built as well as wheels allow: six rubber discs of the largest size, a high frame, and a
 // steel ram. It is the heaviest and fastest machine here on flat ground. Broken ground is another matter.
-const tyre = (id, x, z, parent) => ({ id, type: 'disc', material: 'rubber', radius: 0.58, thickness: 0.2, pos: [x, 0, z], rot: [0, 0, 90], parent, joint: { type: 'motor', axis: [1, 0, 0], gear: 6, power: 0.45 } });
+export const tyre = (id, x, z, parent) => ({ id, type: 'disc', material: 'rubber', radius: 0.58, thickness: 0.2, pos: [x, 0, z], rot: [0, 0, 90], parent, joint: { type: 'motor', axis: [1, 0, 0], gear: 6, power: 0.45 } });
 export const ROVER = {
   name: 'Rover',
   note: 'The wheeled machine: six of the biggest tyres the kit allows, a high frame and a steel ram. Heavy and fast on the flat, and it rams. On broken ground it has to find a way its wheels can take.',
@@ -312,8 +312,8 @@ export function roverProgram(s, out, mem, lib) {
 // ── Centipede ──────────────────────────────────────────────────────────────
 // Ten legs on a frame nearly five metres long. It is long enough to walk straight across a gap that stops
 // everything else: by the time its middle is over the drop, two pairs of legs are already on the far side.
-const PEDE_Z = [-1.8, -0.9, 0, 0.9, 1.8];
-const PEDE_L = PEDE_Z.map((_, i) => 'leg_l' + i), PEDE_R = PEDE_Z.map((_, i) => 'leg_r' + i);
+export const PEDE_Z = [-1.8, -0.9, 0, 0.9, 1.8];
+export const PEDE_L = PEDE_Z.map((_, i) => 'leg_l' + i), PEDE_R = PEDE_Z.map((_, i) => 'leg_r' + i);
 export const CENTIPEDE = {
   name: 'Centipede',
   note: 'Ten spoked legs on a frame nearly five metres long, with a steel ram at each end. It walks straight across gaps up to about 1.9 m wide, because some of its legs are always on the ground on one side or the other, and it works either way up.',
@@ -346,7 +346,7 @@ export function centipedeProgram(s, out, mem, lib) {
 // The claws are steel bars on upright pivots ahead of the front legs. Open, they stand wide; snapped shut they
 // meet in front of the nose, and whatever is between them takes a bar from each side. The tail is a long club
 // on a mast, lying back along the body until something is in front of it.
-const pedeFrame = (frame = 'steel', power = 1, sp = 0.26) => [
+export const pedeFrame = (frame = 'steel', power = 1, sp = 0.26) => [
   { id: 'core', type: 'core' },
   // The backbone is two heavy beams, thick enough that the machine does not snap in half at the core.
   beam('spine_f', [sp, sp, 1.9], [0, 0, 0.95], 'core', frame),
@@ -549,6 +549,71 @@ export function oxProgram(s, out, mem, lib) {
   else if (foe.distance < 4.6 && front && !n.braking && !n.backing) out.say = 'leaning on it, pushing it toward the edge';
 }
 
+// ── Hornet ─────────────────────────────────────────────────────────────────
+// The quick one. A hundred-odd kilos on two driven wheels and two skids, so it turns about its own middle, and a
+// steel lance on a turret that is held on the enemy whichever way the body is going. It never stays in contact:
+// it circles outside reach, comes in at speed with the fist leading, and is gone again before the answer lands.
+const hornetWheel = (id, x) => ({ id, type: 'disc', material: 'rubber', radius: 0.45, thickness: 0.18, pos: [x, 0, 0], rot: [0, 0, 90], parent: 'axle', joint: { type: 'motor', axis: [1, 0, 0], gear: 4, power: 0.6 } });
+export const HORNET = {
+  name: 'Hornet',
+  note: 'The quick one: two driven wheels and two skids, so it spins about its own middle, and a piston fist on a turret that stays pointed at the enemy whichever way the body is going. It circles outside reach, comes in at speed, and leaves.',
+  parts: [
+    { id: 'core', type: 'core' },
+    beam('axle', [1.0, 0.24, 0.24], [0, 0, 0], 'core'),
+    hornetWheel('wl_0', 0.66), hornetWheel('wr_0', -0.66),
+    beam('keel', [0.24, 0.24, 1.7], [0, -0.05, 0], 'core'),
+    { id: 'skid_f', type: 'ball', material: 'plastic', radius: 0.17, pos: [0, -0.24, 0.8], parent: 'keel' },
+    { id: 'skid_b', type: 'ball', material: 'plastic', radius: 0.17, pos: [0, -0.24, -0.8], parent: 'keel' },
+    block('post', [0.24, 0.3, 0.24], [0, 0.3, 0], 'core'),
+    block('ballast', [0.5, 0.2, 0.3], [0, -0.05, -0.45], 'keel', 'steel'),
+    { id: 'turret', type: 'disc', material: 'aluminium', radius: 0.26, thickness: 0.14, pos: [0, 0.52, 0], parent: 'post', joint: { type: 'motor', axis: [0, 1, 0], gear: 8, power: 0.5 } },
+    beam('arm', [0.3, 0.3, 1.1], [0, 0.52, 0.6], 'turret'),
+    // The fist is a flat steel puck, too broad to thread between legs and get caught, on a piston.
+    { id: 'fist', type: 'disc', material: 'aluminium', radius: 0.36, thickness: 0.16, pos: [0, 0.52, 1.3], rot: [90, 0, 0], parent: 'arm', joint: { type: 'piston', axis: [0, 0, 1], stroke: 0.6 } },
+      ],
+  drive: (s, out, mem, lib, f, t) => { out.wl_0 = lib.clamp(f - t); out.wr_0 = lib.clamp(f + t); },
+};
+export function hornetProgram(s, out, mem, lib) {
+  const me = s.self, foe = s.enemy, SELF = { length: 1.2, top: 6.5, margin: 1.8, side: 0.5, climb: 0.2, grade: 0.4, grip: 0.45, feed: false, mem };
+  const drive = (d, t) => { out.wl_0 = lib.clamp(d - t); out.wr_0 = lib.clamp(d + t); };
+  // The fist looks at where the enemy is, whatever the body is doing. Upside down, the turret turns the other way.
+  const tj = me.joints.turret;
+  if (tj) out.turret = { angle: tj.angle + lib.wrap((me.upright < 0 ? -1 : 1) * foe.bearing - lib.wrap(tj.angle)) };
+  // The punch goes as the fist arrives, on top of the speed the machine is already carrying.
+  const fj = me.joints.fist;
+  if (fj && foe.distance < 2.9 && Math.abs(foe.bearing) < 1.2 && fj.charge > 0.95 && fj.extension < 0.05) mem.punch = s.t + 0.25;
+  out.fist = s.t < (mem.punch || 0) ? 1 : 0;
+  if (Math.abs(me.upright) < 0.3) { out.say = 'on my side, spinning the wheels to roll over'; drive(Math.sin(s.t * 6), 0.6); return; }
+  // A jouster: run in at full speed, punch as the fist arrives, and keep going to the most open ground there is,
+  // well away from the enemy; turn there and come again. It is never meant to be standing next to anything.
+  if (!mem.mode) { mem.mode = 'strike'; mem.until = s.t + 4; }
+  if (mem.mode === 'strike' && (foe.distance < 2.1 || (mem.was - me.forwardSpeed > 1 && foe.distance < 3.4) || s.t > mem.until)) { mem.mode = 'leave'; mem.until = s.t + 3; mem.goal = null; }
+  else if (mem.mode === 'leave' && (s.t > mem.until || foe.distance > 7.5)) { mem.mode = 'strike'; mem.until = s.t + 3.5; }
+  mem.was = me.forwardSpeed;
+  let n;
+  if (mem.mode === 'strike') {
+    const hit = lib.intercept(s, foe, 5);
+    // No way across to it: go to the nearest point at a crawl and wait, with the fist on it.
+    const open = lib.plan(s, hit.x, hit.z, SELF).reachable;
+    n = lib.nav(s, hit.x, hit.z, { ...SELF, stopAt: open ? 0 : 0.8, speed: open ? 1 : 0.35 }); out.say = open ? 'coming in with the fist' : 'no way across, waiting at the edge';
+  } else {
+    // Open ground: well inside the edge, far from the enemy, and not back through it.
+    if (!mem.goal || Math.hypot(mem.goal.x - me.x, mem.goal.z - me.z) < 1.5) {
+      let best = null;
+      for (let i = 0; i < 12; i++) for (const R of [3, 6]) {
+        const a = (i / 12) * Math.PI * 2, x = Math.sin(a) * R, z = Math.cos(a) * R; if (lib.edgeAt(s, x, z) < 2.5) continue;
+        const w = lib.to(s, x, z), through = Math.abs(lib.wrap(w.bearing - foe.bearing)) < 0.7 && w.distance > foe.distance, score = Math.hypot(x - foe.x, z - foe.z) - (through ? 5 : 0) - 0.3 * w.distance;
+        if (!best || score > best.score) best = { x, z, score };
+      }
+      mem.goal = best || { x: 0, z: 0 };
+    }
+    n = lib.nav(s, mem.goal.x, mem.goal.z, { ...SELF, stopAt: 0, reverse: true });
+    out.say = 'getting out before it can answer';
+  }
+  if (n.braking) out.say = 'braking for the edge';
+  drive(n.drive, n.turn);
+}
+
 export const ALL = [
   { build: STRIDER, program: striderProgram },
   { build: MANTIS, program: mantisProgram },
@@ -561,5 +626,6 @@ export const ALL = [
   { build: BRAMBLE, program: brambleProgram },
   { build: WARDEN, program: wardenProgram },
   { build: OX, program: oxProgram },
+  { build: HORNET, program: hornetProgram },
 ];
 export const ROSTER = ALL;

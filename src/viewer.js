@@ -388,6 +388,7 @@ for (const [id, def] of [['botA', 2], ['botB', 0]]) {
 // Curated fights, each picked to show one idea. Choosing a machine, challenge or seed by hand leaves the showcase.
 const SHOWS = [
   { label: 'Sumo', a: 'Ox', b: 'Strider', ch: 'Downs', seed: 1, watch: 'Ox has no weapon. It is nearly a tonne on ten legs with a plough on a piston: it gets inboard of the enemy, leans in and shoves it toward the edge.' },
+  { label: 'Hit and run', a: 'Hornet', b: 'Strider', ch: 'Open floor', seed: 1, watch: 'Hornet is the quick one: 6 m/s on two wheels, about three times a walker\'s pace. Its fist sits on a turret that stays pointed at the enemy whichever way the body is going. It runs in, punches, and gets out to open ground.' },
   { label: 'The ram', a: 'Slinger', b: 'Rover', ch: 'Open floor', seed: 1, watch: 'Rover is the fastest thing here. Its steel ram is on a piston, so when it arrives it shoves as well as hits.' },
   { label: 'Fist and clubs', a: 'Dreadnought', b: 'Warden', ch: 'Open floor', seed: 1, watch: 'Warden keeps the enemy out of its legs with fenders, punches it back with a piston fist, and brings two long clubs down on it. Watch the bars at the top: Dreadnought is taken apart a piece at a time.' },
   { label: 'The rotor', a: 'Thresher', b: 'Slinger', ch: 'Downs', seed: 1, watch: 'Thresher carries a steel bar spinning flat over its nose and walks it into legs and towers.' },

@@ -49,7 +49,7 @@ export const CONFIG = {
     // Hinge and motor joints may set "pivot": [x, y, z] in the bot frame; without it they turn about the part's centre.
     // "power" from 0.02 to 1 picks the size of the motor: torque and cost scale with it. A wheel is a rubber
     // ball or a disc on a small, geared-down motor. Motor joints may also set "limits" and "spring" like a hinge.
-    motor: { strength: 1500, cost: 8, maxSpeed: 80, torque: 300, minGear: 0.5, maxGear: 8, minPower: 0.02 },
+    motor: { strength: 1500, cost: 8, maxSpeed: 80, torque: 300, minGear: 0.5, maxGear: 8, minPower: 0.02, servoGain: 14 },
     // A piston slides its part along "axis" by up to "stroke" metres. It stores energy: pushing out is fast and
     // strong but drains its charge (a full stroke uses all of it), pulling back is slow and free, and the charge
     // refills over rechargeSeconds. "gear" trades speed for force as on a motor.
@@ -626,7 +626,13 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
         const p = c.part;
         if (p.jointType === 'piston' && p.live) { p.target = clamp(Number(out[p.id]) || 0, 0, 1) * p.stroke; continue; }
         if (p.jointType !== 'motor' || !p.live) continue;
-        const v = clamp(Number(out[p.id]) || 0, -1, 1);
+        // A motor can be told a speed (a number from -1 to 1) or an angle to go to and hold: { angle: radians },
+        // measured like joints[id].angle. Held angles are followed at the physics rate, not the program's, so a
+        // limb, a steering joint or an aimed weapon goes where it is told and stays there.
+        const o = out[p.id];
+        if (o && typeof o === 'object' && Number.isFinite(o.angle)) { p.servo = p.limits ? clamp(o.angle, p.limits[0], p.limits[1]) : o.angle; p.servoConstraint = c; continue; }
+        p.servo = null;
+        const v = clamp(Number(o) || 0, -1, 1);
         c.setMotorSpeed(-v * p.maxSpeed);
         // Like a real electric motor, torque is highest at a standstill and fades to a tenth at top speed.
         // A spinner's punch comes from the energy stored in the spinning part, not from the motor pushing
@@ -659,6 +665,12 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
   function driveHinges() {
     const H = cfg.joints.hinge;
     for (const bot of m.bots) for (const p of bot.parts) {
+      if (p.servo != null && p.live && p.intact && p.parent) {
+        if (!p.limits && !p.spring) updateAngle(p);
+        const c = p.servoConstraint, S = cfg.joints.motor;
+        c.setMotorSpeed(-clamp((p.servo - p.angle) * S.servoGain, -p.maxSpeed, p.maxSpeed));
+        c.setMotorMaxForce(p.torque * dt);
+      }
       if (!p.live || !p.intact || !p.parent || (!p.limits && !p.spring)) continue;
       updateAngle(p);
       p.body.quaternion.vmult(p.localQuat.vmult(p.axisLocal), hAxis);
@@ -736,6 +748,8 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const bot = part.bot;
       const op = otherShape && otherShape.partRef;
       const label = (otherShape && otherShape.label) || 'the floor';
+      // Machines are set down at the start, not dropped: nothing breaks against the ground in the first second.
+      if (!op && m.t < 1) return;
       // The blow as a vector, and the point where it enters the structure. Both change when it passes a pivot.
       let Jv = n.scale(J), at = cp;
       let cur = part, best = null;

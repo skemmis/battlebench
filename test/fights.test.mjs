@@ -280,3 +280,15 @@ test('a thicker beam makes a stronger joint, and a pivot has to be on its own pa
   const far = { name: 'Far', parts: [{ id: 'core', type: 'core' }, { id: 'w', type: 'block', material: 'steel', size: [0.3, 0.3, 0.3], pos: [0, 0.5, -1], parent: 'core', joint: { type: 'motor', axis: [1, 0, 0], pivot: [0, 0.5, 1] } }] };
   assert.equal(validateBuild(far).ok, false);
 });
+
+test('a motor told an angle goes there and holds it', () => {
+  const arm = { name: 'Arm', parts: [{ id: 'core', type: 'core' }, { id: 'mast', type: 'block', material: 'steel', size: [0.6, 0.6, 0.6], pos: [0, 0.5, 0], parent: 'core' },
+    { id: 'hub', type: 'disc', material: 'aluminium', radius: 0.2, thickness: 0.1, pos: [0, 0.9, 0], parent: 'mast', joint: { type: 'motor', axis: [0, 1, 0], gear: 8, power: 0.5 } },
+    { id: 'boom', type: 'beam', material: 'aluminium', size: [0.1, 0.1, 1.2], pos: [0, 0.9, 0.7], parent: 'hub' }] };
+  const m = createMatch({ builds: [arm, BRICK], programs: [(s, out) => { out.hub = { angle: s.t < 2 ? 1 : -0.5 }; }, idle], seed: 1 });
+  const hub = m.bots[0].parts.find((p) => p.id === 'hub');
+  while (m.t < 1.9) m.step();
+  assert.ok(Math.abs(hub.angle - 1) < 0.05, `asked for 1 rad, at ${hub.angle.toFixed(2)}`);
+  while (m.t < 3.9) m.step();
+  assert.ok(Math.abs(hub.angle + 0.5) < 0.05, `asked for -0.5 rad, at ${hub.angle.toFixed(2)}`);
+});
