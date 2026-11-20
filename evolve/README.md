@@ -8,6 +8,7 @@ npm run round -- league          # the table as it stands
 npm run round -- brief           # writes evolve/brief.md: rules, league, what earlier rounds tried, fight accounts
 npm run round -- design 6        # asks a model for 6 new machines (Opus 5.5 unless ROUND_MODEL is set)
 npm run round -- test            # runs the ladder on every design not yet tested
+npm run round:page               # builds dist/evolve.html: the viewer with admitted designs added
 ```
 
 `design` needs an Anthropic credential: `ANTHROPIC_API_KEY` in the environment, or `ant auth login`. Without one,

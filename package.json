@@ -11,7 +11,8 @@
     "tournament": "node scripts/tournament.mjs",
     "gauntlet": "node scripts/gauntlet.mjs",
     "quick": "node scripts/quick.mjs",
-    "round": "node scripts/round.mjs"
+    "round": "node scripts/round.mjs",
+    "round:page": "node scripts/build-evolve.mjs"
   },
   "dependencies": {
     "cannon-es": "0.20.0"
