@@ -167,9 +167,9 @@ test('rounds are drawn over land of every kind, and stepped rock is still there 
     const ch = named(name), s = { challenge: ch };
     assert.ok(ch.floor.length > 50, `${name} has ${ch.floor.length} ledges`);
     let big = 0, steps = 0;
-    for (let x = -12; x < 12; x += 1) for (let z = -12; z < 12; z += 1) { const d = Math.abs(LIB.stepAt(s, x + 0.5, z + 0.5) - LIB.stepAt(s, x + 1.5, z + 0.5)); big = Math.max(big, d); if (d > 0.05) steps++; }
+    for (let x = -9; x < 9; x += 1) for (let z = -9; z < 9; z += 1) { const d = Math.abs(LIB.stepAt(s, x + 0.5, z + 0.5) - LIB.stepAt(s, x + 1.5, z + 0.5)); big = Math.max(big, d); if (d > 0.05) steps++; }
     assert.ok(big <= maxStep + 0.01, `${name}: a step of ${big}`);
-    assert.ok(steps > 80, `${name}: only ${steps} steps on 576 lines`);
+    assert.ok(steps > 45, `${name}: only ${steps} steps on 324 lines`);
     for (const sp of ch.spawn) assert.equal(LIB.stepAt(s, sp.x - 2, sp.z - 2), LIB.stepAt(s, sp.x + 2, sp.z + 2), 'starting pad is level');
   }
 });

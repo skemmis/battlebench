@@ -183,7 +183,7 @@ const OPEN = {
 };
 
 const LAYOUTS = {
-  open: (r) => { const s = 30 + Math.round(r() * 8); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 6, reach: s / 2 - 5 }; },
+  open: (r) => { const s = 22 + Math.round(r() * 6); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 4.5, reach: s / 2 - 5 }; },
   small: (r) => { const s = 14 + Math.round(r() * 4); return { text: `a small ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 3.5, reach: s / 2 - 3.5 }; },
   bridge: (r) => {
     const w = chRound(4.5 + r() * 2.5), len = chRound(6 + r() * 4), isl = 12;
@@ -295,7 +295,7 @@ function drawLand(L, K, r, spawnZ) {
   const BASE = 1, half = Math.min(f.w, f.d) / 2;
   // High ground.
   const hills = [], high = chRound(1.2 + r() * 0.5);
-  if (K.hills === 'twin') { const hx = half * (0.4 + r() * 0.2), hz = half * (0.36 + r() * 0.12), R = 2.6 + r() * 0.8, a = Math.atan2(-hx, hz - spawnZ) + (r() - 0.5) * 0.5; /* the ramp faces the hill's own end of the map */ hills.push({ x: hx, z: -hz, R, ramps: [a] }, { x: -hx, z: hz, R, ramps: [a + Math.PI] }); }
+  if (K.hills === 'twin') { const hx = half * (0.4 + r() * 0.2), hz = half * (0.36 + r() * 0.12), R = Math.min(2.6 + r() * 0.8, half * 0.22), a = Math.atan2(-hx, hz - spawnZ) + (r() - 0.5) * 0.5; /* the ramp faces the hill's own end of the map */ hills.push({ x: hx, z: -hz, R, ramps: [a] }, { x: -hx, z: hz, R, ramps: [a + Math.PI] }); }
   if (K.hills === 'middle') { const a = r() * Math.PI; hills.push({ x: 0, z: 0, R: Math.min(5, half * 0.3), ramps: [a, a + Math.PI] }); }
   // The river runs across the map between the two starting places, and winds.
   const wide = chRound(2.5 + r() * 1.5), deep = chRound(0.45 + r() * 0.2), amp = 1 + r() * 1.5, wave = (Math.PI * (1 + Math.floor(r() * 2))) / half, fordX = half * (0.3 + r() * 0.35), level = BASE - 0.2;
@@ -305,7 +305,7 @@ function drawLand(L, K, r, spawnZ) {
     const x = x0 + ix, z = z0 + iz;
     let h = BASE + K.roll * (noise(x, z) + noise(-x, -z) - 1);
     // Level ground where each machine starts.
-    const pad = sm(5, 2.5, Math.hypot(x, Math.abs(z) - spawnZ));
+    const pad = sm(4, 2, Math.hypot(x, Math.abs(z) - spawnZ));
     h = h * (1 - pad) + BASE * pad;
     for (const m of hills) {
       const dx = x - m.x, dz = z - m.z, d = Math.hypot(dx, dz);
@@ -1588,11 +1588,11 @@ function leg(name, x, z, offsetDeg, parent, { reach = 0.74, power = 0.6 } = {}) 
 }
 // A six-legged frame: a spine, three axles, and legs built a sixth of a turn apart so that three feet are always
 // coming down as three lift. The middle legs sit further out so the spokes pass each other.
-function hexFrame({ spread = 1.0, half = 1.04, reach = 0.74, power = 0.6, frame = 'aluminium' } = {}) {
+function hexFrame({ spread = 1.0, half = 1.04, reach = 0.74, power = 0.6, frame = 'aluminium', mid = 0.12 } = {}) {
   return [
     { id: 'core', type: 'core' },
     beam('spine', [0.2, 0.16, 2.4], [0, 0, 0], 'core', frame),
-    ...[-1, 0, 1].flatMap((i) => [beam('axle_' + (i + 1), [Math.min(2.4, (i === 0 ? half + 0.26 : half) * 2 - 0.18), 0.12, 0.12], [0, 0, i * spread], 'spine', frame)]),
+    ...[-1, 0, 1].flatMap((i) => [beam('axle_' + (i + 1), [Math.min(2.4, (i === 0 ? half + 0.26 : half) * 2 - 0.18), i === 0 ? mid : 0.12, i === 0 ? mid : 0.12], [0, 0, i * spread], 'spine', frame)]),
     ...[-1, 0, 1].flatMap((i) => { const x = i === 0 ? half + 0.26 : half; return [...leg('leg_l' + (i + 1), x, i * spread, i === 0 ? 60 : 0, 'axle_' + (i + 1), { reach, power }), ...leg('leg_r' + (i + 1), -x, i * spread, i === 0 ? 0 : 60, 'axle_' + (i + 1), { reach, power })]; }),
   ];
 }
@@ -1701,9 +1701,9 @@ const MANTIS = {
   note: 'A six-legged walker with two steel clubs on a mast at its nose. It walks up to the enemy, squares up, and brings the clubs over and down one after the other. Each club is a single bar, so there is no head to snap off, and a struck club swings and spares the mast.',
   parts: [
     ...hexFrame({ frame: 'steel' }),
-    beam('mast', [0.16, 0.66, 0.16], [0, 0.36, 1.1], 'spine', 'steel'),
+    beam('mast', [0.22, 0.66, 0.22], [0, 0.36, 1.1], 'spine', 'steel'),
     beam('stay', [0.08, 0.85, 0.08], [0, 0.32, 0.76], 'mast', 'steel', { rot: [-50, 0, 0] }),
-    beam('yoke', [0.9, 0.12, 0.12], [0, 0.66, 1.1], 'mast', 'steel'),
+    beam('yoke', [0.9, 0.2, 0.2], [0, 0.66, 1.1], 'mast', 'steel'),
     ...hammer(0, 0.3), ...hammer(1, -0.3),
     block('keel', [0.3, 0.2, 0.6], [0, -0.18, -0.2], 'spine', 'steel'),
   ],
@@ -1722,14 +1722,15 @@ function mantisProgram(s, out, mem, lib) {
   }
   for (const i of arms) if (mem.swing !== i) hold(i, REST);
   // In reach and square on: stand and strike. The heads come down about 2.7 m ahead of the core.
-  const inReach = foe.distance > 1.8 && foe.distance < 3.4 && Math.abs(foe.bearing) < 0.3;
+  // Close in it still strikes: the clubs come down on anything within their length of the mast.
+  const inReach = foe.distance < 3.4 && Math.abs(foe.bearing) < (foe.distance < 2 ? 0.6 : 0.3);
   if (inReach && arms.length) {
-    out.say = 'in reach, bringing the hammers down';
+    out.say = foe.distance < 1.9 ? 'tangled up with it, clubbing it where it stands' : 'in reach, bringing the clubs down';
     walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.4, 0.4));
     if (mem.swing == null && s.t > (mem.cool || 0)) { const i = arms.includes(mem.next) ? mem.next : arms[0]; mem.swing = i; mem.lift = false; mem.until = s.t + 0.9; mem.cool = s.t + 0.45; }
     return;
   }
-  if (foe.distance <= 1.8 && arms.length) { out.say = 'too close to swing, stepping back'; const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 2, -0.4, 0.4)); return; }
+  if (foe.distance <= 1.8 && arms.length && Math.abs(foe.bearing) > 1.2) { out.say = 'it is on my flank, stepping clear'; const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 2, -0.4, 0.4)); return; }
   // Closing in: stop at striking distance, not on top of it.
   const n = stalk(s, out, mem, lib, SELF, { keep: arms.length ? 2.6 : 0 });
   if (n.arrived && arms.length) { out.say = 'squaring up to strike'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.5, 0.5)); }
@@ -1947,7 +1948,7 @@ function scorpionProgram(s, out, mem, lib) {
     else if (mem.strike === 'up') { out.tail = lib.clamp((-0.05 - tail.angle) * 1.2, -0.7, 0.7); if (tail.angle < 0.4 || s.t > mem.until) mem.strike = null; }
     else out.tail = lib.clamp((-0.05 - tail.angle) * 1.2, -0.5, 0.5);
   }
-  const front = Math.abs(foe.bearing) < 0.3, inClaws = foe.distance > 2.2 && foe.distance < 4.6 && front, underTail = foe.distance > 2.4 && foe.distance < 4.3 && Math.abs(foe.bearing) < 0.22;
+  const front = Math.abs(foe.bearing) < 0.3, inClaws = foe.distance < 4.6 && (front || foe.distance < 2.4 && Math.abs(foe.bearing) < 0.7), underTail = foe.distance < 4.3 && Math.abs(foe.bearing) < (foe.distance < 2.4 ? 0.5 : 0.22);
   // The claws: wide open on the way in, then snap, hold a moment, and open again.
   if (mem.snap > s.t) claws(SHUT, SHUT, 1);
   else if (inClaws && s.t > (mem.reopen || 0)) { mem.snap = s.t + 0.45; mem.reopen = s.t + 1.3; claws(SHUT, SHUT, 1); }
@@ -1958,7 +1959,7 @@ function scorpionProgram(s, out, mem, lib) {
     if (underTail && tail && flat && !mem.strike && s.t > (mem.cool || 0)) { mem.strike = 'down'; mem.until = s.t + 1.1; mem.cool = s.t + 1.6; }
     return;
   }
-  if (foe.distance <= 2.2) { out.say = 'too close for the claws, stepping back'; const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 2, -0.4, 0.4), PEDE_L, PEDE_R); return; }
+  if (foe.distance <= 2.2 && Math.abs(foe.bearing) > 1.2) { out.say = 'it is on my flank, stepping clear'; const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 2, -0.4, 0.4), PEDE_L, PEDE_R); return; }
   const n = stalk(s, out, mem, lib, SELF, { keep: 3.4, ...legs });
   if (n.arrived) { out.say = 'turning the claws onto it'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.5, 0.5), PEDE_L, PEDE_R); }
 }
@@ -1996,6 +1997,89 @@ function dreadnoughtProgram(s, out, mem, lib) {
   if (foe.distance < 3.5) out.say = 'walking the rotor into it';
 }
 
+// ── Bramble ────────────────────────────────────────────────────────────────
+// Built for the tangle. Two machines that meet usually lock together, legs in legs, and then neither weapon
+// reaches. Bramble has no safe side to lock onto: a flat rotor at each end and an upright saw bar outboard of the
+// legs on each flank. Whatever is touching it is being hit, and it does not need to get free to do it.
+const saw = (side, x) => ({ id: 'saw_' + side, type: 'beam', material: 'steel', size: [0.16, 0.7, 0.2], pos: [x, 0, 0], parent: 'axle_1', joint: { type: 'motor', axis: [1, 0, 0], gear: 1, power: 1 } });
+const BRAMBLE = {
+  name: 'Bramble',
+  note: 'A six-legged walker with something spinning on every side: a flat steel rotor at each end and an upright saw bar outside the legs on each flank. It is built to win the tangle. Anything locked against it is being hit the whole time.',
+  parts: [
+    ...hexFrame({ frame: 'steel', mid: 0.2 }),
+    { id: 'rotor_f', type: 'beam', material: 'steel', size: [1.7, 0.14, 0.2], pos: [0, 0.26, 1.2], parent: 'spine', joint: { type: 'motor', axis: [0, 1, 0], gear: 3, power: 1 } },
+    { id: 'rotor_b', type: 'beam', material: 'steel', size: [1.7, 0.14, 0.2], pos: [0, 0.26, -1.2], parent: 'spine', joint: { type: 'motor', axis: [0, 1, 0], gear: 3, power: 1 } },
+    saw('l', 1.66), saw('r', -1.66),
+    block('keel', [0.3, 0.2, 0.5], [0, -0.18, 0], 'spine', 'steel'),
+  ],
+};
+function brambleProgram(s, out, mem, lib) {
+  const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 2.2, mem };
+  out.rotor_f = 1; out.rotor_b = -1; out.saw_l = 1; out.saw_r = 1;
+  if (righting(s, out)) return;
+  const b = foe.bearing, back = Math.abs(b) > 2.2, side = !back && Math.abs(b) > 0.8;
+  if (foe.distance < 3.2) {
+    // At close quarters it does not try to get free. It leans whichever weapon is nearest into the enemy.
+    if (back) { out.say = 'grinding the rear rotor into it'; const g = lib.guard(s, -0.7, SELF); walk(s, out, mem, lib, g.drive, lib.clamp((b > 0 ? b - Math.PI : b + Math.PI) * 2, -0.4, 0.4)); return; }
+    if (side) { out.say = 'it is on my flank, in the saw: holding it there'; walk(s, out, mem, lib, 0, lib.clamp(Math.sin(s.t * 3) * 0.3, -0.3, 0.3)); return; }
+    out.say = 'grinding the front rotor into it'; const g = lib.guard(s, 0.7, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(b * 2, -0.4, 0.4)); return;
+  }
+  stalk(s, out, mem, lib, SELF);
+}
+
+// ── Warden ─────────────────────────────────────────────────────────────────
+// The other answer to the tangle: do not let it happen. Warden is Mantis with a steel fender ahead of each front
+// leg, so an enemy meets a bar and not the spokes, and a piston fist in its nose. When something gets inside the
+// clubs' reach the fist punches it back out to where they land.
+const WARDEN = {
+  name: 'Warden',
+  note: 'Mantis with two additions against tangling: steel fenders ahead of the front legs, so nothing gets in among the spokes, and a piston fist in the nose that punches an enemy back out to where the two clubs come down.',
+  parts: [
+    ...hexFrame({ frame: 'steel' }),
+    beam('mast', [0.22, 0.66, 0.22], [0, 0.36, 1.1], 'spine', 'steel'),
+    beam('stay', [0.08, 0.85, 0.08], [0, 0.32, 0.76], 'mast', 'steel', { rot: [-50, 0, 0] }),
+    beam('yoke', [0.9, 0.2, 0.2], [0, 0.66, 1.1], 'mast', 'steel'),
+    ...hammer(0, 0.3), ...hammer(1, -0.3),
+    block('keel', [0.3, 0.2, 0.6], [0, -0.18, -0.4], 'spine', 'steel'),
+    beam('bow', [1.5, 0.2, 0.2], [0, 0, 1.3], 'spine', 'steel'),
+    beam('strut_l', [0.2, 0.2, 0.9], [0.65, 0, 1.75], 'bow', 'steel'),
+    beam('strut_r', [0.2, 0.2, 0.9], [-0.65, 0, 1.75], 'bow', 'steel'),
+    beam('fender_l', [0.95, 0.2, 0.2], [0.98, 0, 2.1], 'strut_l', 'steel'),
+    beam('fender_r', [0.95, 0.2, 0.2], [-0.98, 0, 2.1], 'strut_r', 'steel'),
+    { id: 'fist', type: 'block', material: 'steel', size: [0.4, 0.3, 0.3], pos: [0, -0.02, 1.85], parent: 'bow', joint: { type: 'piston', axis: [0, 0, 1], stroke: 0.6, gear: 1 } },
+  ],
+};
+function wardenProgram(s, out, mem, lib) {
+  const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 2.3, mem }, REST = -0.05, DOWN = 3.6;
+  const arms = [0, 1].filter((i) => me.joints['club_' + i]);
+  const hold = (i, to, max = 0.6) => { const j = me.joints['club_' + i]; if (j) out['club_' + i] = lib.clamp((to - j.angle) * 1.2, -max, max); };
+  const fist = me.joints.fist;
+  out.fist = s.t < (mem.punch || 0) ? 1 : 0;
+  if (me.upright < 0.2) { mem.down = (mem.down || 0) + 1; out.say = 'tipped over, kicking and levering up with the clubs'; for (const i of arms) out['club_' + i] = mem.down < 60 ? 0 : Math.sin(s.t * 2) > 0 ? 0.25 : -0.25; for (const id of LEGS_L) out[id] = 1; for (const id of LEGS_R) out[id] = -1; return; }
+  if (mem.swing != null) {
+    const i = mem.swing, j = me.joints['club_' + i];
+    if (!j) mem.swing = null;
+    else if (mem.lift) { hold(i, REST, 0.8); if (j.angle < 0.4 || s.t > mem.until) { mem.swing = null; mem.lift = false; mem.next = 1 - i; } }
+    else { out['club_' + i] = 1; if (j.angle > DOWN || s.t > mem.until) { mem.lift = true; mem.until = s.t + 2; } }
+  }
+  for (const i of arms) if (mem.swing !== i) hold(i, REST);
+  const front = Math.abs(foe.bearing) < 0.5;
+  // Inside the clubs' reach: punch it back out. The fist needs a couple of seconds to recharge between punches.
+  if (fist && foe.distance < 2.5 && front && fist.charge > 0.95 && fist.extension < 0.05) mem.punch = s.t + 0.3;
+  const inReach = foe.distance < 3.5 && Math.abs(foe.bearing) < (foe.distance < 2 ? 0.6 : 0.3);
+  if (inReach && arms.length) {
+    out.say = s.t < (mem.punch || 0) + 0.4 ? 'punching it back to where the clubs land' : 'in reach, bringing the clubs down';
+    walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.4, 0.4));
+    if (mem.swing == null && s.t > (mem.cool || 0)) { const i = arms.includes(mem.next) ? mem.next : arms[0]; mem.swing = i; mem.lift = false; mem.until = s.t + 0.9; mem.cool = s.t + 0.45; }
+    return;
+  }
+  if (foe.distance <= 1.8 && Math.abs(foe.bearing) > 1.2) { out.say = 'it is on my flank, stepping clear'; const g = lib.guard(s, -0.8, SELF); walk(s, out, mem, lib, g.drive, lib.clamp(foe.bearing * 2, -0.4, 0.4)); return; }
+  // With the clubs gone the fist is the weapon: keep the nose on it and keep punching.
+  if (!arms.length && fist && foe.distance < 2.8) { out.say = 'clubs gone, punching with the fist'; walk(s, out, mem, lib, front ? 0.4 : 0, lib.clamp(foe.bearing * 2, -0.5, 0.5)); return; }
+  const n = stalk(s, out, mem, lib, SELF, { keep: arms.length ? 2.8 : 0 });
+  if (n.arrived && arms.length) { out.say = 'squaring up to strike'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.5, 0.5)); }
+}
+
 const ALL = [
   { build: STRIDER, program: striderProgram },
   { build: MANTIS, program: mantisProgram },
@@ -2005,6 +2089,8 @@ const ALL = [
   { build: CENTIPEDE, program: centipedeProgram },
   { build: SCORPION, program: scorpionProgram },
   { build: DREADNOUGHT, program: dreadnoughtProgram },
+  { build: BRAMBLE, program: brambleProgram },
+  { build: WARDEN, program: wardenProgram },
 ];
 const ROSTER = ALL;
 
@@ -2355,6 +2441,8 @@ for (const [id, def] of [['botA', 2], ['botB', 0]]) {
 }
 // Curated fights, each picked to show one idea. Choosing a machine, challenge or seed by hand leaves the showcase.
 const SHOWS = [
+  { label: 'Winning the tangle', a: 'Bramble', b: 'Dreadnought', ch: 'Downs', seed: 1, watch: 'Machines that meet usually lock together. Bramble is built for that: a rotor at each end and a saw bar on each flank, so whatever is locked against it is being hit the whole time.' },
+  { label: 'Fist and clubs', a: 'Warden', b: 'Thresher', ch: 'Riverlands', seed: 1, watch: 'The other answer to tangling: fenders keep the enemy out of the legs, and a piston fist punches it back to where the two clubs come down.' },
   { label: 'Claws and tail', a: 'Scorpion', b: 'Strider', ch: 'Downs', seed: 1, watch: 'Scorpion is one of the two large machines: ten legs, two claws that snap shut across its front, and a tail club that comes over the top onto whatever the claws have caught.' },
   { label: 'Two giants', a: 'Scorpion', b: 'Dreadnought', ch: 'Riverlands', seed: 1, watch: 'Dreadnought carries a spinning bar at each end under an armoured shell. Both machines wade the river and meet in the middle.' },
   { label: 'Clubs at the river', a: 'Mantis', b: 'Slinger', ch: 'Riverlands', seed: 1, watch: 'Slinger throws from range. Mantis wades straight across and brings two steel clubs over and down.' },

@@ -345,6 +345,8 @@ for (const [id, def] of [['botA', 2], ['botB', 0]]) {
 }
 // Curated fights, each picked to show one idea. Choosing a machine, challenge or seed by hand leaves the showcase.
 const SHOWS = [
+  { label: 'Winning the tangle', a: 'Bramble', b: 'Dreadnought', ch: 'Downs', seed: 1, watch: 'Machines that meet usually lock together. Bramble is built for that: a rotor at each end and a saw bar on each flank, so whatever is locked against it is being hit the whole time.' },
+  { label: 'Fist and clubs', a: 'Warden', b: 'Thresher', ch: 'Riverlands', seed: 1, watch: 'The other answer to tangling: fenders keep the enemy out of the legs, and a piston fist punches it back to where the two clubs come down.' },
   { label: 'Claws and tail', a: 'Scorpion', b: 'Strider', ch: 'Downs', seed: 1, watch: 'Scorpion is one of the two large machines: ten legs, two claws that snap shut across its front, and a tail club that comes over the top onto whatever the claws have caught.' },
   { label: 'Two giants', a: 'Scorpion', b: 'Dreadnought', ch: 'Riverlands', seed: 1, watch: 'Dreadnought carries a spinning bar at each end under an armoured shell. Both machines wade the river and meet in the middle.' },
   { label: 'Clubs at the river', a: 'Mantis', b: 'Slinger', ch: 'Riverlands', seed: 1, watch: 'Slinger throws from range. Mantis wades straight across and brings two steel clubs over and down.' },

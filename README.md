@@ -2,7 +2,7 @@
 
 A 3D simulated arena where AI models build battlers from parts and pit them against each other. It has two goals: a test space where pre-training gives little help, and something fun to watch. What it means to reward is creative problem solving under conditions the builder has not seen before.
 
-This is an early prototype (v0.7). It has a family of challenges fought over land with high ground and rivers, a kit of plain pieces, breakable joints, eight hand-built machines (two of them large), and a viewer that replays a fight and shows what each machine says it is doing. No model calls yet: the machines here are written by hand, to the standard a model's would need to reach.
+This is an early prototype (v0.7). It has a family of challenges fought over land with high ground and rivers, a kit of plain pieces, breakable joints, ten hand-built machines (two of them large, two built for close quarters), and a viewer that replays a fight and shows what each machine says it is doing. No model calls yet: the machines here are written by hand, to the standard a model's would need to reach.
 
 The kit and the physics stay fixed. What changes from round to round is the challenge: the shape of the arena, the ground, the surface and gravity. There is one way to win everywhere: break the enemy apart or put it off the floor. A machine that only works in one arena does badly.
 
@@ -15,7 +15,7 @@ npm install
 npm run build      # writes dist/index.html
 ```
 
-Open `dist/index.html` in a browser (it needs an internet connection to load its two libraries). The Showcase strip at the top steps through nine fights, each picked to show one idea. Or pick two machines, a challenge and a seed yourself.
+Open `dist/index.html` in a browser (it needs an internet connection to load its two libraries). The Showcase strip at the top steps through eleven fights, each picked to show one idea. Or pick two machines, a challenge and a seed yourself.
 
 ```
 npm run quick            # a spot check for iterating: 12 fights over four maps, a few minutes
@@ -82,7 +82,7 @@ Two machines of the same weight and grip pushing head on is a deadlock, and it s
 A challenge is plain data (`src/challenges.js`), and a program receives it whole as `s.challenge`, with the same conditions in words as `s.challenge.brief`. `drawChallenge(n)` draws round `n` from the family:
 
 - **Arena**: an open square, a small square, two platforms joined by a bridge, two platforms with a gap between them, a square with solid pillars, or three islands in a row.
-- **Ground**: on a single platform, land like a game map, as a grid of heights in `s.challenge.terrain` (and `s.challenge.water` where there is a river). It rolls gently and is walkable everywhere except where it is meant not to be. *Valley*: a winding river across the middle, about half a metre deep except at two fords, and a flat-topped hill on each side with steep sides and one ramp. *High ground*: one hill in the middle with two ramps. *Riverlands*: the river alone. *Downs*: open rises and hollows. Every map is the same from either end. Split arenas (bridge, gap, islands, pillars) are flat or rubble. The stepped rock of v0.6 (crags, terraces) is still in the generator for rounds that ask for it, but is no longer drawn.
+- **Ground**: on a single platform 22 to 28 m across, land like a game map, as a grid of heights in `s.challenge.terrain` (and `s.challenge.water` where there is a river). It rolls gently and is walkable everywhere except where it is meant not to be. *Valley*: a winding river across the middle, about half a metre deep except at two fords, and a flat-topped hill on each side with steep sides and one ramp. *High ground*: one hill in the middle with two ramps. *Riverlands*: the river alone. *Downs*: open rises and hollows. Every map is the same from either end. Split arenas (bridge, gap, islands, pillars) are flat or rubble. The stepped rock of v0.6 (crags, terraces) is still in the generator for rounds that ask for it, but is no longer drawn.
 - **Surface**: normal, ice, or sticky.
 - **Gravity**: normal, a third, or half again as strong.
 
@@ -100,7 +100,7 @@ Each fight produces three layers of data: a summary, timestamped events (hits, p
 
 ## The machines
 
-Seven walk on spoked legs and one has wheels. The flat walkers (Strider, Thresher, Centipede) work either way up.
+Nine walk on spoked legs and one has wheels. The flat walkers (Strider, Thresher, Centipede) work either way up.
 
 Two are large, about 700 kg and nearly 90 parts, built on a ten-legged frame with a thick steel backbone:
 
@@ -115,6 +115,15 @@ The rest weigh 250 to 420 kg:
 - **Slinger** (68 parts, 403 kg): three throwing arms. Works out the swing for the range, the gravity and the difference in height, leads a moving target, and clubs with the arms once the shot is gone.
 - **Centipede** (80 parts, 407 kg): ten legs and a ram at each end. Walks straight across gaps up to about 1.9 m.
 - **Rover** (14 parts, 423 kg): six of the biggest tyres the kit allows and a steel ram. Fast on open ground. Its tyres float, so it keeps to the fords.
+
+### The tangle
+
+On maps this size two machines spend about 85% of a fight within 3.5 m of each other, usually locked together with legs in legs, where a weapon built for arm's length does nothing. Two machines are built around that:
+
+- **Bramble** (52 parts, 378 kg): a flat rotor at each end and an upright saw bar outboard of the legs on each flank. It has no safe side to lock onto and does not try to get free: it leans the nearest weapon in.
+- **Warden** (59 parts, 532 kg): Mantis with steel fenders ahead of the front legs, so an enemy meets a bar and not the spokes, and a piston fist in the nose that punches it back out to where the clubs land.
+
+Mantis and Scorpion also keep striking when something is inside their reach, where before they tried to step back. `npm run quick` reports the seconds spent at close quarters and how often something broke there.
 
 ### What makes a weapon work
 
@@ -131,7 +140,7 @@ The allowance for one machine is 1200 kg, 300 parts and a box 8 x 5 x 9 m.
 - `src/challenges.js`: the challenge family and the generator that draws a round.
 - `src/sim.js`: the simulator. All tunable values are in `CONFIG` at the top.
 - `src/lib.js`: helpers passed to control programs.
-- `src/bots.js`: the eight machines and their programs.
+- `src/bots.js`: the ten machines and their programs.
 - `src/viewer.js`, `src/page.html`: the replay page.
 - `scripts/build.mjs`: inlines everything into `dist/index.html`.
 - `scripts/quick.mjs`, `scripts/gauntlet.mjs`: the spot check and the full table.
@@ -140,8 +149,9 @@ The allowance for one machine is 1200 kg, 300 parts and a box 8 x 5 x 9 m.
 
 ## Known rough edges
 
-- In a 16-fight spot check of v0.7, 2 fights ended in a knockout, 9 were decided on damage and 5 were draws. Weapons break things now, but most fights still go to the clock.
-- Machines that meet nose to nose can lock together and neither gets free. If no blow lands for 10 seconds the fight is called.
+- In a 20-fight spot check, 6 fights ended in a knockout, 11 were decided on damage and 3 were draws. Something broke every 7.4 s at close quarters, against every 11.5 s before the close-quarters changes.
+- Bramble won all four of its fights and lost almost nothing. It may simply be too good; nothing here has an answer to it yet.
+- Warden's fist and fenders work as built, but it lost to plain Mantis and to Bramble. Keeping the enemy out is not yet worth the weight.
 - Rivers stand still. A current that carries floating machines toward the edge is an obvious next step.
 - Hills are grids of heights one metre apart, so cliffs are steep slopes and not sheer walls. A walker can sometimes scramble up one.
 - Where there is a gap with no way across, only a thrower or a long machine can do anything.
