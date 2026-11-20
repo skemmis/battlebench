@@ -11,11 +11,16 @@ const admitted = rows.filter((r) => r.type === 'verdict' && r.admitted).map((r) 
 // Each design goes in a block of its own, so its names do not meet another design's, and adds itself to the list.
 // A behaviour entry has no build: it takes its base machine's, under its own name.
 const files = existsSync(at('evolve/designs/')) ? readdirSync(at('evolve/designs/')).filter((f) => f.endsWith('.js')) : [];
-const designs = [];
-for (const f of files) {
-  const mod = await import(at('evolve/designs/' + f).href), name = mod.build ? mod.build.name : mod.name;
+// The base may be a design that was never admitted (so is not on the page), so its build is written into the page here.
+const designs = [], mods = [];
+for (const f of files) mods.push({ f, mod: await import(at('evolve/designs/' + f).href) });
+const { ALL: ROSTER } = await import(at('src/bots.js').href);
+const baseBuild = (base) => (mods.find((m) => m.mod.build && m.mod.build.name === base) || { mod: ROSTER.find((m) => m.build.name === base) }).mod.build;
+for (const { f, mod } of mods) {
+  const name = mod.build ? mod.build.name : mod.name;
   if (!admitted.includes(name)) continue;
-  const add = mod.build ? 'ALL.push({ build, program });' : 'ALL.push({ build: { ...ALL.find((m) => m.build.name === base).build, name, note: typeof note === "string" ? note : undefined }, program });';
+  if (!mod.build && !baseBuild(mod.base)) throw new Error(`${name}: no machine called ${mod.base} to take a body from`);
+  const add = mod.build ? 'ALL.push({ build, program });' : `ALL.push({ build: { ...${JSON.stringify(baseBuild(mod.base))}, name, note: typeof note === "string" ? note : undefined }, program });`;
   designs.push({ name, code: `{\n${strip(readFileSync(at('evolve/designs/' + f), 'utf8'))}\n${add}\n}` });
 }
 // In the order they were admitted, so a behaviour entry comes after its base.
