@@ -21,11 +21,13 @@ function leg(name, x, z, offsetDeg, parent, { reach = 0.74, power = 0.6 } = {}) 
 }
 // A six-legged frame: a spine, three axles, and legs built a sixth of a turn apart so that three feet are always
 // coming down as three lift. The middle legs sit further out so the spokes pass each other.
-function hexFrame({ spread = 1.0, half = 1.04, reach = 0.74, power = 0.6, frame = 'aluminium', mid = 0.12 } = {}) {
+function hexFrame({ spread = 1.0, half = 1.04, reach = 0.74, power = 0.6, frame = 'aluminium', mid = 0.2 } = {}) {
   return [
     { id: 'core', type: 'core' },
-    beam('spine', [0.2, 0.16, 2.4], [0, 0, 0], 'core', frame),
-    ...[-1, 0, 1].flatMap((i) => [beam('axle_' + (i + 1), [Math.min(2.4, (i === 0 ? half + 0.26 : half) * 2 - 0.18), i === 0 ? mid : 0.12, i === 0 ? mid : 0.12], [0, 0, i * spread], 'spine', frame)]),
+    // The chassis is built heavy: a thick spine, and axles of thick aluminium, which make a stronger joint than
+    // thin steel for the same weight. Legs, plates and weapons can be torn off it; the frame itself holds.
+    beam('spine', [0.2, 0.2, 2.4], [0, 0, 0], 'core', frame),
+    ...[-1, 0, 1].flatMap((i) => [beam('axle_' + (i + 1), [Math.min(2.4, (i === 0 ? half + 0.26 : half) * 2 - 0.18), mid, mid], [0, 0, i * spread], 'spine', 'aluminium')]),
     ...[-1, 0, 1].flatMap((i) => { const x = i === 0 ? half + 0.26 : half; return [...leg('leg_l' + (i + 1), x, i * spread, i === 0 ? 60 : 0, 'axle_' + (i + 1), { reach, power }), ...leg('leg_r' + (i + 1), -x, i * spread, i === 0 ? 0 : 60, 'axle_' + (i + 1), { reach, power })]; }),
   ];
 }
@@ -204,11 +206,11 @@ export const SLINGER = {
     plate('deck', [1.3, 0.06, 1.8], [0, 0.12, 0], 'spine'),
     block('keel', [0.4, 0.22, 0.6], [0, -0.2, 0.3], 'spine', 'steel'),
     ...['l', 'r'].flatMap((side) => { const sx = side === 'l' ? 1 : -1; return [
-      beam('tower_' + side, [0.14, 1.0, 0.14], [sx * 0.66, 0.5, 0], 'axle_1'),
+      beam('tower_' + side, [0.2, 1.0, 0.2], [sx * 0.66, 0.5, 0], 'axle_1'),
       beam('brace_f' + side, [0.08, 1.15, 0.08], [sx * 0.66, 0.42, 0.42], 'tower_' + side, 'aluminium', { rot: [-36, 0, 0] }),
       beam('brace_b' + side, [0.08, 1.15, 0.08], [sx * 0.66, 0.42, -0.42], 'tower_' + side, 'aluminium', { rot: [36, 0, 0] }),
     ]; }),
-    beam('axle', [1.46, 0.1, 0.1], [0, 1.0, 0], 'tower_l', 'steel'),
+    beam('axle', [1.46, 0.16, 0.16], [0, 1.0, 0], 'tower_l', 'steel'),
     ...ARM_X.flatMap((x, i) => [
       { id: 'arm_' + i, type: 'beam', material: 'aluminium', size: [0.1, 0.1, 2.0], pos: [x, 1.0, -0.5], parent: 'axle', joint: { type: 'motor', axis: [1, 0, 0], pivot: [x, 1.0, 0], gear: 6, power: 1, limits: [-14, 215] } },
       block('weight_' + i, [0.2, 0.3, 0.2], [x, 0.85, 0.4], 'arm_' + i, 'steel'),
@@ -284,10 +286,11 @@ export const ROVER = {
   parts: [
     { id: 'core', type: 'core' },
     beam('spine', [0.2, 0.16, 2.4], [0, 0, 0], 'core', 'steel'),
-    ...[-1, 0, 1].flatMap((i) => [beam('axle_' + (i + 1), [1.7, 0.14, 0.14], [0, 0, i * 1.22], 'spine'), tyre('wl_' + (i + 1), 1.0, i * 1.22, 'axle_' + (i + 1)), tyre('wr_' + (i + 1), -1.0, i * 1.22, 'axle_' + (i + 1))]),
+    ...[-1, 0, 1].flatMap((i) => [beam('axle_' + (i + 1), [1.7, 0.2, 0.2], [0, 0, i * 1.22], 'spine'), tyre('wl_' + (i + 1), 1.0, i * 1.22, 'axle_' + (i + 1)), tyre('wr_' + (i + 1), -1.0, i * 1.22, 'axle_' + (i + 1))]),
     plate('deck', [1.4, 0.06, 2.2], [0, 0.14, 0], 'spine'),
     beam('horn', [0.2, 0.2, 0.8], [0, 0.0, 1.6], 'spine', 'steel'),
-    { id: 'ram', type: 'wedge', material: 'steel', size: [1.3, 0.4, 0.5], pos: [0, -0.05, 2.2], parent: 'horn' },
+    // The ram is on a piston: in contact, it shoves the enemy a further half metre, which is often the edge.
+    { id: 'ram', type: 'wedge', material: 'steel', size: [1.8, 0.4, 0.5], pos: [0, -0.05, 2.2], parent: 'horn', joint: { type: 'piston', axis: [0, 0, 1], stroke: 0.6, gear: 2 } },
   ],
 };
 export function roverProgram(s, out, mem, lib) {
@@ -298,6 +301,9 @@ export function roverProgram(s, out, mem, lib) {
   if (s.t < (mem.back || 0)) { out.say = 'backing off for a run-up'; const g = lib.guard(s, -1, SELF); drive(g.drive, lib.clamp(foe.bearing, -0.3, 0.3)); if (foe.distance > 6) mem.back = 0; return; }
   mem.press = foe.distance < 3.6 && Math.abs(foe.bearing) < 0.6 && me.speed < 0.5 ? (mem.press || 0) + 1 : 0;
   if (mem.press > 25) { mem.press = 0; mem.back = s.t + 1.4; }
+  const ramJ = me.joints.ram;
+  if (ramJ && foe.distance < 4 && Math.abs(foe.bearing) < 0.5 && ramJ.charge > 0.95 && ramJ.extension < 0.05) mem.shove = s.t + 0.3;
+  out.ram = s.t < (mem.shove || 0) ? 1 : 0;
   const h = hunt(s, lib), open = lib.plan(s, h.x, h.z, SELF).reachable, n = lib.nav(s, h.x, h.z, { ...SELF, stopAt: !open ? 0.8 : h.charge ? 0 : 0.6, reverse: !open });
   out.say = n.backing ? 'wheels jammed on a ledge, backing off' : n.braking ? 'braking for the edge' : !n.reachable && foe.distance > 3.5 ? 'no way my wheels can take, getting as near as I can' : h.say;
   drive(n.drive, n.turn);
@@ -306,17 +312,17 @@ export function roverProgram(s, out, mem, lib) {
 // ── Centipede ──────────────────────────────────────────────────────────────
 // Ten legs on a frame nearly five metres long. It is long enough to walk straight across a gap that stops
 // everything else: by the time its middle is over the drop, two pairs of legs are already on the far side.
-const PEDE_Z = [-1.7, -0.85, 0, 0.85, 1.7];
+const PEDE_Z = [-1.8, -0.9, 0, 0.9, 1.8];
 const PEDE_L = PEDE_Z.map((_, i) => 'leg_l' + i), PEDE_R = PEDE_Z.map((_, i) => 'leg_r' + i);
 export const CENTIPEDE = {
   name: 'Centipede',
   note: 'Ten spoked legs on a frame nearly five metres long, with a steel ram at each end. It walks straight across gaps up to about 1.9 m wide, because some of its legs are always on the ground on one side or the other, and it works either way up.',
   parts: [
     { id: 'core', type: 'core' },
-    beam('spine_f', [0.2, 0.18, 1.9], [0, 0, 0.95], 'core', 'steel'),
-    beam('spine_b', [0.2, 0.18, 1.9], [0, 0, -0.95], 'core', 'steel'),
+    beam('spine_f', [0.24, 0.24, 1.9], [0, 0, 0.95], 'core', 'steel'),
+    beam('spine_b', [0.24, 0.24, 1.9], [0, 0, -0.95], 'core', 'steel'),
     ...PEDE_Z.flatMap((z, i) => { const x = i % 2 ? 1.3 : 1.04, parent = z > 0 ? 'spine_f' : z < 0 ? 'spine_b' : 'core'; return [
-      beam('axle_' + i, [Math.min(2.4, x * 2 - 0.18), 0.12, 0.12], [0, 0, z], parent, 'steel'),
+      beam('axle_' + i, [Math.min(2.4, x * 2 - 0.18), 0.2, 0.2], [0, 0, z], parent, 'aluminium'),
       ...leg('leg_l' + i, x, z, i % 2 ? 60 : 0, 'axle_' + i, { reach: 0.7 }), ...leg('leg_r' + i, -x, z, i % 2 ? 0 : 60, 'axle_' + i, { reach: 0.7 }),
     ]; }),
     { id: 'ram_f', type: 'wedge', material: 'steel', size: [0.9, 0.3, 0.4], pos: [0, 0, 2.1], parent: 'spine_f' },
@@ -346,7 +352,7 @@ const pedeFrame = (frame = 'steel', power = 1, sp = 0.26) => [
   beam('spine_f', [sp, sp, 1.9], [0, 0, 0.95], 'core', frame),
   beam('spine_b', [sp, sp, 1.9], [0, 0, -0.95], 'core', frame),
   ...PEDE_Z.flatMap((z, i) => { const x = i % 2 ? 1.3 : 1.04, parent = z > 0 ? 'spine_f' : z < 0 ? 'spine_b' : 'core'; return [
-    beam('axle_' + i, [Math.min(2.4, x * 2 - 0.18), 0.12, 0.12], [0, 0, z], parent, frame),
+    beam('axle_' + i, [Math.min(2.4, x * 2 - 0.18), 0.2, 0.2], [0, 0, z], parent, 'aluminium'),
     ...leg('leg_l' + i, x, z, i % 2 ? 60 : 0, 'axle_' + i, { reach: 0.7, power }), ...leg('leg_r' + i, -x, z, i % 2 ? 0 : 60, 'axle_' + i, { reach: 0.7, power }),
   ]; }),
 ];
@@ -356,8 +362,8 @@ export const SCORPION = {
   note: 'A large machine on ten legs, nearly seven metres from tail to claw tips. Two steel claws stand open across its front and snap shut on whatever comes between them, and a tail club comes over the top onto anything held there. It weighs about twice what the six-legged walkers do.',
   parts: [
     ...pedeFrame(),
-    beam('neck', [0.2, 0.2, 0.8], [0, 0, 2.3], 'spine_f', 'steel'),
-    beam('brow', [1.4, 0.16, 0.16], [0, 0, 2.68], 'neck', 'steel'),
+    beam('neck', [0.26, 0.26, 0.8], [0, 0, 2.3], 'spine_f', 'steel'),
+    beam('brow', [1.4, 0.22, 0.22], [0, 0, 2.68], 'neck', 'steel'),
     claw('l', 0.55), claw('r', -0.55),
     beam('mast', [0.22, 0.66, 0.22], [0, 0.44, 1.3], 'spine_f', 'steel'),
     beam('stay', [0.08, 0.9, 0.08], [0, 0.36, 0.95], 'mast', 'steel', { rot: [-50, 0, 0] }),
@@ -408,10 +414,10 @@ export const DREADNOUGHT = {
     ...pedeFrame(),
     rotor('rotor_f', 1.95, 'spine_f'), rotor('rotor_b', -1.95, 'spine_b'),
     // The shell stands on two posts and rides clear above the legs; the skirts hang outside them.
-    beam('post_f', [0.14, 0.8, 0.14], [0, 0.5, 0.45], 'spine_f', 'steel'),
-    beam('post_b', [0.14, 0.8, 0.14], [0, 0.5, -0.45], 'spine_b', 'steel'),
-    beam('rib_f', [2.4, 0.1, 0.1], [0, 0.92, 0.45], 'post_f', 'steel'),
-    beam('rib_b', [2.4, 0.1, 0.1], [0, 0.92, -0.45], 'post_b', 'steel'),
+    beam('post_f', [0.2, 0.8, 0.2], [0, 0.5, 0.45], 'spine_f', 'steel'),
+    beam('post_b', [0.2, 0.8, 0.2], [0, 0.5, -0.45], 'spine_b', 'steel'),
+    beam('rib_f', [2.4, 0.16, 0.16], [0, 0.92, 0.45], 'post_f', 'steel'),
+    beam('rib_b', [2.4, 0.16, 0.16], [0, 0.92, -0.45], 'post_b', 'steel'),
     plate('roof', [2.0, 0.06, 2.4], [0, 1.0, 0], 'rib_f', 'aluminium'),
     plate('skirt_l', [0.06, 0.6, 2.4], [1.62, 0.62, 0], 'rib_f', 'aluminium', { rot: [0, 0, 18] }),
     plate('skirt_r', [0.06, 0.6, 2.4], [-1.62, 0.62, 0], 'rib_f', 'aluminium', { rot: [0, 0, -18] }),
@@ -514,6 +520,35 @@ export function wardenProgram(s, out, mem, lib) {
   if (n.arrived && arms.length) { out.say = 'squaring up to strike'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.5, 0.5)); }
 }
 
+// ── Ox ─────────────────────────────────────────────────────────────────────
+// The pusher. Nearly a tonne on ten legs, with a wide plough on a piston. It has no weapon at all: it gets on the
+// inboard side of the enemy, leans in with more weight and more feet on the ground than anything else here, and
+// when the plough is on it, the piston shoves it a further half metre at a time until the floor runs out.
+export const OX = {
+  name: 'Ox',
+  note: 'The pusher: nearly a tonne on ten legs, with a wide plough on a piston and steel ballast over its back legs. It has no weapon. It gets inboard of the enemy, leans in, and shoves it toward the edge half a metre at a stroke.',
+  parts: [
+    ...pedeFrame(),
+    beam('neck', [0.26, 0.26, 1.0], [0, 0, 2.4], 'spine_f', 'steel'),
+    { id: 'plough', type: 'wedge', material: 'aluminium', size: [2.0, 0.55, 0.7], pos: [0, -0.12, 3.2], parent: 'neck', joint: { type: 'piston', axis: [0, 0, 1], stroke: 0.6, gear: 2 } },
+    block('ballast_0', [0.6, 0.4, 0.6], [0, 0.33, -0.5], 'spine_b', 'steel'),
+    block('ballast_1', [0.6, 0.4, 0.6], [0, 0.33, -1.3], 'spine_b', 'steel'),
+    plate('yoke_l', [0.7, 0.08, 1.6], [0.5, 0.2, 0.9], 'spine_f', 'aluminium', { rot: [0, 0, -10] }),
+    plate('yoke_r', [0.7, 0.08, 1.6], [-0.5, 0.2, 0.9], 'spine_f', 'aluminium', { rot: [0, 0, 10] }),
+  ],
+};
+export function oxProgram(s, out, mem, lib) {
+  mem.long = true;
+  const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 3.4, margin: 2.6, span: 1.9, mem }, legs = { L: PEDE_L, R: PEDE_R };
+  const p = me.joints.plough, front = Math.abs(foe.bearing) < 0.45;
+  if (p && foe.distance < 4.6 && front && p.charge > 0.95 && p.extension < 0.05) mem.shove = s.t + 0.35;
+  out.plough = s.t < (mem.shove || 0) ? 1 : 0;
+  if (righting(s, out, PEDE_L, PEDE_R)) return;
+  const n = stalk(s, out, mem, lib, SELF, legs);
+  if (s.t < (mem.shove || 0) + 0.3) out.say = 'shoving it with the plough';
+  else if (foe.distance < 4.6 && front && !n.braking && !n.backing) out.say = 'leaning on it, pushing it toward the edge';
+}
+
 export const ALL = [
   { build: STRIDER, program: striderProgram },
   { build: MANTIS, program: mantisProgram },
@@ -525,5 +560,6 @@ export const ALL = [
   { build: DREADNOUGHT, program: dreadnoughtProgram },
   { build: BRAMBLE, program: brambleProgram },
   { build: WARDEN, program: wardenProgram },
+  { build: OX, program: oxProgram },
 ];
 export const ROSTER = ALL;

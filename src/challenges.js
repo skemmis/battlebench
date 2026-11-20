@@ -35,7 +35,7 @@ export const OPEN = {
 };
 
 const LAYOUTS = {
-  open: (r) => { const s = 24 + Math.round(r() * 4); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 4.5, reach: s / 2 - 5 }; },
+  open: (r) => { const s = 18 + Math.round(r() * 4); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 4, reach: s / 2 - 5 }; },
   small: (r) => { const s = 14 + Math.round(r() * 4); return { text: `a small ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 3.5, reach: s / 2 - 3.5 }; },
   bridge: (r) => {
     const w = chRound(4.5 + r() * 2.5), len = chRound(6 + r() * 4), isl = 12;
@@ -131,12 +131,11 @@ function drawCrags(L, G, r, spawnZ) {
 }
 
 // Land, in the way a game map has land: rolling ground you can walk anywhere on, flat-topped high ground with
-// sides too steep to climb and a ramp or two up, and a river that is slow to wade except at its fords. Every
+// sides too steep to climb and a ramp or two up. There is no water on any map (the engine can still do it). Every
 // map is the same seen from either end, so neither starting place is the better one.
 const LANDS = {
-  valley: { text: 'The land rolls gently. A river {wide} m wide crosses the middle, {deep} m deep except at two fords. On each side stands a flat-topped hill {high} m high with steep sides and one ramp up.', river: true, hills: 'twin', roll: 0.22 },
+  valley: { text: 'The land rolls gently. To each side of the middle stands a flat-topped hill {high} m high with steep sides and one ramp up.', river: false, hills: 'twin', roll: 0.22 },
   highground: { text: 'The land rolls gently around a flat-topped hill in the middle, {high} m high, with steep sides and two ramps up. Whoever holds the top looks down on the other.', river: false, hills: 'middle', roll: 0.25 },
-  riverlands: { text: 'The land rolls gently. A winding river {wide} m wide crosses the middle, {deep} m deep except at two fords.', river: true, hills: null, roll: 0.3 },
   downs: { text: 'Open rolling downs: rises and hollows up to {high} m, all of them walkable.', river: false, hills: null, roll: 0.7 },
 };
 function drawLand(L, K, r, spawnZ) {
@@ -147,8 +146,8 @@ function drawLand(L, K, r, spawnZ) {
   const BASE = 1, half = Math.min(f.w, f.d) / 2;
   // High ground.
   const hills = [], high = chRound(1.2 + r() * 0.5);
-  if (K.hills === 'twin') { const hx = half * (0.4 + r() * 0.2), hz = half * (0.36 + r() * 0.12), R = Math.min(2.6 + r() * 0.8, half * 0.22), a = Math.atan2(-hx, hz - spawnZ) + (r() - 0.5) * 0.5; /* the ramp faces the hill's own end of the map */ hills.push({ x: hx, z: -hz, R, ramps: [a] }, { x: -hx, z: hz, R, ramps: [a + Math.PI] }); }
-  if (K.hills === 'middle') { const a = r() * Math.PI; hills.push({ x: 0, z: 0, R: Math.max(1.8, Math.min(4.5, spawnZ - 5.4)), ramps: [a, a + Math.PI] }); }
+  if (K.hills === 'twin') { const hx = half * (0.4 + r() * 0.2), hz = half * (0.36 + r() * 0.12), R = Math.min(2.6 + r() * 0.8, half * 0.2), a = Math.atan2(-hx, hz - spawnZ) + (r() - 0.5) * 0.5; /* the ramp faces the hill's own end of the map */ hills.push({ x: hx, z: -hz, R, ramps: [a] }, { x: -hx, z: hz, R, ramps: [a + Math.PI] }); }
+  if (K.hills === 'middle') { const a = r() * Math.PI; hills.push({ x: 0, z: 0, R: Math.max(1.5, Math.min(3, spawnZ - 4.6)), ramps: [a, a + Math.PI] }); }
   // The river runs across the map between the two starting places, and winds.
   const wide = chRound(2.5 + r() * 1.5), deep = chRound(0.45 + r() * 0.2), amp = 1 + r() * 1.5, wave = (Math.PI * (1 + Math.floor(r() * 2))) / half, fordX = half * (0.3 + r() * 0.35), level = BASE - 0.2;
   const heights = new Float32Array(nx * nz);
@@ -157,7 +156,7 @@ function drawLand(L, K, r, spawnZ) {
     const x = x0 + ix, z = z0 + iz;
     let h = BASE + K.roll * (noise(x, z) + noise(-x, -z) - 1);
     // Level ground where each machine starts.
-    const pad = sm(4, 2, Math.hypot(x, Math.abs(z) - spawnZ));
+    const pad = sm(3.5, 2, Math.hypot(x, Math.abs(z) - spawnZ));
     h = h * (1 - pad) + BASE * pad;
     for (const m of hills) {
       const dx = x - m.x, dz = z - m.z, d = Math.hypot(dx, dz);
@@ -184,10 +183,10 @@ export function drawChallenge(seed, force = {}) {
   const gravityKey = force.gravity || pick(GRAVITIES, { normal: 3, low: 1.5, high: 1 });
   const L = LAYOUTS[layoutKey](r), S = SURFACES[surfaceKey], G = GRAVITIES[gravityKey];
   const spawnZ = chRound(L.spawnZ);
-  // Ground. Most rounds are fought over land with high ground and water. Drawn last, so it does not change the
+  // Ground. Most rounds are fought over land with high ground. Drawn last, so it does not change the
   // rest of a round. Land needs one unbroken platform; the stepped rock kinds remain for rounds that ask for them.
   const one = L.floor.length === 1 && !L.walls.length;
-  const groundKey = force.ground || (force.layout ? 'flat' : one ? pick({}, { valley: 3, highground: 2.5, riverlands: 2, downs: 1.5, flat: 1 }) : pick({}, { rubble: 1, flat: 2 }));
+  const groundKey = force.ground || (force.layout ? 'flat' : one ? pick({}, { valley: 3, highground: 2.5, downs: 2.5, flat: 1 }) : pick({}, { rubble: 1, flat: 2 }));
   let floor = L.floor, groundText = '', terrain = null, water = null;
   if (LANDS[groundKey]) {
     const land = drawLand(L, LANDS[groundKey], r, spawnZ);
@@ -252,7 +251,6 @@ export const NAMED = [
   OPEN,
   { ...drawChallenge(401, { layout: 'open', ground: 'valley', surface: 'normal', gravity: 'normal' }), name: 'Valley' },
   { ...drawChallenge(402, { layout: 'open', ground: 'highground', surface: 'normal', gravity: 'normal' }), name: 'High ground' },
-  { ...drawChallenge(403, { layout: 'open', ground: 'riverlands', surface: 'normal', gravity: 'normal' }), name: 'Riverlands' },
   { ...drawChallenge(404, { layout: 'open', ground: 'downs', surface: 'normal', gravity: 'normal' }), name: 'Downs' },
   { ...drawChallenge(405, { layout: 'open', ground: 'highground', surface: 'ice', gravity: 'normal' }), name: 'Icy heights' },
   { ...drawChallenge(406, { layout: 'open', ground: 'valley', surface: 'normal', gravity: 'low' }), name: 'Low gravity valley' },

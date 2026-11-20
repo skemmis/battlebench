@@ -162,7 +162,7 @@ test('the only ways to win are to break the enemy apart or put it off the floor;
 test('rounds are drawn over land of every kind, and stepped rock is still there for rounds that ask for it', () => {
   const kinds = new Set();
   for (let n = 1; n <= 40; n++) kinds.add(drawChallenge(n).keys.ground);
-  for (const k of ['valley', 'highground', 'riverlands', 'downs', 'flat']) assert.ok(kinds.has(k), `no ${k} round in the first 40`);
+  for (const k of ['valley', 'highground', 'downs', 'flat']) assert.ok(kinds.has(k), `no ${k} round in the first 40`);
   for (const [name, maxStep] of [['Crags', 0.6], ['Rubble', 0.3]]) {
     const ch = named(name), s = { challenge: ch };
     assert.ok(ch.floor.length > 50, `${name} has ${ch.floor.length} ledges`);
@@ -189,7 +189,7 @@ test('legs cross broken ground that wheels cannot: the walker reaches the enemy 
 
 test('machines stop for edges: across a gap on ice in low gravity nobody walks or drives off on their own', () => {
   const ch = drawChallenge(1, { layout: 'gap', surface: 'ice', gravity: 'low' });
-  for (const r of ALL) { const m = createMatch({ builds: [r.build, BRICK], programs: [r.program, idle], seed: 1, challenge: ch }).run(); assert.ok(m.result.reason !== 'ring_out', r.build.name + ' ' + m.result.text); }
+  for (const r of ALL) { const m = createMatch({ builds: [r.build, BRICK], programs: [r.program, idle], seed: 1, challenge: ch }).run(); /* Knocking the brick off is fair; going off yourself is not. */ assert.ok(!(/ring_out/.test(m.result.reason) && m.result.winner !== 0), r.build.name + ' ' + m.result.text); }
 });
 
 test('broken-off wheels come to rest instead of rolling away', () => {
@@ -249,23 +249,21 @@ test('the long walker crosses a gap that stops the others, and refuses one that 
   const c = cross('Centipede', wide); assert.ok(c.z < 0 && !c.out, `Centipede tried a 2.8 m gap and ended at z=${c.z.toFixed(1)}`);
 });
 
-test('land is drawn like a game map: walkable ground, a hill too steep to climb except by its ramps, a river with fords', () => {
+test('land is drawn like a game map: walkable ground, a hill too steep to climb except by its ramps, and no water', () => {
   const ch = named('Valley'), t = ch.terrain, H = (ix, iz) => t.heights[iz * t.nx + ix];
-  assert.ok(t && ch.water, 'the valley has land and water');
+  assert.ok(t && !ch.water, 'the valley has land and no water');
   // The same from either end.
   for (let iz = 0; iz < t.nz; iz++) for (let ix = 0; ix < t.nx; ix++) assert.ok(Math.abs(H(ix, iz) - H(t.nx - 1 - ix, t.nz - 1 - iz)) < 0.02, 'the map is the same from both ends');
-  // Deep water somewhere, and a ford on the line of the river that is only shallow.
-  let deep = 0, top = 0, steep = 0;
-  for (let iz = 1; iz < t.nz - 1; iz++) for (let ix = 1; ix < t.nx - 1; ix++) { deep = Math.max(deep, ch.water.level - H(ix, iz)); top = Math.max(top, H(ix, iz)); steep = Math.max(steep, Math.abs(H(ix + 1, iz) - H(ix, iz))); }
-  assert.ok(deep > 0.4 && top > 2 && steep > 0.7, `deep ${deep}, top ${top}, steepest ${steep}`);
-  // A wheeled machine that will not wade can still get across, by a ford; and the planner says the river bed is water.
+  let top = 0, steep = 0;
+  for (let iz = 1; iz < t.nz - 1; iz++) for (let ix = 1; ix < t.nx - 1; ix++) { top = Math.max(top, H(ix, iz)); steep = Math.max(steep, Math.abs(H(ix + 1, iz) - H(ix, iz))); }
+  assert.ok(top > 2 && steep > 0.7, `top ${top}, steepest ${steep}`);
   const s = { challenge: ch, self: { x: ch.spawn[0].x, z: ch.spawn[0].z } };
-  assert.ok(LIB.plan(s, ch.spawn[1].x, ch.spawn[1].z, { margin: 2, wade: 0.2 }).reachable, 'there is a way across that stays out of deep water');
-  assert.ok(LIB.depthAt(s, 0, 0) > 0.3 || LIB.depthAt(s, 3, 1) > 0.3 || LIB.depthAt(s, -3, -1) > 0.3, 'the river is there');
+  assert.ok(LIB.plan(s, ch.spawn[1].x, ch.spawn[1].z, { margin: 2 }).reachable, 'there is a way across');
 });
 
 test('water bears up what is lighter than it and not what is heavier', () => {
-  const ch = named('Riverlands');
+  // No map has water now, so this makes a pond: the downs with the water level set above its lowest hollow.
+  const base = named('Downs'), ch = { ...base, water: { level: Math.min(...base.terrain.heights) + 0.9 } };
   const boat = (material) => ({ name: material, parts: [{ id: 'core', type: 'core' }, { id: 'hull', type: 'block', material, size: [0.6, 0.6, 0.6], pos: [0, 0, 0.5], parent: 'core' }] });
   // Find deep water and start both there.
   const t = ch.terrain; let at = null;

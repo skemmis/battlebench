@@ -271,7 +271,7 @@ function renderLog() {
   const r = match.result, s = match.summary();
   $('result').innerHTML = esc(r.text);
   $('brief').textContent = match.challenge.brief;
-  $('verdict').textContent = '';
+  renderVerdict(); lastHud = '';
   $('cond').innerHTML = s.bots.map((b, i) => `<div class="${TEAM[i]}"><b>${esc(b.name)}</b><span>${Math.round(b.massLeft * 100)}% of its mass still attached</span><span>${b.partsLost.length ? 'Lost ' + esc(b.partsLost.join(', ')) : 'No parts lost'}</span><span>${b.hitsTaken} hard hits taken</span></div>`).join('');
   $('events').innerHTML = match.events.map((e, i) => `<li class="${e.type}" data-i="${i}" data-t="${e.t}" tabindex="0"><time>${e.t.toFixed(1)}</time><span><i class="who ${e.bot == null ? '' : TEAM[e.bot]}"></i>${esc(e.text)}</span></li>`).join('');
   const d = duration();
@@ -291,31 +291,73 @@ function renderBots() {
 }
 function renderConfig() { $('config').textContent = JSON.stringify(cfg, null, 1); $('version').textContent = 'prototype ' + cfg.version; }
 
+// What the stage says over the fight: a bar for each machine that shrinks as parts come off (the mark is the half
+// below which it counts as destroyed), a line whenever something breaks or goes over, and at the end what decided it.
+const lossAt = (i, t) => match.events.reduce((sum, e) => sum + (e.type === 'part_lost' && e.bot === i && e.t <= t ? e.share || 0 : 0), 0);
+const plain = (e) => {
+  const n = match.bots[e.bot].name, what = e.parts.length > 3 ? `${e.parts.length} parts (${e.parts.slice(0, 2).join(', ')}, …)` : e.parts.join(', ');
+  return `${n} lost ${what}${e.share >= 0.01 ? `, ${Math.round(e.share * 100)}% of its weight` : ''}, to ${e.by}`;
+};
+let lastHud = '';
+function renderHud() {
+  const html = match.bots.map((b, i) => { const left = Math.max(0, 1 - lossAt(i, playhead)); return `<div class="${TEAM[i]}"><b>${esc(b.name)}</b><span>${Math.round(left * 100)}% intact</span><div class="bar"><i style="width:${left * 100}%"></i><u></u></div><small>${Math.round(b.startMass)} kg at the start. Destroyed below the mark.</small></div>`; }).join('');
+  if (html !== lastHud) { lastHud = html; $('hud').innerHTML = html; }
+  let cap = '';
+  for (const e of match.events) { if (e.t > playhead) break; if (playhead - e.t < 3 && e.type === 'part_lost') cap = plain(e); else if (playhead - e.t < 3 && e.type === 'flipped') cap = e.text; }
+  if ($('caption').textContent !== cap) $('caption').textContent = cap;
+}
+function renderVerdict() {
+  const r = match.result, n = match.bots.map((b) => b.name);
+  const head = r.winner == null ? 'Draw' : `${n[r.winner]} wins`;
+  const how = { ring_out: 'by ring-out', destroyed: 'by breaking the other apart', time_damage: 'on damage when time ran out', stalemate_damage: 'on damage after both stopped' }[r.reason] || '';
+  const big = match.events.filter((e) => e.type === 'part_lost' && e.share >= 0.02).sort((x, y) => y.share - x.share).slice(0, 3).sort((x, y) => x.t - y.t);
+  const total = match.bots.map((b, i) => Math.round(100 * Math.max(0, 1 - lossAt(i, 1e9))));
+  $('verdict').innerHTML = `<h3 class="${r.winner == null ? '' : TEAM[r.winner]}">${esc(head)} ${esc(how)}</h3><p>${esc(r.text)}</p><ul>${big.map((e) => `<li><time>${e.t.toFixed(1)} s</time>${esc(plain(e))}</li>`).join('')}<li>At the end: ${esc(n[0])} ${total[0]}% intact, ${esc(n[1])} ${total[1]}% intact.</li></ul>`;
+}
+
+// Working a fight out takes a while, so the stage says so in the middle of the screen, and a fight that has been
+// worked out once is kept, so going back to it is immediate.
 let runId = 0;
+const kept = new Map();
+function showFight(sim) {
+  $('busy').hidden = true;
+  match = sim;
+  flashes = sim.events.filter((e) => e.type === 'hit' && e.flash).map((e) => ({ t: e.t, parts: e.flash }));
+  buildArena(); buildMeshes(); applyTheme();
+  playhead = 0; lastEvent = -1;
+  pose(0); cam.target.set(0, 0, 0);
+  renderLog(); renderBots(); renderConfig();
+  window.__fight = fightData();
+}
 function runFight() {
   const seed = Math.max(1, Math.floor(Number($('seed').value) || 1));
   $('seed').value = seed;
   const id = ++runId;
   const pick = [ALL[Number($('botA').value)], ALL[Number($('botB').value)]];
   const chosen = $('challenge').value;
+  const key = [$('botA').value, $('botB').value, chosen, seed, JSON.stringify(cfg)].join('|');
+  window.__fight = null;
+  if (kept.has(key)) { showFight(kept.get(key)); return; }
   const challenge = chosen === 'draw' ? drawChallenge(seed) : NAMED[Number(chosen)];
   const sim = createMatch({ builds: pick.map((r) => r.build), programs: pick.map((r) => r.program), seed, config: structuredClone(cfg), challenge });
-  // Simulate in short slices so the page stays responsive, then swap the finished fight in.
+  const title = `${pick[0].build.name} v ${pick[1].build.name}`, t0 = performance.now();
+  const busy = () => {
+    const share = sim.t / cfg.match.maxSeconds, spent = (performance.now() - t0) / 1000, left = share > 0.04 ? Math.ceil((spent / share) * (1 - share)) : null;
+    $('busy').hidden = false;
+    $('busy').innerHTML = `<b>${esc(title)}</b><span>Working out the fight in your browser: ${sim.t.toFixed(0)} of up to ${cfg.match.maxSeconds} seconds of fighting${left == null ? '' : `, about ${left} s to go`}.</span><div class="bar"><i style="width:${Math.min(100, share * 100)}%"></i></div><span>The replay starts by itself when it is ready.</span>`;
+    $('result').textContent = 'Working out the fight.';
+  };
+  playing = false; busy();
+  // Simulate in slices so the page stays responsive, then swap the finished fight in.
   const slice = () => {
     if (id !== runId) return;
-    const until = performance.now() + 14;
+    const until = performance.now() + 45;
     while (!sim.done && performance.now() < until) sim.step();
-    if (!sim.done) { $('result').textContent = `Simulating the fight: ${sim.t.toFixed(0)} of up to ${cfg.match.maxSeconds} seconds.`; setTimeout(slice, 0); return; }
-    match = sim;
-    flashes = sim.events.filter((e) => e.type === 'hit' && e.flash).map((e) => ({ t: e.t, parts: e.flash }));
-    buildArena(); buildMeshes(); applyTheme();
-    playhead = 0; lastEvent = -1;
-    pose(0); cam.target.set(0, 0, 0);
-    renderLog(); renderBots(); renderConfig();
-    window.__fight = fightData();
+    if (!sim.done) { busy(); setTimeout(slice, 0); return; }
+    kept.set(key, sim); if (kept.size > 8) kept.delete(kept.keys().next().value);
+    playing = true; showFight(sim);
   };
-  window.__fight = null;
-  setTimeout(slice, 0);
+  setTimeout(slice, 30);
 }
 
 // ── Controls ───────────────────────────────────────────────────────────────
@@ -345,16 +387,16 @@ for (const [id, def] of [['botA', 2], ['botB', 0]]) {
 }
 // Curated fights, each picked to show one idea. Choosing a machine, challenge or seed by hand leaves the showcase.
 const SHOWS = [
-  { label: 'Winning the tangle', a: 'Bramble', b: 'Dreadnought', ch: 'Downs', seed: 1, watch: 'Machines that meet usually lock together. Bramble is built for that: a rotor at each end and a saw bar on each flank, so whatever is locked against it is being hit the whole time.' },
-  { label: 'Fist and clubs', a: 'Warden', b: 'Thresher', ch: 'Riverlands', seed: 1, watch: 'The other answer to tangling: fenders keep the enemy out of the legs, and a piston fist punches it back to where the two clubs come down.' },
-  { label: 'Claws and tail', a: 'Scorpion', b: 'Strider', ch: 'Downs', seed: 1, watch: 'Scorpion is one of the two large machines: ten legs, two claws that snap shut across its front, and a tail club that comes over the top onto whatever the claws have caught.' },
-  { label: 'Two giants', a: 'Scorpion', b: 'Dreadnought', ch: 'Riverlands', seed: 1, watch: 'Dreadnought carries a spinning bar at each end under an armoured shell. Both machines wade the river and meet in the middle.' },
-  { label: 'Clubs at the river', a: 'Mantis', b: 'Slinger', ch: 'Riverlands', seed: 1, watch: 'Slinger throws from range. Mantis wades straight across and brings two steel clubs over and down.' },
-  { label: 'Wheels in the valley', a: 'Mantis', b: 'Rover', ch: 'Valley', seed: 1, watch: 'A river crosses the valley, shallow only at the two fords. Rubber tyres float, so Rover keeps to the fords; walkers wade.' },
-  { label: 'High ground', a: 'Slinger', b: 'Centipede', ch: 'High ground', seed: 1, watch: 'A flat-topped hill with steep sides and two ramps. Slinger allows for the difference in height when it throws; Centipede has to come to it.' },
-  { label: 'The rotor', a: 'Thresher', b: 'Rover', ch: 'Downs', seed: 1, watch: 'Thresher carries a steel bar spinning flat over its nose and walks it into wheels and legs.' },
+  { label: 'Sumo', a: 'Ox', b: 'Strider', ch: 'Downs', seed: 1, watch: 'Ox has no weapon. It is nearly a tonne on ten legs with a plough on a piston: it gets inboard of the enemy, leans in and shoves it toward the edge.' },
+  { label: 'The ram', a: 'Slinger', b: 'Rover', ch: 'Open floor', seed: 1, watch: 'Rover is the fastest thing here. Its steel ram is on a piston, so when it arrives it shoves as well as hits.' },
+  { label: 'Fist and clubs', a: 'Dreadnought', b: 'Warden', ch: 'Open floor', seed: 1, watch: 'Warden keeps the enemy out of its legs with fenders, punches it back with a piston fist, and brings two long clubs down on it. Watch the bars at the top: Dreadnought is taken apart a piece at a time.' },
+  { label: 'The rotor', a: 'Thresher', b: 'Slinger', ch: 'Downs', seed: 1, watch: 'Thresher carries a steel bar spinning flat over its nose and walks it into legs and towers.' },
+  { label: 'Winning the tangle', a: 'Scorpion', b: 'Bramble', ch: 'Downs', seed: 1, watch: 'Bramble has a rotor at each end and a saw bar on each flank, so whatever is locked against it is being hit. Scorpion answers with two claws and a tail club that comes over the top.' },
+  { label: 'Clubs', a: 'Strider', b: 'Mantis', ch: 'Valley', seed: 1, watch: 'Mantis brings two steel clubs over and down. Two flat-topped hills stand either side of the middle, each with one ramp.' },
+  { label: 'High ground', a: 'Mantis', b: 'Slinger', ch: 'High ground', seed: 1, watch: 'A flat-topped hill with steep sides and two ramps. Slinger allows for the difference in height when it throws; Mantis has to come to it.' },
+  { label: 'Two giants', a: 'Scorpion', b: 'Dreadnought', ch: 'Downs', seed: 1, watch: 'The two largest fighting machines. Dreadnought carries a spinning bar at each end under an armoured shell.' },
   { label: 'Across the gap', a: 'Centipede', b: 'Rover', ch: 'Narrow gap', seed: 1, watch: 'A 1.5 m gap separates the two machines, and neither wheels nor six legs can cross it. Centipede is long enough to walk straight over.' },
-  { label: 'Icy heights', a: 'Dreadnought', b: 'Mantis', ch: 'Icy heights', seed: 1, watch: 'The hill again with a quarter of the usual grip. Ramps that were easy are now a slide.' },
+  { label: 'Icy heights', a: 'Dreadnought', b: 'Mantis', ch: 'Icy heights', seed: 1, watch: 'The hill again with a quarter of the usual grip. Ramps that were easy are now a slide, and a shove goes a long way.' },
   { label: 'Low gravity', a: 'Slinger', b: 'Thresher', ch: 'Low gravity valley', seed: 1, watch: 'A third of normal gravity. Throws carry three times as far and a hit sends a machine a long way.' },
 ];
 let showing = -1;
@@ -390,7 +432,7 @@ function frame(now) {
     $('scrub').value = d ? playhead / d : 0;
     $('clock').textContent = `${playhead.toFixed(1)} / ${d.toFixed(1)} s`;
     $('play').textContent = playing ? 'Pause' : playhead >= d - 0.01 ? 'Replay' : 'Play';
-    $('verdict').textContent = playhead >= d - 0.01 ? match.result.text : '';
+    $('verdict').hidden = !(playhead >= d - 0.01); renderHud();
     let cur = -1;
     match.events.forEach((e, i) => { if (e.t <= playhead + 0.05) cur = i; });
     if (cur !== lastEvent) {

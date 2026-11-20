@@ -2,7 +2,7 @@
 
 A 3D simulated arena where AI models build battlers from parts and pit them against each other. It has two goals: a test space where pre-training gives little help, and something fun to watch. What it means to reward is creative problem solving under conditions the builder has not seen before.
 
-This is an early prototype (v0.7). It has a family of challenges fought over land with high ground and rivers, a kit of plain pieces, breakable joints, ten hand-built machines (two of them large, two built for close quarters), and a viewer that replays a fight and shows what each machine says it is doing. No model calls yet: the machines here are written by hand, to the standard a model's would need to reach.
+This is an early prototype (v0.7). It has a family of challenges fought over land with high ground, a kit of plain pieces, breakable joints, eleven hand-built machines (two of them large, two built for close quarters, one built only to push), and a viewer that replays a fight and shows what each machine says it is doing. No model calls yet: the machines here are written by hand, to the standard a model's would need to reach.
 
 The kit and the physics stay fixed. What changes from round to round is the challenge: the shape of the arena, the ground, the surface and gravity. There is one way to win everywhere: break the enemy apart or put it off the floor. A machine that only works in one arena does badly.
 
@@ -69,7 +69,7 @@ Nothing here coasts for ever. Four things slow and stop objects, and each is che
 - **Air drag** that grows with the square of speed, from real air density and each body's area. It barely touches a steel shot and takes a fifth off the range of a light ball.
 - **Rest.** A loose piece that has stopped stays stopped until something hits it.
 
-- **Water.** Wherever the ground is lower than a round's water level there is water. What stands in it is dragged on by the part of it that is under, and borne up by the weight of water that part pushes aside: steel wades, rubber tyres and plastic float.
+- **Water.** No map has water at present (rivers were taken out), but the engine still does it. Wherever the ground is lower than a round's water level there is water. What stands in it is dragged on by the part of it that is under, and borne up by the weight of water that part pushes aside: steel wades, rubber tyres and plastic float.
 
 A motor with no power still resists turning, so wheels on a broken-off axle drag. Two pieces that were built overlapping do not collide with each other even after they break apart.
 
@@ -82,7 +82,7 @@ Two machines of the same weight and grip pushing head on is a deadlock, and it s
 A challenge is plain data (`src/challenges.js`), and a program receives it whole as `s.challenge`, with the same conditions in words as `s.challenge.brief`. `drawChallenge(n)` draws round `n` from the family:
 
 - **Arena**: an open square, a small square, two platforms joined by a bridge, two platforms with a gap between them, a square with solid pillars, or three islands in a row.
-- **Ground**: on a single platform 24 to 28 m across, land like a game map, as a grid of heights in `s.challenge.terrain` (and `s.challenge.water` where there is a river). It rolls gently and is walkable everywhere except where it is meant not to be. *Valley*: a winding river across the middle, about half a metre deep except at two fords, and a flat-topped hill on each side with steep sides and one ramp. *High ground*: one hill in the middle with two ramps. *Riverlands*: the river alone. *Downs*: open rises and hollows. Every map is the same from either end. Split arenas (bridge, gap, islands, pillars) are flat or rubble. The stepped rock of v0.6 (crags, terraces) is still in the generator for rounds that ask for it, but is no longer drawn.
+- **Ground**: on a single platform 18 to 22 m across, land like a game map, as a grid of heights in `s.challenge.terrain`. It rolls gently and is walkable everywhere except where it is meant not to be. *Valley*: a flat-topped hill on each side of the middle, each with steep sides and one ramp. *High ground*: one hill in the middle with two ramps. *Downs*: open rises and hollows. Every map is the same from either end. Split arenas (bridge, gap, islands, pillars) are flat or rubble. The stepped rock of v0.6 (crags, terraces) is still in the generator for rounds that ask for it, but is no longer drawn.
 - **Surface**: normal, ice, or sticky.
 - **Gravity**: normal, a third, or half again as strong.
 
@@ -90,7 +90,7 @@ A challenge is plain data (`src/challenges.js`), and a program receives it whole
 
 - **Ring-out**: a core that goes off the floor loses.
 - **Destroyed**: a machine that has had more than half its mass broken off its core loses.
-- **Otherwise**, at 90 seconds, or sooner if neither machine has moved or landed a blow for 10 seconds, the machine with more of itself still attached wins, if the difference is 5% or more. If not, it is a draw.
+- **Otherwise**, at 45 seconds, or sooner if neither machine has moved or landed a blow for 8 seconds, the machine with more of itself still attached wins, if the difference is 5% or more. If not, it is a draw.
 
 There are no points to hold and nothing to fetch. Standing somewhere wins nothing.
 
@@ -104,24 +104,32 @@ Nine walk on spoked legs and one has wheels. The flat walkers (Strider, Thresher
 
 Two are large, about 700 kg and nearly 90 parts, built on a ten-legged frame with a thick steel backbone:
 
-- **Scorpion** (88 parts, 685 kg): two steel claws on upright pivots stand open across its front and snap shut on whatever comes between them; a 2.4 m tail club lies back along the body and comes over the top onto anything the claws have caught. Nearly seven metres from tail to claw tips.
-- **Dreadnought** (88 parts, 687 kg): a spinning steel bar at each end, under a roof and skirts of plate. Either end is the front: if the enemy is behind, it backs the rear rotor into it.
+- **Scorpion** (88 parts, 723 kg): two steel claws on upright pivots stand open across its front and snap shut on whatever comes between them; a 2.4 m tail club lies back along the body and comes over the top onto anything the claws have caught. Nearly seven metres from tail to claw tips.
+- **Dreadnought** (88 parts, 766 kg): a spinning steel bar at each end, under a roof and skirts of plate. Either end is the front: if the enemy is behind, it backs the rear rotor into it.
 
-The rest weigh 250 to 420 kg:
+The rest weigh 260 to 490 kg:
 
-- **Strider** (52 parts, 249 kg): quick, with a steel beak. Goes for machines that are stuck or near an edge.
-- **Mantis** (53 parts, 312 kg): two steel clubs on a mast at its nose that lie back along the body and come over and down in front of it. Each club is one bar on a motor, so there is no head to snap off.
-- **Thresher** (50 parts, 281 kg): a steel bar spinning flat over its nose like a rotor, mounted on the spine itself.
-- **Slinger** (68 parts, 403 kg): three throwing arms. Works out the swing for the range, the gravity and the difference in height, leads a moving target, and clubs with the arms once the shot is gone.
-- **Centipede** (80 parts, 407 kg): ten legs and a ram at each end. Walks straight across gaps up to about 1.9 m.
-- **Rover** (14 parts, 423 kg): six of the biggest tyres the kit allows and a steel ram. Fast on open ground. Its tyres float, so it keeps to the fords.
+- **Strider** (52 parts, 262 kg): quick, with a steel beak. Goes for machines that are stuck or near an edge.
+- **Mantis** (53 parts, 354 kg): two steel clubs on a mast at its nose that lie back along the body and come over and down in front of it. Each club is one bar on a motor, so there is no head to snap off.
+- **Thresher** (50 parts, 293 kg): a steel bar spinning flat over its nose like a rotor, mounted on the spine itself.
+- **Slinger** (68 parts, 444 kg): three throwing arms. Works out the swing for the range, the gravity and the difference in height, leads a moving target, and clubs with the arms once the shot is gone.
+- **Centipede** (80 parts, 467 kg): ten legs and a ram at each end. Walks straight across gaps up to about 1.9 m.
+- **Rover** (14 parts, 490 kg): six of the biggest tyres the kit allows and a steel ram on a piston, so it shoves as well as hits. Fast on open ground.
+
+### Sumo
+
+Pushing the enemy out is meant to be a real way to win. Rings are small (18 to 22 m), fights are 45 seconds, and machines are built solid: a joint's strength now goes up in proportion to the section of the thinner part, up to four times, and every machine has a thick backbone and axles, so a single touch no longer takes a machine apart.
+
+- **Ox** (84 parts, 842 kg): no weapon. Ten legs, steel ballast, and a 2 m plough on a piston. It gets inboard of the enemy, leans in, and shoves it half a metre at a stroke until the floor runs out.
+
+In a 22-fight check, 6 fights ended in a ring-out, 12 on damage at the clock, 4 were draws, and none ended with a machine destroyed.
 
 ### The tangle
 
 On maps this size two machines spend about 85% of a fight within 3.5 m of each other, usually locked together with legs in legs, where a weapon built for arm's length does nothing. Two machines are built around that:
 
-- **Bramble** (52 parts, 378 kg): a flat rotor at each end and an upright saw bar outboard of the legs on each flank. It has no safe side to lock onto and does not try to get free: it leans the nearest weapon in.
-- **Warden** (58 parts, 585 kg): fights at arm's length and keeps it that way. Two tall steel shields stand ahead of its front legs, high enough and thick enough to stop a rotor; a piston fist in the nose punches an enemy back out; two long clubs come down over the shields onto whatever is held there.
+- **Bramble** (52 parts, 343 kg): a flat rotor at each end and an upright saw bar outboard of the legs on each flank. It has no safe side to lock onto and does not try to get free: it leans the nearest weapon in.
+- **Warden** (58 parts, 597 kg): fights at arm's length and keeps it that way. Two tall steel shields stand ahead of its front legs, high enough and thick enough to stop a rotor; a piston fist in the nose punches an enemy back out; two long clubs come down over the shields onto whatever is held there.
 
 The three kinds check each other. Blows from above beat Bramble, whose weapons are all at leg height: Mantis broke it apart. Shields and a fist beat Mantis. Bramble beats most things that close with it.
 

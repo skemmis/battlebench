@@ -8,7 +8,7 @@ import { createMatch } from '../src/sim.js';
 import { ALL } from '../src/bots.js';
 import { NAMED } from '../src/challenges.js';
 
-const MAPS = ['Valley', 'High ground', 'Riverlands', 'Downs'];
+const MAPS = ['Valley', 'High ground', 'Downs', 'Open floor'];
 const count = Number(process.argv[2] || 12), seed = Number(process.argv[3] || 1);
 // Fight k pairs machine k with the machine (1 + k / n) places after it, so the pairings change as the list goes on.
 const fight = (k) => { const n = ALL.length, i = k % n, j = (i + 1 + (Math.floor(k / n) % (n - 1))) % n; return { i, j, map: MAPS[(k + Math.floor(k / n)) % MAPS.length] }; };

@@ -41,7 +41,19 @@ main { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); g
 @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr) } .versus { margin-left: 0 } }
 .stage { position: relative; background: var(--stage); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; aspect-ratio: 16 / 10; max-width: 100% }
 .stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab }
-.verdict { position: absolute; left: 12px; top: 12px; right: 12px; pointer-events: none; font-family: var(--display); font-weight: 500; font-size: 15px; text-shadow: 0 1px 0 var(--stage) }
+.hud { position: absolute; left: 12px; right: 12px; top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; pointer-events: none; font-size: 12px }
+.hud div { min-width: 0 } .hud b { font-family: var(--display); font-weight: 600; font-size: 14px } .hud span { float: right; color: var(--ink); font-family: var(--mono) }
+.hud .bar { clear: both; position: relative; height: 8px; margin-top: 3px; background: color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 2px }
+.hud .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: currentColor; border-radius: 2px }
+.hud .bar u { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 2px; background: var(--ink) }
+.hud small { color: var(--muted) }
+.caption { position: absolute; left: 12px; right: 12px; bottom: 30px; text-align: center; pointer-events: none; font-family: var(--display); font-weight: 500; font-size: 15px; text-shadow: 0 1px 0 var(--stage), 0 -1px 0 var(--stage) }
+.verdict { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); width: min(460px, calc(100% - 32px)); box-sizing: border-box; padding: 14px 18px; background: color-mix(in srgb, var(--stage) 90%, transparent); border: 1px solid var(--line); border-radius: 6px; pointer-events: none }
+.verdict h3 { margin: 0 0 4px; font-family: var(--display); font-size: 20px } .verdict p { margin: 0 0 8px } .verdict ul { margin: 0; padding-left: 18px; font-size: 13px } .verdict li { margin: 2px 0 } .verdict time { font-family: var(--mono); color: var(--muted); margin-right: 6px }
+.busy { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: var(--stage); text-align: center; padding: 16px }
+.busy[hidden], .verdict[hidden] { display: none }
+.busy b { font-family: var(--display); font-size: 20px } .busy span { color: var(--muted); font-size: 13px }
+.busy .bar { width: min(320px, 80%); height: 8px; background: color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 2px; overflow: hidden } .busy .bar i { display: block; height: 100%; background: var(--ink) }
 .hint { position: absolute; right: 10px; bottom: 8px; font-size: 11px; color: var(--muted); pointer-events: none }
 .transport { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px }
 .track { position: relative; flex: 1 1 220px; min-width: 0; height: 28px; display: flex; align-items: center }
@@ -93,7 +105,7 @@ details summary { cursor: pointer; font-weight: 500 } details[open] summary { ma
   <p class="watch" id="watch"></p>
   <main>
     <section>
-      <div class="stage"><canvas id="view" aria-label="3D replay of the fight"></canvas><div class="verdict" id="verdict"></div><div class="hint">Drag to orbit, scroll to zoom</div></div>
+      <div class="stage"><canvas id="view" aria-label="3D replay of the fight"></canvas><div class="hud" id="hud"></div><div class="caption" id="caption"></div><div class="verdict" id="verdict" hidden></div><div class="busy" id="busy" hidden></div><div class="hint">Drag to orbit, scroll to zoom</div></div>
       <div class="says" id="says" aria-live="off"></div>
       <div class="transport">
         <button id="play" class="primary">Pause</button>
@@ -176,7 +188,7 @@ const OPEN = {
 };
 
 const LAYOUTS = {
-  open: (r) => { const s = 24 + Math.round(r() * 4); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 4.5, reach: s / 2 - 5 }; },
+  open: (r) => { const s = 18 + Math.round(r() * 4); return { text: `a ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 4, reach: s / 2 - 5 }; },
   small: (r) => { const s = 14 + Math.round(r() * 4); return { text: `a small ${s} m square platform`, floor: [{ x: 0, z: 0, w: s, d: s }], walls: [], spawnZ: s / 2 - 3.5, reach: s / 2 - 3.5 }; },
   bridge: (r) => {
     const w = chRound(4.5 + r() * 2.5), len = chRound(6 + r() * 4), isl = 12;
@@ -272,12 +284,11 @@ function drawCrags(L, G, r, spawnZ) {
 }
 
 // Land, in the way a game map has land: rolling ground you can walk anywhere on, flat-topped high ground with
-// sides too steep to climb and a ramp or two up, and a river that is slow to wade except at its fords. Every
+// sides too steep to climb and a ramp or two up. There is no water on any map (the engine can still do it). Every
 // map is the same seen from either end, so neither starting place is the better one.
 const LANDS = {
-  valley: { text: 'The land rolls gently. A river {wide} m wide crosses the middle, {deep} m deep except at two fords. On each side stands a flat-topped hill {high} m high with steep sides and one ramp up.', river: true, hills: 'twin', roll: 0.22 },
+  valley: { text: 'The land rolls gently. To each side of the middle stands a flat-topped hill {high} m high with steep sides and one ramp up.', river: false, hills: 'twin', roll: 0.22 },
   highground: { text: 'The land rolls gently around a flat-topped hill in the middle, {high} m high, with steep sides and two ramps up. Whoever holds the top looks down on the other.', river: false, hills: 'middle', roll: 0.25 },
-  riverlands: { text: 'The land rolls gently. A winding river {wide} m wide crosses the middle, {deep} m deep except at two fords.', river: true, hills: null, roll: 0.3 },
   downs: { text: 'Open rolling downs: rises and hollows up to {high} m, all of them walkable.', river: false, hills: null, roll: 0.7 },
 };
 function drawLand(L, K, r, spawnZ) {
@@ -288,8 +299,8 @@ function drawLand(L, K, r, spawnZ) {
   const BASE = 1, half = Math.min(f.w, f.d) / 2;
   // High ground.
   const hills = [], high = chRound(1.2 + r() * 0.5);
-  if (K.hills === 'twin') { const hx = half * (0.4 + r() * 0.2), hz = half * (0.36 + r() * 0.12), R = Math.min(2.6 + r() * 0.8, half * 0.22), a = Math.atan2(-hx, hz - spawnZ) + (r() - 0.5) * 0.5; /* the ramp faces the hill's own end of the map */ hills.push({ x: hx, z: -hz, R, ramps: [a] }, { x: -hx, z: hz, R, ramps: [a + Math.PI] }); }
-  if (K.hills === 'middle') { const a = r() * Math.PI; hills.push({ x: 0, z: 0, R: Math.max(1.8, Math.min(4.5, spawnZ - 5.4)), ramps: [a, a + Math.PI] }); }
+  if (K.hills === 'twin') { const hx = half * (0.4 + r() * 0.2), hz = half * (0.36 + r() * 0.12), R = Math.min(2.6 + r() * 0.8, half * 0.2), a = Math.atan2(-hx, hz - spawnZ) + (r() - 0.5) * 0.5; /* the ramp faces the hill's own end of the map */ hills.push({ x: hx, z: -hz, R, ramps: [a] }, { x: -hx, z: hz, R, ramps: [a + Math.PI] }); }
+  if (K.hills === 'middle') { const a = r() * Math.PI; hills.push({ x: 0, z: 0, R: Math.max(1.5, Math.min(3, spawnZ - 4.6)), ramps: [a, a + Math.PI] }); }
   // The river runs across the map between the two starting places, and winds.
   const wide = chRound(2.5 + r() * 1.5), deep = chRound(0.45 + r() * 0.2), amp = 1 + r() * 1.5, wave = (Math.PI * (1 + Math.floor(r() * 2))) / half, fordX = half * (0.3 + r() * 0.35), level = BASE - 0.2;
   const heights = new Float32Array(nx * nz);
@@ -298,7 +309,7 @@ function drawLand(L, K, r, spawnZ) {
     const x = x0 + ix, z = z0 + iz;
     let h = BASE + K.roll * (noise(x, z) + noise(-x, -z) - 1);
     // Level ground where each machine starts.
-    const pad = sm(4, 2, Math.hypot(x, Math.abs(z) - spawnZ));
+    const pad = sm(3.5, 2, Math.hypot(x, Math.abs(z) - spawnZ));
     h = h * (1 - pad) + BASE * pad;
     for (const m of hills) {
       const dx = x - m.x, dz = z - m.z, d = Math.hypot(dx, dz);
@@ -325,10 +336,10 @@ function drawChallenge(seed, force = {}) {
   const gravityKey = force.gravity || pick(GRAVITIES, { normal: 3, low: 1.5, high: 1 });
   const L = LAYOUTS[layoutKey](r), S = SURFACES[surfaceKey], G = GRAVITIES[gravityKey];
   const spawnZ = chRound(L.spawnZ);
-  // Ground. Most rounds are fought over land with high ground and water. Drawn last, so it does not change the
+  // Ground. Most rounds are fought over land with high ground. Drawn last, so it does not change the
   // rest of a round. Land needs one unbroken platform; the stepped rock kinds remain for rounds that ask for them.
   const one = L.floor.length === 1 && !L.walls.length;
-  const groundKey = force.ground || (force.layout ? 'flat' : one ? pick({}, { valley: 3, highground: 2.5, riverlands: 2, downs: 1.5, flat: 1 }) : pick({}, { rubble: 1, flat: 2 }));
+  const groundKey = force.ground || (force.layout ? 'flat' : one ? pick({}, { valley: 3, highground: 2.5, downs: 2.5, flat: 1 }) : pick({}, { rubble: 1, flat: 2 }));
   let floor = L.floor, groundText = '', terrain = null, water = null;
   if (LANDS[groundKey]) {
     const land = drawLand(L, LANDS[groundKey], r, spawnZ);
@@ -393,7 +404,6 @@ const NAMED = [
   OPEN,
   { ...drawChallenge(401, { layout: 'open', ground: 'valley', surface: 'normal', gravity: 'normal' }), name: 'Valley' },
   { ...drawChallenge(402, { layout: 'open', ground: 'highground', surface: 'normal', gravity: 'normal' }), name: 'High ground' },
-  { ...drawChallenge(403, { layout: 'open', ground: 'riverlands', surface: 'normal', gravity: 'normal' }), name: 'Riverlands' },
   { ...drawChallenge(404, { layout: 'open', ground: 'downs', surface: 'normal', gravity: 'normal' }), name: 'Downs' },
   { ...drawChallenge(405, { layout: 'open', ground: 'highground', surface: 'ice', gravity: 'normal' }), name: 'Icy heights' },
   { ...drawChallenge(406, { layout: 'open', ground: 'valley', surface: 'normal', gravity: 'low' }), name: 'Low gravity valley' },
@@ -672,7 +682,7 @@ const CONFIG = {
   // If no core has left, the core closer to the point wins (by at least centerMargin metres). If they are level,
   // the machine that has had less broken off it wins (by at least intactMargin of its mass). Otherwise a draw.
   // Nothing here rewards damage or movement for their own sake, so sitting still or shedding parts is allowed.
-  match: { maxSeconds: 90, stalemateSeconds: 10, stalemateRadius: 0.35, graceSeconds: 3, wreckShare: 0.5, intactMargin: 0.05 },
+  match: { maxSeconds: 45, stalemateSeconds: 8, stalemateRadius: 0.35, graceSeconds: 3, wreckShare: 0.5, intactMargin: 0.05 },
   budget: { mass: 1200, cost: 800, box: [8, 5, 9], maxParts: 300 },
   // Limits on the control program itself. It may see everything, but it has to be small.
   program: { maxChars: 20000 },
@@ -689,9 +699,10 @@ const CONFIG = {
     rubber: { density: 110, strength: 0.8, costPerVolume: 50 },
   },
   joints: {
-    // Joint strengths below are for a part 0.12 m square in section. Thicker parts make stronger joints, by the
-    // square root of the section, up to maxThick times. Thinner parts are not weaker than the figures given.
-    section: 0.0144, maxThick: 2.5,
+    // Joint strengths below are for a part 0.12 m square in section. Thicker parts make stronger joints, in
+    // proportion to the section, up to maxThick times: a frame built of heavy members holds together under blows
+    // that tear off legs, plates and anything spindly. Thinner parts are not weaker than the figures given.
+    section: 0.0144, maxThick: 4,
     fixed: { strength: 500, cost: 0 },
     // A hinge turns freely about "axis". It may set "limits": [low, high] in degrees from its built position,
     // and "spring": stiffness in N·m per radian pulling it back toward "rest" degrees (default 0).
@@ -1097,7 +1108,7 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       const base = cfg.joints[p.jointType].strength;
       // A joint is as strong as the weaker of the two materials, and stronger the thicker the part it holds:
       // a heavy beam makes a heavier joint. The thickness is the part's cross-section across its length.
-      const hs = [...p.spec.half].sort((a, b) => a - b), thick = Math.sqrt((4 * hs[0] * hs[1]) / cfg.joints.section);
+      const hs = [...p.spec.half].sort((a, b) => a - b), thick = (4 * hs[0] * hs[1]) / cfg.joints.section;
       p.strength = base * Math.min(p.spec.strength, p.parent.spec.strength) * Math.max(1, Math.min(cfg.joints.maxThick, thick));
     }
     // Parts that overlap (or all but touch) as built never collide with each other.
@@ -1453,7 +1464,7 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       const mark = (p) => { lost.push(p.id); p.lostAt = m.t; for (const c of p.children) if (c.intact) mark(c); };
       mark(part);
       const cause = info.by ? (info.by.bot === part.bot ? 'its own parts' : info.by.live ? `${info.by.bot.name}'s ${info.by.id}` : `loose ${info.by.id}`) : info.label;
-      log('part_lost', part.bot.index, `${part.bot.name} lost ${lost.join(', ')}: the ${part.jointType} joint on ${part.id} took a load of ${Math.round(info.load)} from ${cause}, above its limit of ${Math.round(part.strength * cfg.breakage.scale)}.`, { parts: lost, load: Math.round(info.load) });
+      log('part_lost', part.bot.index, `${part.bot.name} lost ${lost.join(', ')}: the ${part.jointType} joint on ${part.id} took a load of ${Math.round(info.load)} from ${cause}, above its limit of ${Math.round(part.strength * cfg.breakage.scale)}.`, { parts: lost, load: Math.round(info.load), by: cause, share: r2(part.subMass / part.bot.startMass) });
       dirty.add(part.bot);
     }
     for (const bot of dirty) assemble(bot);
@@ -1584,11 +1595,13 @@ function leg(name, x, z, offsetDeg, parent, { reach = 0.74, power = 0.6 } = {}) 
 }
 // A six-legged frame: a spine, three axles, and legs built a sixth of a turn apart so that three feet are always
 // coming down as three lift. The middle legs sit further out so the spokes pass each other.
-function hexFrame({ spread = 1.0, half = 1.04, reach = 0.74, power = 0.6, frame = 'aluminium', mid = 0.12 } = {}) {
+function hexFrame({ spread = 1.0, half = 1.04, reach = 0.74, power = 0.6, frame = 'aluminium', mid = 0.2 } = {}) {
   return [
     { id: 'core', type: 'core' },
-    beam('spine', [0.2, 0.16, 2.4], [0, 0, 0], 'core', frame),
-    ...[-1, 0, 1].flatMap((i) => [beam('axle_' + (i + 1), [Math.min(2.4, (i === 0 ? half + 0.26 : half) * 2 - 0.18), i === 0 ? mid : 0.12, i === 0 ? mid : 0.12], [0, 0, i * spread], 'spine', frame)]),
+    // The chassis is built heavy: a thick spine, and axles of thick aluminium, which make a stronger joint than
+    // thin steel for the same weight. Legs, plates and weapons can be torn off it; the frame itself holds.
+    beam('spine', [0.2, 0.2, 2.4], [0, 0, 0], 'core', frame),
+    ...[-1, 0, 1].flatMap((i) => [beam('axle_' + (i + 1), [Math.min(2.4, (i === 0 ? half + 0.26 : half) * 2 - 0.18), mid, mid], [0, 0, i * spread], 'spine', 'aluminium')]),
     ...[-1, 0, 1].flatMap((i) => { const x = i === 0 ? half + 0.26 : half; return [...leg('leg_l' + (i + 1), x, i * spread, i === 0 ? 60 : 0, 'axle_' + (i + 1), { reach, power }), ...leg('leg_r' + (i + 1), -x, i * spread, i === 0 ? 0 : 60, 'axle_' + (i + 1), { reach, power })]; }),
   ];
 }
@@ -1767,11 +1780,11 @@ const SLINGER = {
     plate('deck', [1.3, 0.06, 1.8], [0, 0.12, 0], 'spine'),
     block('keel', [0.4, 0.22, 0.6], [0, -0.2, 0.3], 'spine', 'steel'),
     ...['l', 'r'].flatMap((side) => { const sx = side === 'l' ? 1 : -1; return [
-      beam('tower_' + side, [0.14, 1.0, 0.14], [sx * 0.66, 0.5, 0], 'axle_1'),
+      beam('tower_' + side, [0.2, 1.0, 0.2], [sx * 0.66, 0.5, 0], 'axle_1'),
       beam('brace_f' + side, [0.08, 1.15, 0.08], [sx * 0.66, 0.42, 0.42], 'tower_' + side, 'aluminium', { rot: [-36, 0, 0] }),
       beam('brace_b' + side, [0.08, 1.15, 0.08], [sx * 0.66, 0.42, -0.42], 'tower_' + side, 'aluminium', { rot: [36, 0, 0] }),
     ]; }),
-    beam('axle', [1.46, 0.1, 0.1], [0, 1.0, 0], 'tower_l', 'steel'),
+    beam('axle', [1.46, 0.16, 0.16], [0, 1.0, 0], 'tower_l', 'steel'),
     ...ARM_X.flatMap((x, i) => [
       { id: 'arm_' + i, type: 'beam', material: 'aluminium', size: [0.1, 0.1, 2.0], pos: [x, 1.0, -0.5], parent: 'axle', joint: { type: 'motor', axis: [1, 0, 0], pivot: [x, 1.0, 0], gear: 6, power: 1, limits: [-14, 215] } },
       block('weight_' + i, [0.2, 0.3, 0.2], [x, 0.85, 0.4], 'arm_' + i, 'steel'),
@@ -1847,10 +1860,11 @@ const ROVER = {
   parts: [
     { id: 'core', type: 'core' },
     beam('spine', [0.2, 0.16, 2.4], [0, 0, 0], 'core', 'steel'),
-    ...[-1, 0, 1].flatMap((i) => [beam('axle_' + (i + 1), [1.7, 0.14, 0.14], [0, 0, i * 1.22], 'spine'), tyre('wl_' + (i + 1), 1.0, i * 1.22, 'axle_' + (i + 1)), tyre('wr_' + (i + 1), -1.0, i * 1.22, 'axle_' + (i + 1))]),
+    ...[-1, 0, 1].flatMap((i) => [beam('axle_' + (i + 1), [1.7, 0.2, 0.2], [0, 0, i * 1.22], 'spine'), tyre('wl_' + (i + 1), 1.0, i * 1.22, 'axle_' + (i + 1)), tyre('wr_' + (i + 1), -1.0, i * 1.22, 'axle_' + (i + 1))]),
     plate('deck', [1.4, 0.06, 2.2], [0, 0.14, 0], 'spine'),
     beam('horn', [0.2, 0.2, 0.8], [0, 0.0, 1.6], 'spine', 'steel'),
-    { id: 'ram', type: 'wedge', material: 'steel', size: [1.3, 0.4, 0.5], pos: [0, -0.05, 2.2], parent: 'horn' },
+    // The ram is on a piston: in contact, it shoves the enemy a further half metre, which is often the edge.
+    { id: 'ram', type: 'wedge', material: 'steel', size: [1.8, 0.45, 0.5], pos: [0, -0.08, 2.2], parent: 'horn', joint: { type: 'piston', axis: [0, 0, 1], stroke: 0.6, gear: 2 } },
   ],
 };
 function roverProgram(s, out, mem, lib) {
@@ -1861,6 +1875,9 @@ function roverProgram(s, out, mem, lib) {
   if (s.t < (mem.back || 0)) { out.say = 'backing off for a run-up'; const g = lib.guard(s, -1, SELF); drive(g.drive, lib.clamp(foe.bearing, -0.3, 0.3)); if (foe.distance > 6) mem.back = 0; return; }
   mem.press = foe.distance < 3.6 && Math.abs(foe.bearing) < 0.6 && me.speed < 0.5 ? (mem.press || 0) + 1 : 0;
   if (mem.press > 25) { mem.press = 0; mem.back = s.t + 1.4; }
+  const ramJ = me.joints.ram;
+  if (ramJ && foe.distance < 4 && Math.abs(foe.bearing) < 0.5 && ramJ.charge > 0.95 && ramJ.extension < 0.05) mem.shove = s.t + 0.3;
+  out.ram = s.t < (mem.shove || 0) ? 1 : 0;
   const h = hunt(s, lib), open = lib.plan(s, h.x, h.z, SELF).reachable, n = lib.nav(s, h.x, h.z, { ...SELF, stopAt: !open ? 0.8 : h.charge ? 0 : 0.6, reverse: !open });
   out.say = n.backing ? 'wheels jammed on a ledge, backing off' : n.braking ? 'braking for the edge' : !n.reachable && foe.distance > 3.5 ? 'no way my wheels can take, getting as near as I can' : h.say;
   drive(n.drive, n.turn);
@@ -1869,17 +1886,17 @@ function roverProgram(s, out, mem, lib) {
 // ── Centipede ──────────────────────────────────────────────────────────────
 // Ten legs on a frame nearly five metres long. It is long enough to walk straight across a gap that stops
 // everything else: by the time its middle is over the drop, two pairs of legs are already on the far side.
-const PEDE_Z = [-1.7, -0.85, 0, 0.85, 1.7];
+const PEDE_Z = [-1.8, -0.9, 0, 0.9, 1.8];
 const PEDE_L = PEDE_Z.map((_, i) => 'leg_l' + i), PEDE_R = PEDE_Z.map((_, i) => 'leg_r' + i);
 const CENTIPEDE = {
   name: 'Centipede',
   note: 'Ten spoked legs on a frame nearly five metres long, with a steel ram at each end. It walks straight across gaps up to about 1.9 m wide, because some of its legs are always on the ground on one side or the other, and it works either way up.',
   parts: [
     { id: 'core', type: 'core' },
-    beam('spine_f', [0.2, 0.18, 1.9], [0, 0, 0.95], 'core', 'steel'),
-    beam('spine_b', [0.2, 0.18, 1.9], [0, 0, -0.95], 'core', 'steel'),
+    beam('spine_f', [0.24, 0.24, 1.9], [0, 0, 0.95], 'core', 'steel'),
+    beam('spine_b', [0.24, 0.24, 1.9], [0, 0, -0.95], 'core', 'steel'),
     ...PEDE_Z.flatMap((z, i) => { const x = i % 2 ? 1.3 : 1.04, parent = z > 0 ? 'spine_f' : z < 0 ? 'spine_b' : 'core'; return [
-      beam('axle_' + i, [Math.min(2.4, x * 2 - 0.18), 0.12, 0.12], [0, 0, z], parent, 'steel'),
+      beam('axle_' + i, [Math.min(2.4, x * 2 - 0.18), 0.2, 0.2], [0, 0, z], parent, 'aluminium'),
       ...leg('leg_l' + i, x, z, i % 2 ? 60 : 0, 'axle_' + i, { reach: 0.7 }), ...leg('leg_r' + i, -x, z, i % 2 ? 0 : 60, 'axle_' + i, { reach: 0.7 }),
     ]; }),
     { id: 'ram_f', type: 'wedge', material: 'steel', size: [0.9, 0.3, 0.4], pos: [0, 0, 2.1], parent: 'spine_f' },
@@ -1909,7 +1926,7 @@ const pedeFrame = (frame = 'steel', power = 1, sp = 0.26) => [
   beam('spine_f', [sp, sp, 1.9], [0, 0, 0.95], 'core', frame),
   beam('spine_b', [sp, sp, 1.9], [0, 0, -0.95], 'core', frame),
   ...PEDE_Z.flatMap((z, i) => { const x = i % 2 ? 1.3 : 1.04, parent = z > 0 ? 'spine_f' : z < 0 ? 'spine_b' : 'core'; return [
-    beam('axle_' + i, [Math.min(2.4, x * 2 - 0.18), 0.12, 0.12], [0, 0, z], parent, frame),
+    beam('axle_' + i, [Math.min(2.4, x * 2 - 0.18), 0.2, 0.2], [0, 0, z], parent, 'aluminium'),
     ...leg('leg_l' + i, x, z, i % 2 ? 60 : 0, 'axle_' + i, { reach: 0.7, power }), ...leg('leg_r' + i, -x, z, i % 2 ? 0 : 60, 'axle_' + i, { reach: 0.7, power }),
   ]; }),
 ];
@@ -1919,8 +1936,8 @@ const SCORPION = {
   note: 'A large machine on ten legs, nearly seven metres from tail to claw tips. Two steel claws stand open across its front and snap shut on whatever comes between them, and a tail club comes over the top onto anything held there. It weighs about twice what the six-legged walkers do.',
   parts: [
     ...pedeFrame(),
-    beam('neck', [0.2, 0.2, 0.8], [0, 0, 2.3], 'spine_f', 'steel'),
-    beam('brow', [1.4, 0.16, 0.16], [0, 0, 2.68], 'neck', 'steel'),
+    beam('neck', [0.26, 0.26, 0.8], [0, 0, 2.3], 'spine_f', 'steel'),
+    beam('brow', [1.4, 0.22, 0.22], [0, 0, 2.68], 'neck', 'steel'),
     claw('l', 0.55), claw('r', -0.55),
     beam('mast', [0.22, 0.66, 0.22], [0, 0.44, 1.3], 'spine_f', 'steel'),
     beam('stay', [0.08, 0.9, 0.08], [0, 0.36, 0.95], 'mast', 'steel', { rot: [-50, 0, 0] }),
@@ -1971,10 +1988,10 @@ const DREADNOUGHT = {
     ...pedeFrame(),
     rotor('rotor_f', 1.95, 'spine_f'), rotor('rotor_b', -1.95, 'spine_b'),
     // The shell stands on two posts and rides clear above the legs; the skirts hang outside them.
-    beam('post_f', [0.14, 0.8, 0.14], [0, 0.5, 0.45], 'spine_f', 'steel'),
-    beam('post_b', [0.14, 0.8, 0.14], [0, 0.5, -0.45], 'spine_b', 'steel'),
-    beam('rib_f', [2.4, 0.1, 0.1], [0, 0.92, 0.45], 'post_f', 'steel'),
-    beam('rib_b', [2.4, 0.1, 0.1], [0, 0.92, -0.45], 'post_b', 'steel'),
+    beam('post_f', [0.2, 0.8, 0.2], [0, 0.5, 0.45], 'spine_f', 'steel'),
+    beam('post_b', [0.2, 0.8, 0.2], [0, 0.5, -0.45], 'spine_b', 'steel'),
+    beam('rib_f', [2.4, 0.16, 0.16], [0, 0.92, 0.45], 'post_f', 'steel'),
+    beam('rib_b', [2.4, 0.16, 0.16], [0, 0.92, -0.45], 'post_b', 'steel'),
     plate('roof', [2.0, 0.06, 2.4], [0, 1.0, 0], 'rib_f', 'aluminium'),
     plate('skirt_l', [0.06, 0.6, 2.4], [1.62, 0.62, 0], 'rib_f', 'aluminium', { rot: [0, 0, 18] }),
     plate('skirt_r', [0.06, 0.6, 2.4], [-1.62, 0.62, 0], 'rib_f', 'aluminium', { rot: [0, 0, -18] }),
@@ -2077,6 +2094,35 @@ function wardenProgram(s, out, mem, lib) {
   if (n.arrived && arms.length) { out.say = 'squaring up to strike'; walk(s, out, mem, lib, 0, lib.clamp(foe.bearing * 2, -0.5, 0.5)); }
 }
 
+// ── Ox ─────────────────────────────────────────────────────────────────────
+// The pusher. Nearly a tonne on ten legs, with a wide plough on a piston. It has no weapon at all: it gets on the
+// inboard side of the enemy, leans in with more weight and more feet on the ground than anything else here, and
+// when the plough is on it, the piston shoves it a further half metre at a time until the floor runs out.
+const OX = {
+  name: 'Ox',
+  note: 'The pusher: nearly a tonne on ten legs, with a wide plough on a piston and steel ballast over its back legs. It has no weapon. It gets inboard of the enemy, leans in, and shoves it toward the edge half a metre at a stroke.',
+  parts: [
+    ...pedeFrame(),
+    beam('neck', [0.26, 0.26, 1.0], [0, 0, 2.4], 'spine_f', 'steel'),
+    { id: 'plough', type: 'wedge', material: 'aluminium', size: [2.0, 0.55, 0.7], pos: [0, -0.12, 3.2], parent: 'neck', joint: { type: 'piston', axis: [0, 0, 1], stroke: 0.6, gear: 2 } },
+    block('ballast_0', [0.6, 0.4, 0.6], [0, 0.33, -0.5], 'spine_b', 'steel'),
+    block('ballast_1', [0.6, 0.4, 0.6], [0, 0.33, -1.3], 'spine_b', 'steel'),
+    plate('yoke_l', [0.7, 0.08, 1.6], [0.5, 0.2, 0.9], 'spine_f', 'aluminium', { rot: [0, 0, -10] }),
+    plate('yoke_r', [0.7, 0.08, 1.6], [-0.5, 0.2, 0.9], 'spine_f', 'aluminium', { rot: [0, 0, 10] }),
+  ],
+};
+function oxProgram(s, out, mem, lib) {
+  mem.long = true;
+  const me = s.self, foe = s.enemy, SELF = { ...WALKER, length: 3.4, margin: 2.6, span: 1.9, mem }, legs = { L: PEDE_L, R: PEDE_R };
+  const p = me.joints.plough, front = Math.abs(foe.bearing) < 0.45;
+  if (p && foe.distance < 4.6 && front && p.charge > 0.95 && p.extension < 0.05) mem.shove = s.t + 0.35;
+  out.plough = s.t < (mem.shove || 0) ? 1 : 0;
+  if (righting(s, out, PEDE_L, PEDE_R)) return;
+  const n = stalk(s, out, mem, lib, SELF, legs);
+  if (s.t < (mem.shove || 0) + 0.3) out.say = 'shoving it with the plough';
+  else if (foe.distance < 4.6 && front && !n.braking && !n.backing) out.say = 'leaning on it, pushing it toward the edge';
+}
+
 const ALL = [
   { build: STRIDER, program: striderProgram },
   { build: MANTIS, program: mantisProgram },
@@ -2088,6 +2134,7 @@ const ALL = [
   { build: DREADNOUGHT, program: dreadnoughtProgram },
   { build: BRAMBLE, program: brambleProgram },
   { build: WARDEN, program: wardenProgram },
+  { build: OX, program: oxProgram },
 ];
 const ROSTER = ALL;
 
@@ -2364,7 +2411,7 @@ function renderLog() {
   const r = match.result, s = match.summary();
   $('result').innerHTML = esc(r.text);
   $('brief').textContent = match.challenge.brief;
-  $('verdict').textContent = '';
+  renderVerdict(); lastHud = '';
   $('cond').innerHTML = s.bots.map((b, i) => `<div class="${TEAM[i]}"><b>${esc(b.name)}</b><span>${Math.round(b.massLeft * 100)}% of its mass still attached</span><span>${b.partsLost.length ? 'Lost ' + esc(b.partsLost.join(', ')) : 'No parts lost'}</span><span>${b.hitsTaken} hard hits taken</span></div>`).join('');
   $('events').innerHTML = match.events.map((e, i) => `<li class="${e.type}" data-i="${i}" data-t="${e.t}" tabindex="0"><time>${e.t.toFixed(1)}</time><span><i class="who ${e.bot == null ? '' : TEAM[e.bot]}"></i>${esc(e.text)}</span></li>`).join('');
   const d = duration();
@@ -2384,31 +2431,73 @@ function renderBots() {
 }
 function renderConfig() { $('config').textContent = JSON.stringify(cfg, null, 1); $('version').textContent = 'prototype ' + cfg.version; }
 
+// What the stage says over the fight: a bar for each machine that shrinks as parts come off (the mark is the half
+// below which it counts as destroyed), a line whenever something breaks or goes over, and at the end what decided it.
+const lossAt = (i, t) => match.events.reduce((sum, e) => sum + (e.type === 'part_lost' && e.bot === i && e.t <= t ? e.share || 0 : 0), 0);
+const plain = (e) => {
+  const n = match.bots[e.bot].name, what = e.parts.length > 3 ? `${e.parts.length} parts (${e.parts.slice(0, 2).join(', ')}, …)` : e.parts.join(', ');
+  return `${n} lost ${what}${e.share >= 0.01 ? `, ${Math.round(e.share * 100)}% of its weight` : ''}, to ${e.by}`;
+};
+let lastHud = '';
+function renderHud() {
+  const html = match.bots.map((b, i) => { const left = Math.max(0, 1 - lossAt(i, playhead)); return `<div class="${TEAM[i]}"><b>${esc(b.name)}</b><span>${Math.round(left * 100)}% intact</span><div class="bar"><i style="width:${left * 100}%"></i><u></u></div><small>${Math.round(b.startMass)} kg at the start. Destroyed below the mark.</small></div>`; }).join('');
+  if (html !== lastHud) { lastHud = html; $('hud').innerHTML = html; }
+  let cap = '';
+  for (const e of match.events) { if (e.t > playhead) break; if (playhead - e.t < 3 && e.type === 'part_lost') cap = plain(e); else if (playhead - e.t < 3 && e.type === 'flipped') cap = e.text; }
+  if ($('caption').textContent !== cap) $('caption').textContent = cap;
+}
+function renderVerdict() {
+  const r = match.result, n = match.bots.map((b) => b.name);
+  const head = r.winner == null ? 'Draw' : `${n[r.winner]} wins`;
+  const how = { ring_out: 'by ring-out', destroyed: 'by breaking the other apart', time_damage: 'on damage when time ran out', stalemate_damage: 'on damage after both stopped' }[r.reason] || '';
+  const big = match.events.filter((e) => e.type === 'part_lost' && e.share >= 0.02).sort((x, y) => y.share - x.share).slice(0, 3).sort((x, y) => x.t - y.t);
+  const total = match.bots.map((b, i) => Math.round(100 * Math.max(0, 1 - lossAt(i, 1e9))));
+  $('verdict').innerHTML = `<h3 class="${r.winner == null ? '' : TEAM[r.winner]}">${esc(head)} ${esc(how)}</h3><p>${esc(r.text)}</p><ul>${big.map((e) => `<li><time>${e.t.toFixed(1)} s</time>${esc(plain(e))}</li>`).join('')}<li>At the end: ${esc(n[0])} ${total[0]}% intact, ${esc(n[1])} ${total[1]}% intact.</li></ul>`;
+}
+
+// Working a fight out takes a while, so the stage says so in the middle of the screen, and a fight that has been
+// worked out once is kept, so going back to it is immediate.
 let runId = 0;
+const kept = new Map();
+function showFight(sim) {
+  $('busy').hidden = true;
+  match = sim;
+  flashes = sim.events.filter((e) => e.type === 'hit' && e.flash).map((e) => ({ t: e.t, parts: e.flash }));
+  buildArena(); buildMeshes(); applyTheme();
+  playhead = 0; lastEvent = -1;
+  pose(0); cam.target.set(0, 0, 0);
+  renderLog(); renderBots(); renderConfig();
+  window.__fight = fightData();
+}
 function runFight() {
   const seed = Math.max(1, Math.floor(Number($('seed').value) || 1));
   $('seed').value = seed;
   const id = ++runId;
   const pick = [ALL[Number($('botA').value)], ALL[Number($('botB').value)]];
   const chosen = $('challenge').value;
+  const key = [$('botA').value, $('botB').value, chosen, seed, JSON.stringify(cfg)].join('|');
+  window.__fight = null;
+  if (kept.has(key)) { showFight(kept.get(key)); return; }
   const challenge = chosen === 'draw' ? drawChallenge(seed) : NAMED[Number(chosen)];
   const sim = createMatch({ builds: pick.map((r) => r.build), programs: pick.map((r) => r.program), seed, config: structuredClone(cfg), challenge });
-  // Simulate in short slices so the page stays responsive, then swap the finished fight in.
+  const title = `${pick[0].build.name} v ${pick[1].build.name}`, t0 = performance.now();
+  const busy = () => {
+    const share = sim.t / cfg.match.maxSeconds, spent = (performance.now() - t0) / 1000, left = share > 0.04 ? Math.ceil((spent / share) * (1 - share)) : null;
+    $('busy').hidden = false;
+    $('busy').innerHTML = `<b>${esc(title)}</b><span>Working out the fight in your browser: ${sim.t.toFixed(0)} of up to ${cfg.match.maxSeconds} seconds of fighting${left == null ? '' : `, about ${left} s to go`}.</span><div class="bar"><i style="width:${Math.min(100, share * 100)}%"></i></div><span>The replay starts by itself when it is ready.</span>`;
+    $('result').textContent = 'Working out the fight.';
+  };
+  playing = false; busy();
+  // Simulate in slices so the page stays responsive, then swap the finished fight in.
   const slice = () => {
     if (id !== runId) return;
-    const until = performance.now() + 14;
+    const until = performance.now() + 45;
     while (!sim.done && performance.now() < until) sim.step();
-    if (!sim.done) { $('result').textContent = `Simulating the fight: ${sim.t.toFixed(0)} of up to ${cfg.match.maxSeconds} seconds.`; setTimeout(slice, 0); return; }
-    match = sim;
-    flashes = sim.events.filter((e) => e.type === 'hit' && e.flash).map((e) => ({ t: e.t, parts: e.flash }));
-    buildArena(); buildMeshes(); applyTheme();
-    playhead = 0; lastEvent = -1;
-    pose(0); cam.target.set(0, 0, 0);
-    renderLog(); renderBots(); renderConfig();
-    window.__fight = fightData();
+    if (!sim.done) { busy(); setTimeout(slice, 0); return; }
+    kept.set(key, sim); if (kept.size > 8) kept.delete(kept.keys().next().value);
+    playing = true; showFight(sim);
   };
-  window.__fight = null;
-  setTimeout(slice, 0);
+  setTimeout(slice, 30);
 }
 
 // ── Controls ───────────────────────────────────────────────────────────────
@@ -2438,16 +2527,16 @@ for (const [id, def] of [['botA', 2], ['botB', 0]]) {
 }
 // Curated fights, each picked to show one idea. Choosing a machine, challenge or seed by hand leaves the showcase.
 const SHOWS = [
-  { label: 'Winning the tangle', a: 'Bramble', b: 'Dreadnought', ch: 'Downs', seed: 1, watch: 'Machines that meet usually lock together. Bramble is built for that: a rotor at each end and a saw bar on each flank, so whatever is locked against it is being hit the whole time.' },
-  { label: 'Fist and clubs', a: 'Warden', b: 'Thresher', ch: 'Riverlands', seed: 1, watch: 'The other answer to tangling: fenders keep the enemy out of the legs, and a piston fist punches it back to where the two clubs come down.' },
-  { label: 'Claws and tail', a: 'Scorpion', b: 'Strider', ch: 'Downs', seed: 1, watch: 'Scorpion is one of the two large machines: ten legs, two claws that snap shut across its front, and a tail club that comes over the top onto whatever the claws have caught.' },
-  { label: 'Two giants', a: 'Scorpion', b: 'Dreadnought', ch: 'Riverlands', seed: 1, watch: 'Dreadnought carries a spinning bar at each end under an armoured shell. Both machines wade the river and meet in the middle.' },
-  { label: 'Clubs at the river', a: 'Mantis', b: 'Slinger', ch: 'Riverlands', seed: 1, watch: 'Slinger throws from range. Mantis wades straight across and brings two steel clubs over and down.' },
-  { label: 'Wheels in the valley', a: 'Mantis', b: 'Rover', ch: 'Valley', seed: 1, watch: 'A river crosses the valley, shallow only at the two fords. Rubber tyres float, so Rover keeps to the fords; walkers wade.' },
-  { label: 'High ground', a: 'Slinger', b: 'Centipede', ch: 'High ground', seed: 1, watch: 'A flat-topped hill with steep sides and two ramps. Slinger allows for the difference in height when it throws; Centipede has to come to it.' },
-  { label: 'The rotor', a: 'Thresher', b: 'Rover', ch: 'Downs', seed: 1, watch: 'Thresher carries a steel bar spinning flat over its nose and walks it into wheels and legs.' },
+  { label: 'Sumo', a: 'Ox', b: 'Strider', ch: 'Downs', seed: 1, watch: 'Ox has no weapon. It is nearly a tonne on ten legs with a plough on a piston: it gets inboard of the enemy, leans in and shoves it toward the edge.' },
+  { label: 'The ram', a: 'Slinger', b: 'Rover', ch: 'Open floor', seed: 1, watch: 'Rover is the fastest thing here. Its steel ram is on a piston, so when it arrives it shoves as well as hits.' },
+  { label: 'Fist and clubs', a: 'Dreadnought', b: 'Warden', ch: 'Open floor', seed: 1, watch: 'Warden keeps the enemy out of its legs with fenders, punches it back with a piston fist, and brings two long clubs down on it. Watch the bars at the top: Dreadnought is taken apart a piece at a time.' },
+  { label: 'The rotor', a: 'Thresher', b: 'Slinger', ch: 'Downs', seed: 1, watch: 'Thresher carries a steel bar spinning flat over its nose and walks it into legs and towers.' },
+  { label: 'Winning the tangle', a: 'Scorpion', b: 'Bramble', ch: 'Downs', seed: 1, watch: 'Bramble has a rotor at each end and a saw bar on each flank, so whatever is locked against it is being hit. Scorpion answers with two claws and a tail club that comes over the top.' },
+  { label: 'Clubs', a: 'Strider', b: 'Mantis', ch: 'Valley', seed: 1, watch: 'Mantis brings two steel clubs over and down. Two flat-topped hills stand either side of the middle, each with one ramp.' },
+  { label: 'High ground', a: 'Mantis', b: 'Slinger', ch: 'High ground', seed: 1, watch: 'A flat-topped hill with steep sides and two ramps. Slinger allows for the difference in height when it throws; Mantis has to come to it.' },
+  { label: 'Two giants', a: 'Scorpion', b: 'Dreadnought', ch: 'Downs', seed: 1, watch: 'The two largest fighting machines. Dreadnought carries a spinning bar at each end under an armoured shell.' },
   { label: 'Across the gap', a: 'Centipede', b: 'Rover', ch: 'Narrow gap', seed: 1, watch: 'A 1.5 m gap separates the two machines, and neither wheels nor six legs can cross it. Centipede is long enough to walk straight over.' },
-  { label: 'Icy heights', a: 'Dreadnought', b: 'Mantis', ch: 'Icy heights', seed: 1, watch: 'The hill again with a quarter of the usual grip. Ramps that were easy are now a slide.' },
+  { label: 'Icy heights', a: 'Dreadnought', b: 'Mantis', ch: 'Icy heights', seed: 1, watch: 'The hill again with a quarter of the usual grip. Ramps that were easy are now a slide, and a shove goes a long way.' },
   { label: 'Low gravity', a: 'Slinger', b: 'Thresher', ch: 'Low gravity valley', seed: 1, watch: 'A third of normal gravity. Throws carry three times as far and a hit sends a machine a long way.' },
 ];
 let showing = -1;
@@ -2483,7 +2572,7 @@ function frame(now) {
     $('scrub').value = d ? playhead / d : 0;
     $('clock').textContent = `${playhead.toFixed(1)} / ${d.toFixed(1)} s`;
     $('play').textContent = playing ? 'Pause' : playhead >= d - 0.01 ? 'Replay' : 'Play';
-    $('verdict').textContent = playhead >= d - 0.01 ? match.result.text : '';
+    $('verdict').hidden = !(playhead >= d - 0.01); renderHud();
     let cur = -1;
     match.events.forEach((e, i) => { if (e.t <= playhead + 0.05) cur = i; });
     if (cur !== lastEvent) {

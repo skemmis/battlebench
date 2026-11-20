@@ -20,7 +20,7 @@ export const CONFIG = {
   // If no core has left, the core closer to the point wins (by at least centerMargin metres). If they are level,
   // the machine that has had less broken off it wins (by at least intactMargin of its mass). Otherwise a draw.
   // Nothing here rewards damage or movement for their own sake, so sitting still or shedding parts is allowed.
-  match: { maxSeconds: 90, stalemateSeconds: 10, stalemateRadius: 0.35, graceSeconds: 3, wreckShare: 0.5, intactMargin: 0.05 },
+  match: { maxSeconds: 45, stalemateSeconds: 8, stalemateRadius: 0.35, graceSeconds: 3, wreckShare: 0.5, intactMargin: 0.05 },
   budget: { mass: 1200, cost: 800, box: [8, 5, 9], maxParts: 300 },
   // Limits on the control program itself. It may see everything, but it has to be small.
   program: { maxChars: 20000 },
@@ -37,9 +37,10 @@ export const CONFIG = {
     rubber: { density: 110, strength: 0.8, costPerVolume: 50 },
   },
   joints: {
-    // Joint strengths below are for a part 0.12 m square in section. Thicker parts make stronger joints, by the
-    // square root of the section, up to maxThick times. Thinner parts are not weaker than the figures given.
-    section: 0.0144, maxThick: 2.5,
+    // Joint strengths below are for a part 0.12 m square in section. Thicker parts make stronger joints, in
+    // proportion to the section, up to maxThick times: a frame built of heavy members holds together under blows
+    // that tear off legs, plates and anything spindly. Thinner parts are not weaker than the figures given.
+    section: 0.0144, maxThick: 4,
     fixed: { strength: 500, cost: 0 },
     // A hinge turns freely about "axis". It may set "limits": [low, high] in degrees from its built position,
     // and "spring": stiffness in N·m per radian pulling it back toward "rest" degrees (default 0).
@@ -445,7 +446,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const base = cfg.joints[p.jointType].strength;
       // A joint is as strong as the weaker of the two materials, and stronger the thicker the part it holds:
       // a heavy beam makes a heavier joint. The thickness is the part's cross-section across its length.
-      const hs = [...p.spec.half].sort((a, b) => a - b), thick = Math.sqrt((4 * hs[0] * hs[1]) / cfg.joints.section);
+      const hs = [...p.spec.half].sort((a, b) => a - b), thick = (4 * hs[0] * hs[1]) / cfg.joints.section;
       p.strength = base * Math.min(p.spec.strength, p.parent.spec.strength) * Math.max(1, Math.min(cfg.joints.maxThick, thick));
     }
     // Parts that overlap (or all but touch) as built never collide with each other.
@@ -801,7 +802,7 @@ export function createMatch({ builds, programs, seed = 1, config = CONFIG, chall
       const mark = (p) => { lost.push(p.id); p.lostAt = m.t; for (const c of p.children) if (c.intact) mark(c); };
       mark(part);
       const cause = info.by ? (info.by.bot === part.bot ? 'its own parts' : info.by.live ? `${info.by.bot.name}'s ${info.by.id}` : `loose ${info.by.id}`) : info.label;
-      log('part_lost', part.bot.index, `${part.bot.name} lost ${lost.join(', ')}: the ${part.jointType} joint on ${part.id} took a load of ${Math.round(info.load)} from ${cause}, above its limit of ${Math.round(part.strength * cfg.breakage.scale)}.`, { parts: lost, load: Math.round(info.load) });
+      log('part_lost', part.bot.index, `${part.bot.name} lost ${lost.join(', ')}: the ${part.jointType} joint on ${part.id} took a load of ${Math.round(info.load)} from ${cause}, above its limit of ${Math.round(part.strength * cfg.breakage.scale)}.`, { parts: lost, load: Math.round(info.load), by: cause, share: r2(part.subMass / part.bot.startMass) });
       dirty.add(part.bot);
     }
     for (const bot of dirty) assemble(bot);

@@ -41,7 +41,19 @@ main { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); g
 @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr) } .versus { margin-left: 0 } }
 .stage { position: relative; background: var(--stage); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; aspect-ratio: 16 / 10; max-width: 100% }
 .stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab }
-.verdict { position: absolute; left: 12px; top: 12px; right: 12px; pointer-events: none; font-family: var(--display); font-weight: 500; font-size: 15px; text-shadow: 0 1px 0 var(--stage) }
+.hud { position: absolute; left: 12px; right: 12px; top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; pointer-events: none; font-size: 12px }
+.hud div { min-width: 0 } .hud b { font-family: var(--display); font-weight: 600; font-size: 14px } .hud span { float: right; color: var(--ink); font-family: var(--mono) }
+.hud .bar { clear: both; position: relative; height: 8px; margin-top: 3px; background: color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 2px }
+.hud .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: currentColor; border-radius: 2px }
+.hud .bar u { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 2px; background: var(--ink) }
+.hud small { color: var(--muted) }
+.caption { position: absolute; left: 12px; right: 12px; bottom: 30px; text-align: center; pointer-events: none; font-family: var(--display); font-weight: 500; font-size: 15px; text-shadow: 0 1px 0 var(--stage), 0 -1px 0 var(--stage) }
+.verdict { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); width: min(460px, calc(100% - 32px)); box-sizing: border-box; padding: 14px 18px; background: color-mix(in srgb, var(--stage) 90%, transparent); border: 1px solid var(--line); border-radius: 6px; pointer-events: none }
+.verdict h3 { margin: 0 0 4px; font-family: var(--display); font-size: 20px } .verdict p { margin: 0 0 8px } .verdict ul { margin: 0; padding-left: 18px; font-size: 13px } .verdict li { margin: 2px 0 } .verdict time { font-family: var(--mono); color: var(--muted); margin-right: 6px }
+.busy { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: var(--stage); text-align: center; padding: 16px }
+.busy[hidden], .verdict[hidden] { display: none }
+.busy b { font-family: var(--display); font-size: 20px } .busy span { color: var(--muted); font-size: 13px }
+.busy .bar { width: min(320px, 80%); height: 8px; background: color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 2px; overflow: hidden } .busy .bar i { display: block; height: 100%; background: var(--ink) }
 .hint { position: absolute; right: 10px; bottom: 8px; font-size: 11px; color: var(--muted); pointer-events: none }
 .transport { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px }
 .track { position: relative; flex: 1 1 220px; min-width: 0; height: 28px; display: flex; align-items: center }
@@ -93,7 +105,7 @@ details summary { cursor: pointer; font-weight: 500 } details[open] summary { ma
   <p class="watch" id="watch"></p>
   <main>
     <section>
-      <div class="stage"><canvas id="view" aria-label="3D replay of the fight"></canvas><div class="verdict" id="verdict"></div><div class="hint">Drag to orbit, scroll to zoom</div></div>
+      <div class="stage"><canvas id="view" aria-label="3D replay of the fight"></canvas><div class="hud" id="hud"></div><div class="caption" id="caption"></div><div class="verdict" id="verdict" hidden></div><div class="busy" id="busy" hidden></div><div class="hint">Drag to orbit, scroll to zoom</div></div>
       <div class="says" id="says" aria-live="off"></div>
       <div class="transport">
         <button id="play" class="primary">Pause</button>
