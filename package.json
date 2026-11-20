@@ -10,6 +10,7 @@
     "sweep": "node scripts/sweep.mjs",
     "tournament": "node scripts/tournament.mjs",
     "gauntlet": "node scripts/gauntlet.mjs",
+    "agility": "node scripts/agility.mjs",
     "quick": "node scripts/quick.mjs"
   },
   "dependencies": {
