@@ -687,10 +687,11 @@ const CONFIG = {
   // Limits on the control program itself. It may see everything, but it has to be small.
   program: { maxChars: 20000 },
   // A joint's load = impulse x share of the bot it has to drag along x leverage x sharpness.
-  // Sharpness: a hit at speedRef m/s counts 1.5x, faster hits count for more.
   // A joint's load = impulse of the whole blow x share of the machine the joint drags x leverage x sharpness.
-  // Sharpness is closing speed / speedRef, capped at maxSharp. Blows against the floor count for floorFactor.
-  breakage: { scale: 1, leverLength: 1.0, speedRef: 4, maxSharp: 2.5, floorFactor: 0.4, maxLever: 1.2, window: 0.05, deadMotorDrag: 0.3, logImpulse: 60 },
+  // Only a real hit counts: parts that meet at less than minSpeed m/s do no damage at all, however heavy the
+  // machines, so bumping, leaning and shoving break nothing (walkers move at about 2.5 m/s). Above it, sharpness
+  // is closing speed / speedRef, capped at maxSharp. Blows against the floor count for floorFactor.
+  breakage: { scale: 0.4, leverLength: 1.0, minSpeed: 5, speedRef: 5, maxSharp: 3, carry: 2.5, floorFactor: 0.4, maxLever: 1.2, window: 0.05, deadMotorDrag: 0.3, logImpulse: 60 },
   materials: {
     steel: { density: 780, strength: 1.5, costPerVolume: 70 },
     aluminium: { density: 270, strength: 1.0, costPerVolume: 90 },
@@ -702,7 +703,7 @@ const CONFIG = {
     // Joint strengths below are for a part 0.12 m square in section. Thicker parts make stronger joints, in
     // proportion to the section, up to maxThick times: a frame built of heavy members holds together under blows
     // that tear off legs, plates and anything spindly. Thinner parts are not weaker than the figures given.
-    section: 0.0144, maxThick: 4,
+    section: 0.0144, maxThick: 2.5,
     fixed: { strength: 500, cost: 0 },
     // A hinge turns freely about "axis". It may set "limits": [low, high] in degrees from its built position,
     // and "spring": stiffness in N·m per radian pulling it back toward "rest" degrees (default 0).
@@ -1412,6 +1413,7 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       const label = (otherShape && otherShape.label) || 'the floor';
       // Machines are set down at the start, not dropped: nothing breaks against the ground in the first second.
       if (!op && m.t < 1) return;
+      if (speed < cfg.breakage.minSpeed) return;
       // The blow as a vector, and the point where it enters the structure. Both change when it passes a pivot.
       let Jv = n.scale(J), at = cp;
       let cur = part, best = null;
@@ -1421,7 +1423,9 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
         const lever = Math.min(cfg.breakage.maxLever, pp.distanceTo(at));
         const share = (bot.liveMass - cur.subMass) / bot.liveMass;
         const load = Jv.length() * share * (1 + lever / cfg.breakage.leverLength) * Math.min(cfg.breakage.maxSharp, speed / cfg.breakage.speedRef) * (op ? 1 : cfg.breakage.floorFactor);
-        const ratio = load / (cur.strength * cfg.breakage.scale);
+        // The more of the machine a joint carries, the more it takes to break it: a blow knocks pieces off, and it
+        // takes many to cut a machine in half.
+        const ratio = load / (cur.strength * cfg.breakage.scale * (1 + cfg.breakage.carry * (cur.subMass / bot.liveMass)));
         // The joint nearest the blow that cannot take it is the one that goes, so machines lose their outer
         // pieces first and come apart a piece at a time.
         if (ratio > 1) { best = { part: cur, ratio, load }; break; }
@@ -1478,7 +1482,7 @@ function createMatch({ builds, programs, seed = 1, config = CONFIG, challenge = 
       const mark = (p) => { lost.push(p.id); p.lostAt = m.t; for (const c of p.children) if (c.intact) mark(c); };
       mark(part);
       const cause = info.by ? (info.by.bot === part.bot ? 'its own parts' : info.by.live ? `${info.by.bot.name}'s ${info.by.id}` : `loose ${info.by.id}`) : info.label;
-      log('part_lost', part.bot.index, `${part.bot.name} lost ${lost.join(', ')}: the ${part.jointType} joint on ${part.id} took a load of ${Math.round(info.load)} from ${cause}, above its limit of ${Math.round(part.strength * cfg.breakage.scale)}.`, { parts: lost, load: Math.round(info.load), by: cause, share: r2(part.subMass / part.bot.startMass) });
+      log('part_lost', part.bot.index, `${part.bot.name} lost ${lost.join(', ')}: the ${part.jointType} joint on ${part.id} took a load of ${Math.round(info.load)} from ${cause}, above its limit of ${Math.round(info.load / info.ratio)}.`, { parts: lost, load: Math.round(info.load), by: cause, share: r2(part.subMass / part.bot.startMass) });
       dirty.add(part.bot);
     }
     for (const bot of dirty) assemble(bot);

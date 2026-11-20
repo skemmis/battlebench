@@ -124,6 +124,12 @@ Pushing the enemy out is meant to be a real way to win. Rings are small (18 to 2
 
 In a 22-fight check, 6 fights ended in a ring-out, 12 on damage at the clock, 4 were draws, and none ended with a machine destroyed.
 
+### What counts as a hit
+
+Parts that meet at less than 5 m/s do no damage at all, whatever the machines weigh: bumping, leaning and shoving break nothing (walkers move at about 2.5 m/s). Above that a hit counts for its impulse times closing speed over 5 (up to three times), times leverage. A joint's limit rises with the share of the machine it carries (by up to 3.5 times for a joint carrying all of it), so blows knock pieces off and it takes many to cut a machine in half. Thick parts make joints up to 2.5 times stronger, down from 4. Settings: `breakage.minSpeed`, `speedRef`, `maxSharp`, `carry`, `scale` and `joints.maxThick` in `src/sim.js`.
+
+In a 24-fight check: 3 machines destroyed (after 9 to 25 seconds and several breaks each), 4 ring-outs, 12 decided on damage at the clock, 5 draws.
+
 ### Agility
 
 `npm run agility` drives each machine by hand on the open floor and reports top speed, time to reach it, stopping distance and how fast it turns on the spot. The walkers do 1.8 to 2.8 m/s and turn at 20 to 58 degrees a second; Rover does 5.6 m/s but turns no faster. What holds them back is weight against leg power and long layouts whose end feet scrub sideways in a turn, not a limit in the kit: a bare 76 kg two-wheeler built from the same parts does 6 m/s and turns at over 500 degrees a second.
