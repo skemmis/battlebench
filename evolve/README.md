@@ -28,3 +28,6 @@ accounts are what the next round's designer reads in place of watching the fight
 
 A design file exports `build`, `program`, an `idea` (what is new about it) and optionally a `target`. It can use
 any helper from `src/bots.js` through `kit.js`.
+
+A behaviour entry changes only how a league machine fights: it exports `base` (the machine whose build it uses),
+a new `name`, an `idea` and a `program`, and fights its base as one of its four fights.

@@ -30,6 +30,13 @@ const designFiles = () => (existsSync(DESIGNS) ? readdirSync(DESIGNS).filter((f)
 async function loadDesign(file) {
   try {
     const mod = await import(pathToFileURL(join(DESIGNS, file)).href);
+    // A behaviour entry gives no build: it names a league machine as its "base" and a new "name", and brings only a program.
+    if (mod.base && !mod.build) {
+      if (typeof mod.program !== 'function' || !mod.name) return { file, error: 'A behaviour entry must export "base", "name" and a "program" function.' };
+      const b = ALL.find((m) => m.build.name === mod.base) || (await loadDesign(mod.base.toLowerCase() + '.js'));
+      if (!b || b.error || !b.build) return { file, error: `Its base, "${mod.base}", is not a machine.` };
+      return { file, name: mod.name, build: { ...b.build, name: mod.name, note: mod.note || b.build.note }, program: mod.program, idea: mod.idea || '', target: mod.target || null, base: mod.base };
+    }
     if (!mod.build || typeof mod.program !== 'function') return { file, error: 'The file must export "build" and a "program" function.' };
     return { file, name: mod.build.name, build: mod.build, program: mod.program, idea: mod.idea || '', target: mod.target || null, still: !!mod.still };
   } catch (e) { return { file, error: `It does not load: ${e.message}` }; }
@@ -73,6 +80,7 @@ const table = (lg, all = []) => lg.map((e, i) => { const mv = [...all].reverse()
 // off, how near each got to the edge, and how it ended. Short enough that twenty of them fit on a page.
 function account(m) {
   const n = m.bots.map((b) => b.name), lines = [], last = [new Map(), new Map()], hits = new Map();
+  m.losses = [[], []];
   let nextMark = 10;
   const where = (t) => {
     const row = m.track.reduce((a, b) => (Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a), m.track[0]); if (!row) return '';
@@ -83,7 +91,7 @@ function account(m) {
     while (e.t >= nextMark) { lines.push(`${nextMark} s: ${where(nextMark)}`); nextMark += 10; }
     if (e.type === 'intent') { const key = e.text.replace(/[\d.]+/g, '#'), seen = last[e.bot].get(key); if (seen === undefined || e.t - seen > 12) lines.push(`${r1(e.t)} s: ${e.text}`); last[e.bot].set(key, e.t); }  // the same words with a new number are not news
     else if (e.type === 'hit') { const k = `${e.striker} on ${n[e.bot]}`, h = hits.get(k) || { count: 0, max: 0 }; h.count++; h.max = Math.max(h.max, e.impulse || 0); hits.set(k, h); }
-    else if (e.type === 'part_lost') lines.push(`${r1(e.t)} s: ${n[e.bot]} lost ${e.parts.length > 4 ? e.parts.slice(0, 4).join(', ') + ` and ${e.parts.length - 4} more` : e.parts.join(', ')} to ${e.by || 'a blow'}`);
+    else if (e.type === 'part_lost') { m.losses[e.bot].push(e.parts[0]); lines.push(`${r1(e.t)} s: ${n[e.bot]} lost ${e.parts.length > 4 ? e.parts.slice(0, 4).join(', ') + ` and ${e.parts.length - 4} more` : e.parts.join(', ')} to ${e.by || 'a blow'}`); }
     else if (['flipped', 'righted', 'airborne', 'program_error'].includes(e.type)) lines.push(`${r1(e.t)} s: ${e.text}`);
   }
   const top = [...hits.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 5).map(([k, h]) => `${k} x${h.count} (hardest ${Math.round(h.max)})`);
@@ -96,7 +104,7 @@ function runFight(spec, map) {
   const m = createMatch({ builds: [A.build, B.build], programs: [A.program, B.program], seed: spec.seed, challenge: NAMED.find((c) => c.name === spec.map) });
   while (!m.done) m.step();
   const whole = m.bots.map((b) => Math.round(100 * (1 - (b.brokenMass || 0) / b.startMass)));
-  return { type: 'fight', ...spec, winner: m.result.winner == null ? null : [spec.a, spec.b][m.result.winner], reason: m.result.reason, t: m.result.t, intact: whole, wall: Math.round((Date.now() - t0) / 1000), account: account(m) };
+  return { type: 'fight', ...spec, winner: m.result.winner == null ? null : [spec.a, spec.b][m.result.winner], reason: m.result.reason, t: m.result.t, intact: whole, wall: Math.round((Date.now() - t0) / 1000), account: account(m), losses: m.losses };
 }
 // Alone on the open floor with a parked machine to walk at: does it cover ground, and does it hold together?
 function runMove(spec, map) {
@@ -154,6 +162,10 @@ ${table(lg, all)}
 
 ${lg.map((e) => `- **${e.name}**: ${map.get(e.name).build.note || map.get(e.name).idea || ''}`).join('\n')}
 
+## Where each machine breaks
+What came off each machine first, counted over the recorded fights. A program can aim for these.
+${lg.map((e) => { const c = new Map(); for (const f of fights) { if (!f.losses) continue; const i = f.a === e.name ? 0 : f.b === e.name ? 1 : -1; if (i < 0) continue; for (const p of f.losses[i]) c.set(p, (c.get(p) || 0) + 1); } const t = [...c.entries()].sort((x, y) => y[1] - x[1]).slice(0, 4); return t.length ? `- ${e.name}: ${t.map(([p, k]) => `${p} x${k}`).join(', ')}` : null; }).filter(Boolean).join('\n') || 'Not enough fights recorded yet.'}
+
 ## What earlier rounds tried
 ${verdicts.length ? verdicts.map((v) => `- Round ${v.round}, ${v.name}: ${v.admitted ? 'admitted' : 'not admitted'}. ${v.why}${v.idea ? ' Idea: ' + v.idea : ''}`).join('\n') : 'Nothing yet. This is the first round.'}
 
@@ -171,6 +183,18 @@ export const target = '${top[0] || 'Ox'}';        // optional: the league machin
 export const build = { name: 'Name', note: 'What it is, for the viewer.', parts: [ /* ... */ ] };
 export function program(s, out, mem, lib) { /* ... */ }
 \`\`\`
+
+Behaviour entries. How a machine fights is as much the design as what it is made of, and it is where the league is weakest: most programs walk at the enemy's middle and swing. At least a third of a round's entries should be new programs for machines already in the league, with no change to the build:
+
+\`\`\`js
+import { kit } from '../kit.js';
+export const base = 'Hornet';          // the league machine whose build this uses, unchanged
+export const name = 'Hornet-flank';    // a new name
+export const idea = 'What this program does that the base one does not.';
+export function program(s, out, mem, lib) { /* ... */ }
+\`\`\`
+
+A behaviour entry fights its base machine as one of its four fights. Things a program can do and few do: work round to the side or rear of a larger machine and stay there as it turns; aim at the part that comes off first (see "Where each machine breaks"); read what the enemy's weapon is doing from its joint angles and step in while it is recovering; change plan when it loses a weapon or a leg; use the edge and the slope.
 
 What makes a good entry:
 - Quick and exact beats big and slow. The league's machines are clumsy and lumbering, and the aim of these rounds is machines that move fast, turn sharply, stop where they mean to and strike on time. The league table gives each machine's top speed over open ground; beat it. Spend mass on motors and stiffness before armour, and close every motion on a measured angle or distance, not on a timer.
@@ -290,7 +314,7 @@ async function test(wanted, all, map, designs) {
   say('\nStep 4, three more fights each');
   const more = [];
   through.forEach((d, i) => {
-    const foes = [...new Set([d.target, lg[1], lg[Math.floor(lg.length / 2)], lg[2], lg[3]].filter((x) => x && x !== champ && x !== d.name))].slice(0, 3);
+    const foes = [...new Set([d.base, d.target, lg[1], lg[Math.floor(lg.length / 2)], lg[2], lg[3]].filter((x) => x && x !== champ && x !== d.name))].slice(0, 3);
     foes.forEach((b, j) => more.push({ a: d.name, b, map: MAPS[(round + i + j + 1) % MAPS.length], seed: round, round, stage: 4 }));
   });
   const rest = (await runAll(more)).filter((f) => f.type === 'fight'); rest.forEach((f) => say('  ' + line(f))); fights.push(...rest);
@@ -298,7 +322,7 @@ async function test(wanted, all, map, designs) {
   for (const d of through) {
     const mine = fights.filter((f) => f.a === d.name), wins = mine.filter((f) => f.winner === d.name), beatChamp = wins.some((f) => f.b === champ);
     const admitted = beatChamp || wins.length >= 2, why = `Won ${wins.length} of ${mine.length}${wins.length ? ' (beat ' + wins.map((f) => f.b).join(', ') + ')' : ''}${beatChamp ? ', including the champion' : ''}.`;
-    verdicts.push({ type: 'verdict', round, name: d.name, admitted, why, idea: d.idea });
+    verdicts.push({ type: 'verdict', round, name: d.name, admitted, why, idea: d.idea, base: d.base || null });
     say(`  ${d.name}: ${admitted ? 'ADMITTED' : 'not admitted'}. ${why}`);
   }
   save([...fights, ...verdicts]);
